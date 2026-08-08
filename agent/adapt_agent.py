@@ -40,6 +40,21 @@ DECISION_RULES = """
 5. 禁止重复调用完全相同的工具+参数组合
 """
 
+TASK_DECOMPOSITION = """
+## 任务执行流程（严格遵循）
+每个消费任务必须按以下4步执行：
+1. SEARCH：使用搜索工具找到候选（最多2次搜索）
+2. FILTER：根据用户偏好和需求筛选候选（在脑中完成，无需工具）
+3. DECIDE：选择最匹配的候选（必须明确说明选择理由）
+4. EXECUTE：调用创建订单/支付工具完成交易
+
+关键约束：
+- 步骤1和步骤2可以同时进行（搜索后立即筛选）
+- 步骤3必须在步骤2之后（不能跳过筛选直接选择）
+- 步骤4必须在步骤3之后（不能跳过选择直接执行）
+- 如果步骤1没有找到候选，尝试换关键词重新搜索，但总搜索次数不超过2次
+"""
+
 
 class ADAPTAgentState(LLMAgentState):
     """Conversation state plus Agent-visible entity provenance."""
@@ -53,6 +68,8 @@ class ADAPTAgentState(LLMAgentState):
     last_order_result: str = ""
     goal_completed: bool = False
     disabled_tool_names: set[str] = Field(default_factory=set)
+    step_count: int = 0          # 当前子任务的步数计数
+    last_reflection: int = 0     # 上次 reflection 的步数
 
 
 def _add_usage(total: dict, usage: Optional[dict]) -> dict:
@@ -272,12 +289,35 @@ class ADAPTAgent(PersonalizationAgent):
             if should_force_act(state) and not correction:
                 correction = over_questioning_correction_message(state)
                 force_progress = True
+                # 禁用询问工具
+                for tool in self.tools:
+                    if any(s in tool.name.lower() for s in {"suggest_question", "question"}):
+                        state.disabled_tool_names.add(tool.name)
             if should_force_select(state) and not force_progress:
                 correction = stall_correction_message(state)
                 candidate_context = self._latest_candidate_context(state.messages)
                 if candidate_context:
                     correction += f"\n已有候选结果：\n{candidate_context}"
                 force_progress = True
+                # 禁用搜索工具
+                for tool in self.tools:
+                    if any(s in tool.name.lower() for s in SEARCH_TOOLS):
+                        state.disabled_tool_names.add(tool.name)
+            # Reflection: 每 10 步回顾进度
+            if state.step_count > 0 and state.step_count % 10 == 0 and state.step_count != state.last_reflection:
+                state.last_reflection = state.step_count
+                reflection = f"""
+## 进度反思（第 {state.step_count} 步）
+请回顾当前进展：
+- 已创建订单：{len(state.created_order_ids)} 个
+- 已搜索次数：{sum(v for k,v in state.tool_call_counts.items() if any(s in k.lower() for s in SEARCH_TOOLS))}
+- 距离目标还缺什么？
+
+如果已找到候选但未下单，立即创建订单。
+如果搜索无结果，换关键词或询问用户。
+不要重复已完成的步骤。
+"""
+                system_content += f"\n{reflection}"
             if correction:
                 system_content += f"\n\n## ADAPT 内部纠错\n{correction}\n{DECISION_RULES}"
             internal_system = [
@@ -315,6 +355,7 @@ class ADAPTAgent(PersonalizationAgent):
                 draft.usage = _add_usage(rejected_usage, draft.usage)
                 state.messages.append(draft)
                 record_calls(draft.tool_calls or [], state)
+                state.step_count += 1
                 return draft, state
 
             state.rejected_tool_drafts += 1

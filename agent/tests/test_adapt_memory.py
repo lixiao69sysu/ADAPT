@@ -206,7 +206,7 @@ class TestLifecycle:
         """Normal taste facts decay with ~180d half-life."""
         from agent.memory.lifecycle import LifecycleManager
         lm = LifecycleManager()
-        lm.record(Signal("prefers_product", "川菜", 0.8, "2026-01-01", "order"))
+        lm.record(Signal("likes_food", "川菜", 0.8, "2026-01-01", "conversation"))
         assert lm.facts[0].lifetime_type == "normal"
         # 180 days: ~half confidence.
         assert 0.3 < lm.facts[0].decay(180) < 0.6

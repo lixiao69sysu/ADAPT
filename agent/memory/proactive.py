@@ -223,6 +223,15 @@ class ProactiveEngine:
             if not question and self.is_vague(instruction) and not self._domain_covered(memory_text, domain):
                 question = DOMAIN_QUESTIONS[domain][0][1]
 
+            # Pattern 4: memory is sparse → suggest exploration instead of asking
+            if not question and memory_text == "No user preference information available yet.":
+                if domain == "ota":
+                    question = "我先帮您搜索一下相关选项，请稍等。"
+                elif domain == "delivery":
+                    question = "我先帮您搜索一下附近的选项。"
+                elif domain == "instore":
+                    question = "我先帮您搜索一下附近的餐厅。"
+
         if question and consume:
             self.asked_this_subtask += 1
         return question

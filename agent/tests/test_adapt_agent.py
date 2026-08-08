@@ -287,10 +287,10 @@ def test_repeated_search_disables_search_family_during_regeneration(monkeypatch)
     )
 
     assert message.tool_calls[0].name == "create_order"
-    assert "search_products" in observed_tools[0]
-    assert "search_products" not in observed_tools[1]
-    assert "search_stores" not in observed_tools[1]
-    assert "create_order" in observed_tools[1]
+    # 搜索工具在搜索计数>=2时立即被禁用
+    assert "search_products" not in observed_tools[0]
+    assert "search_stores" not in observed_tools[0]
+    assert "create_order" in observed_tools[0]
 
 
 def test_internal_correction_keeps_a_single_leading_system_message(monkeypatch):

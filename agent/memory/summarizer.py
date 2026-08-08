@@ -53,6 +53,9 @@ class MemorySummarizer:
         if not signals:
             return ""
 
+        # Resolve conflicts before summarization
+        signals = self.resolve_conflicts(signals)
+
         # Group signals by section
         sections: Dict[str, List[Signal]] = defaultdict(list)
         for sig in signals:
@@ -176,3 +179,77 @@ class MemorySummarizer:
     def _get_confidence(obj: str, signals: List[Signal]) -> float:
         """Get max confidence for an object across signals."""
         return max((sig.confidence for sig in signals if sig.object == obj), default=0.5)
+
+    @staticmethod
+    def resolve_conflicts(signals: List[Signal]) -> List[Signal]:
+        """Detect and resolve conflicting preferences.
+        
+        Conflict patterns:
+        - likes:X vs avoids:X → keep the one with higher confidence * recency
+        - multiple brand_loyalty → keep most recent
+        """
+        from collections import defaultdict
+        from datetime import datetime
+        
+        # Group by (normalized_object, predicate_group)
+        likes_map = defaultdict(list)
+        avoids_map = defaultdict(list)
+        
+        for sig in signals:
+            obj = sig.object.strip()
+            if sig.predicate == "likes_food":
+                likes_map[obj].append(sig)
+            elif sig.predicate == "avoids_food":
+                avoids_map[obj].append(sig)
+        
+        # Find conflicts
+        conflicting = set(likes_map.keys()) & set(avoids_map.keys())
+        
+        if not conflicting:
+            return signals
+        
+        # Resolve: keep higher score (confidence * recency_factor)
+        to_remove = set()
+        
+        def score(sig):
+            conf = sig.confidence
+            # Recency bonus
+            try:
+                ts = parse_timestamp(sig.timestamp)
+                if ts:
+                    days_ago = (datetime.now() - ts).days
+                    recency = max(0.5, 1.0 - days_ago / 365.0)
+                else:
+                    recency = 0.5
+            except Exception:
+                recency = 0.5
+            return conf * recency
+        
+        for obj in conflicting:
+            best_like = max(likes_map[obj], key=score)
+            best_avoid = max(avoids_map[obj], key=score)
+            
+            if score(best_like) >= score(best_avoid):
+                # Remove all avoids for this object
+                for sig in avoids_map[obj]:
+                    to_remove.add(id(sig))
+            else:
+                # Remove all likes for this object
+                for sig in likes_map[obj]:
+                    to_remove.add(id(sig))
+        
+        return [sig for sig in signals if id(sig) not in to_remove]
+
+
+def parse_timestamp(ts: str):
+    """Parse timestamp string."""
+    if not ts:
+        return None
+    from datetime import datetime
+    try:
+        return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            return datetime.strptime(ts[:10], "%Y-%m-%d")
+        except ValueError:
+            return None

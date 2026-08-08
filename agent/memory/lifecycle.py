@@ -21,7 +21,7 @@ from agent.memory.signals import Signal, TYPE_IMPORTANCE
 
 # Half-lives (in days) per lifetime type.
 HALF_LIFE_DAYS = {
-    "durable": 3650.0,     # ~10 years: health constraints
+    "durable": 3650.0,     # ~10 years: health constraints, addresses
     "normal": 180.0,       # ~6 months: taste, brand
     "ephemeral": 30.0,     # ~1 month: fleeting interests
 }
@@ -29,11 +29,25 @@ HALF_LIFE_DAYS = {
 # Predicates that encode durable constraints (health, identity).
 DURABLE_PREDICATES = {
     "avoids_food",         # allergies / strong dislikes
+    "delivery_address",    # addresses don't change often
+    "brand_loyalty",       # brand loyalty persists
+    "explicit_preference", # explicitly stated preferences
 }
 
 # Signals whose type suggests a durable trait.
 DURABLE_TYPES = {
     "complaint",           # a strong negative signal usually persists
+    "order",               # actual purchases indicate real preferences
+}
+
+# Predicates that are ephemeral (short-lived).
+EPHEMERAL_PREDICATES = {
+    "searches",            # search history is fleeting
+    "intent_product",      # purchase intent changes
+    "taste_preference",    # taste can change
+    "urgency",             # urgency is temporary
+    "budget_conscious",    # budget can change
+    "quality_prefer",      # quality preference can change
 }
 
 # Confidence floor: below this, evict.
@@ -68,7 +82,7 @@ class LifecycleManager:
     def classify(self, predicate: str, sig_type: str) -> str:
         if predicate in DURABLE_PREDICATES or sig_type in DURABLE_TYPES:
             return "durable"
-        if sig_type in ("search", "browse", "high_freq_browse"):
+        if predicate in EPHEMERAL_PREDICATES or sig_type in ("search", "browse", "high_freq_browse"):
             return "ephemeral"
         return "normal"
 
