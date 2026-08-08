@@ -19,7 +19,9 @@ from agent.harness.tool_guard import ValidationIssue
 _ORDER_ID = re.compile(r"order_id\s*[:=]\s*([A-Za-z0-9_-]+)", re.IGNORECASE)
 
 SEARCH_TOOLS = {"search", "search_products", "search_stores", "recommand", "search_recommand"}
+QUESTION_TOOLS = {"suggest_question", "suggest_question_tool"}
 MAX_SEARCH_BEFORE_SELECT = 2
+MAX_QUESTIONS_BEFORE_ACT = 2
 
 
 class ProgressState(Protocol):
@@ -105,6 +107,25 @@ def should_force_select(state: ProgressState) -> bool:
     return search_call_count(state) >= MAX_SEARCH_BEFORE_SELECT
 
 
+def question_call_count(state: ProgressState) -> int:
+    """Count total question tool calls made so far."""
+    total = 0
+    for sig, count in state.tool_call_counts.items():
+        tool_name = sig.split(":")[0] if ":" in sig else sig
+        if any(s in tool_name.lower() for s in QUESTION_TOOLS):
+            total += count
+    return total
+
+
+def should_force_act(state: ProgressState) -> bool:
+    """Return True when agent has asked too many questions and should act."""
+    if state.goal_completed:
+        return False
+    if state.created_order_ids:
+        return False
+    return question_call_count(state) >= MAX_QUESTIONS_BEFORE_ACT
+
+
 def stall_correction_message(state: ProgressState) -> str:
     """Generate a correction message when the agent is stuck searching."""
     n_searches = search_call_count(state)
@@ -112,6 +133,16 @@ def stall_correction_message(state: ProgressState) -> str:
         f"已搜索{n_searches}次但尚未创建订单。立即停止搜索，从已有工具返回的"
         "候选商品/店铺中选择一个满足用户需求的，直接创建订单。不要再次调用"
         "任何搜索或查询工具。如果已有候选都不完美，选择最接近的一个继续。"
+    )
+
+
+def over_questioning_correction_message(state: ProgressState) -> str:
+    """Generate a correction message when the agent asks too many questions."""
+    n_questions = question_call_count(state)
+    return (
+        f"已询问用户{n_questions}次但用户已表达'随便'或'你看着办'。停止询问，"
+        "根据已有信息和工具返回的候选，直接为用户选择一个最合适的方案并创建订单。"
+        "不要再次调用询问工具。"
     )
 
 

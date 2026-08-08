@@ -22,8 +22,11 @@ from agent.harness.progress_guard import (
     is_write_tool,
     observe_result,
     record_calls,
+    SEARCH_TOOLS,
+    should_force_act,
     should_force_select,
     stall_correction_message,
+    over_questioning_correction_message,
     validate_progress,
 )
 from agent.harness.tool_guard import EntityLedger, ToolGuard, ValidationIssue
@@ -252,10 +255,14 @@ class ADAPTAgent(PersonalizationAgent):
         rejected_cost = 0.0
         correction = None
         force_progress = False
+        _search_disabled = False
         for _ in range(self.max_internal_regenerations + 1):
             system_content = "\n\n".join(
                 message.content for message in state.system_messages
             )
+            if should_force_act(state) and not correction:
+                correction = over_questioning_correction_message(state)
+                force_progress = True
             if should_force_select(state) and not force_progress:
                 correction = stall_correction_message(state)
                 candidate_context = self._latest_candidate_context(state.messages)
