@@ -33,6 +33,7 @@ from agent.memory.stream import MemoryStream, parse_timestamp
 from agent.memory.drift import DriftDetector
 from agent.memory.lifecycle import LifecycleManager
 from agent.memory.proactive import ProactiveEngine
+from agent.memory.summarizer import MemorySummarizer
 from agent.evolution.runtime import load_strategy_changes
 
 
@@ -50,6 +51,14 @@ def _same_pref(a: str, b: str) -> bool:
 
 class ADAPTMemory(BaseMemory):
     """ADAPT long-term preference memory with drift-aware retrieval."""
+
+    # 记忆分层：哪些 predicate 是持久的，哪些是短暂的
+    DURABLE_PREDICATES = {
+        "avoids_food", "delivery_address", "brand_loyalty", "explicit_preference",
+    }
+    EPHEMERAL_PREDICATES = {
+        "searches", "intent_product", "taste_preference", "urgency",
+    }
 
     def __init__(
         self,
@@ -92,10 +101,19 @@ class ADAPTMemory(BaseMemory):
         self.drift = DriftDetector(drift_threshold=drift_threshold)
         self.lifecycle = LifecycleManager()
         self.proactive = ProactiveEngine(max_questions=max_questions)
+        self.summarizer = MemorySummarizer()
         self._latest_ts: Optional[str] = None
         self._recency_reference = retrieval_changes.get("recency_reference")
         self._raw_excerpt_mode = paging_changes.get("raw_excerpt", "prefix")
         self._raw_excerpt_chars = int(paging_changes.get("max_chars", 100))
+
+    def _classify_layer(self, sig) -> str:
+        """Classify a signal into memory layer: durable, normal, or ephemeral."""
+        if sig.predicate in self.DURABLE_PREDICATES:
+            return "durable"
+        if sig.predicate in self.EPHEMERAL_PREDICATES:
+            return "ephemeral"
+        return "normal"
 
     # ------------------------------------------------------------------
     # BaseMemory interface
@@ -140,19 +158,47 @@ class ADAPTMemory(BaseMemory):
             if query
             else self.stream.most_important(self.top_k)
         )
-        lines = []
+
+        # Collect non-drifted signals for summarization, with layer filtering
+        durable_signals: list = []
+        normal_signals: list = []
+        raw_excerpts: list = []
         for ev in events:
             sig = ev.signal
             # Suppress events pointing to a drifted-away preference value.
             if self.drift.suppress_drifted(ev):
                 continue
             if sig and sig.predicate != "raw_observation":
-                lines.append(self._format_signal(sig))
+                layer = self._classify_layer(sig)
+                if layer == "durable":
+                    durable_signals.append(sig)
+                elif layer != "ephemeral":
+                    normal_signals.append(sig)
+                # ephemeral signals are dropped unless they're recent/high-confidence
+                elif sig.confidence >= 0.7:
+                    normal_signals.append(sig)
             elif ev.raw_text:
                 excerpt = self._raw_excerpt(ev.raw_text, query)
-                lines.append(f"- 观察[{ev.timestamp}] ({ev.type}): {excerpt}")
-        if not lines:
+                raw_excerpts.append(f"- 观察[{ev.timestamp}] ({ev.type}): {excerpt}")
+
+        # Prioritize durable + best normal signals
+        all_signals = durable_signals + normal_signals
+        if not all_signals and not raw_excerpts:
             return "No user preference information available yet."
+
+        # Use summarizer when we have enough signals
+        if len(all_signals) >= 3:
+            summary = self.summarizer.summarize(all_signals)
+            # Also include any raw excerpts (up to 2)
+            if raw_excerpts:
+                summary += "\n" + "\n".join(raw_excerpts[:2])
+            return summary
+
+        # Fallback to raw listing for few signals
+        lines = []
+        for sig in all_signals:
+            lines.append(self._format_signal(sig))
+        lines.extend(raw_excerpts)
         return "\n".join(lines)
 
     def _raw_excerpt(self, text: str, query: str) -> str:

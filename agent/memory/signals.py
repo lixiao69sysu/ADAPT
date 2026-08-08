@@ -110,7 +110,7 @@ class ConversationParser:
         ConversationPattern(r"([^，。, .]+?)(?:真的?好(?:吃|喝|用)|挺(?:好|不错)(?:的)?)", "likes_food", 0.70),
     ]
 
-    _VERB_PREFIXES = ("吃", "喝", "用", "买", "去", "来", "做", "送")
+    _VERB_PREFIXES = ("吃", "喝", "用", "买", "去", "来", "做", "送", "点", "找", "要", "想", "喜欢", "不爱", "不想")
 
     IMPLICIT: List[ConversationPattern] = [
         ConversationPattern(r"(不辣|微辣|清淡)", "taste_preference", 0.40),
@@ -123,16 +123,31 @@ class ConversationParser:
     _CHINESE_CHAR = re.compile(r"[一-鿿]")
     _LEADING_JUNK = re.compile(r"^[，。, .~～！!？;；：]+")
     _TRAILING_JUNK = re.compile(r"[，。, .~～！!？;；：了啦]+$")
+    NOISE_PATTERNS = {
+        "外卖吧", "给我", "帮我", "一个", "现在", "上次", "家里", "赶紧",
+        "新的", "送到", "确认下单吗", "注意查收", "国庆假期", "月光园",
+        "账户", "你好", "谢谢", "再见", "嗯", "哦", "啊",
+    }
+    NOISE_STARTS = {"帮我", "给我", "送到", "确认", "注意", "你好", "请问", "我的"}
 
     @classmethod
     def _is_valid_object(cls, obj: str) -> bool:
         """Check if extracted object is meaningful (not punctuation/noise)."""
-        if len(obj) < 2:
+        if len(obj) < 3:
             return False
         if not cls._CHINESE_CHAR.search(obj):
             return False
         stripped = cls._TRAILING_JUNK.sub("", cls._LEADING_JUNK.sub("", obj))
-        if len(stripped) < 2:
+        if len(stripped) < 3:
+            return False
+        # 过滤无意义片段
+        if obj in cls.NOISE_PATTERNS:
+            return False
+        # 过滤以噪声词开头的片段
+        if any(obj.startswith(p) for p in cls.NOISE_STARTS):
+            return False
+        # 过滤纯地址/时间片段（太细粒度不实用）
+        if obj.startswith(("天津", "北京", "上海", "202", "13")):
             return False
         return True
 

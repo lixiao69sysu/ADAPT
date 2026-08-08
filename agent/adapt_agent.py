@@ -31,6 +31,15 @@ from agent.harness.progress_guard import (
 )
 from agent.harness.tool_guard import EntityLedger, ToolGuard, ValidationIssue
 
+DECISION_RULES = """
+## 硬性决策规则
+1. 搜索工具调用 ≥2 次后，必须从已有候选中选择一个，不得再次调用搜索工具
+2. 用户表达"随便"/"你看着办"/"都可以"/"你推荐"时，必须基于已有信息直接做决定，不得继续询问
+3. 找到 ≥1 个候选后，必须选择最接近用户需求的一个继续执行
+4. 如果所有候选都不完美，选择最接近的一个并说明妥协原因
+5. 禁止重复调用完全相同的工具+参数组合
+"""
+
 
 class ADAPTAgentState(LLMAgentState):
     """Conversation state plus Agent-visible entity provenance."""
@@ -270,7 +279,7 @@ class ADAPTAgent(PersonalizationAgent):
                     correction += f"\n已有候选结果：\n{candidate_context}"
                 force_progress = True
             if correction:
-                system_content += f"\n\n## ADAPT 内部纠错\n{correction}"
+                system_content += f"\n\n## ADAPT 内部纠错\n{correction}\n{DECISION_RULES}"
             internal_system = [
                 SystemMessage(role="system", content=system_content)
             ]
