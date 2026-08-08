@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "active_strategy_ids": [
+    "retrieval.product_type_expansion.v2"
+  ],
+  "candidates": {
+    "harness.cross_entity_soft_warning.v1": {
+      "strategy_id": "harness.cross_entity_soft_warning.v1",
+      "diagnosis_code": "cross_entity_mismatch",
+      "mutation_kind": "policy",
+      "component": "harness.tool_guard",
+      "changes": {
+        "cross_entity_mismatch": "warning"
+      },
+      "rationale": "retain provenance diagnostics without blocking valid combinations",
+      "risk": "a truly incompatible combination reaches the public tool for validation",
+      "supporting_case_ids": [
+        "U642088:subtask_9"
+      ],
+      "status": "rejected",
+      "decision_reasons": [
+        "behavior absorbed into hardened harness (cross-entity mismatch logs warning without blocking)",
+        "no runtime toggle exists; every benchmark run since phase1_smoke_hardened already includes it",
+        "historical gate-partial: 3 common subtasks, no regression, no improvement; cannot attribute separately"
+      ]
+    },
+    "harness.proactive_question_delivery.v1": {
+      "strategy_id": "harness.proactive_question_delivery.v1",
+      "diagnosis_code": "proactive_decision",
+      "mutation_kind": "policy",
+      "component": "harness.agent",
+      "changes": {
+        "suggested_question": "emit_to_user_or_use_memory"
+      },
+      "rationale": "prevent a generated clarification from being silently ignored",
+      "risk": "unnecessary questions can reduce task completion",
+      "supporting_case_ids": [
+        "U642088:subtask_2"
+      ],
+      "status": "rejected",
+      "decision_reasons": [
+        "delivery absorbed into ADAPTMemory.read injection (suggested question emitted into system prompt)",
+        "no runtime toggle exists; supporting case U642088:subtask_2 still fails, so delivery alone is insufficient",
+        "further proactive gains must come from new diagnosis-driven candidates"
+      ]
+    },
+    "retrieval.query_centered_raw_page.v1": {
+      "strategy_id": "retrieval.query_centered_raw_page.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "policy",
+      "component": "memory.context_paging",
+      "changes": {
+        "raw_excerpt": "query_centered",
+        "max_chars": 220
+      },
+      "rationale": "keep the matched preference visible instead of truncating the prefix",
+      "risk": "longer excerpts increase prompt size",
+      "supporting_case_ids": [
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    "retrieval.query_normalization.v1": {
+      "strategy_id": "retrieval.query_normalization.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "product_type_expansions": {
+          "拖鞋": [
+            "人字拖"
+          ]
+        },
+        "ignore_generic_bigrams": true
+      },
+      "rationale": "bridge broad product terms to stable historical subtypes",
+      "risk": "an expansion can over-constrain a user whose preference has drifted",
+      "supporting_case_ids": [
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "rejected",
+      "decision_reasons": [
+        "completed regression cases: U642088:subtask_0"
+      ]
+    },
+    "retrieval.simulation_time_recency.v1": {
+      "strategy_id": "retrieval.simulation_time_recency.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "policy",
+      "component": "memory.retrieval",
+      "changes": {
+        "recency_reference": "latest_observed_event_time"
+      },
+      "rationale": "use the task timeline rather than host wall-clock time",
+      "risk": "malformed future timestamps can flatten recency",
+      "supporting_case_ids": [
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    "retrieval.structured_signal_priority.v1": {
+      "strategy_id": "retrieval.structured_signal_priority.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "structured_signal_boost": {
+          "order": 0.2,
+          "cart": 0.12,
+          "search": 0.08
+        }
+      },
+      "rationale": "rank explicit consumption evidence ahead of generic conversations",
+      "risk": "old purchases can dominate a newer conversational preference",
+      "supporting_case_ids": [
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    "harness.search_stage_progression.v1": {
+      "strategy_id": "harness.search_stage_progression.v1",
+      "diagnosis_code": "repeated_tool_call",
+      "mutation_kind": "policy",
+      "component": "harness.progress_guard",
+      "changes": {
+        "repeat_limit": 2,
+        "on_stall": "disable_search_family_and_require_next_stage"
+      },
+      "rationale": "advance from lookup to candidate selection instead of only rejecting",
+      "risk": "a weak initial result page can leave no acceptable candidate",
+      "supporting_case_ids": [
+        "U642088:subtask_4",
+        "U642088:subtask_7",
+        "U642088:subtask_11"
+      ],
+      "status": "rejected",
+      "decision_reasons": [
+        "behavior absorbed into hardened harness (progress_guard repeat_limit=2 and search-family disable on stall)",
+        "no runtime toggle exists; every benchmark run since phase1_smoke_hardened already includes it",
+        "historical gate-partial: 3 common subtasks, no regression, no improvement; cannot attribute separately"
+      ]
+    },
+    "retrieval.product_type_expansion.v2": {
+      "strategy_id": "retrieval.product_type_expansion.v2",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "product_type_expansions": {
+          "拖鞋": [
+            "人字拖"
+          ]
+        }
+      },
+      "rationale": "apply the successful product subtype bridge without global token filtering",
+      "risk": "the subtype can be stale when a newer preference has drifted",
+      "supporting_case_ids": [
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "promoted",
+      "decision_reasons": [
+        "all gates passed"
+      ],
+      "probes": [
+        {
+          "task_id": "U642088",
+          "subtask_index": 1,
+          "target_terms": [
+            "哈瓦娜",
+            "人字拖"
+          ],
+          "baseline_rank": 12,
+          "candidate_rank": 1,
+          "rank_delta": 11
+        }
+      ]
+    }
+  },
+  "history": [
+    {
+      "strategy_id": "retrieval.query_normalization.v1",
+      "status": "rejected",
+      "reasons": [
+        "completed regression cases: U642088:subtask_0"
+      ],
+      "timestamp": "2026-08-06T17:46:30.065904+00:00"
+    },
+    {
+      "strategy_id": "retrieval.query_normalization.v1",
+      "status": "rejected",
+      "reasons": [
+        "completed regression cases: U642088:subtask_0"
+      ],
+      "timestamp": "2026-08-06T17:47:33.974925+00:00"
+    },
+    {
+      "strategy_id": "retrieval.product_type_expansion.v2",
+      "status": "promoted",
+      "reasons": [
+        "all gates passed"
+      ],
+      "timestamp": "2026-08-06T19:13:31.524863+00:00"
+    },
+    {
+      "strategy_id": "harness.search_stage_progression.v1",
+      "status": "rejected",
+      "reasons": [
+        "behavior absorbed into hardened harness (progress_guard repeat_limit=2 and search-family disable on stall)",
+        "no runtime toggle exists; every benchmark run since phase1_smoke_hardened already includes it",
+        "historical gate-partial: 3 common subtasks, no regression, no improvement; cannot attribute separately"
+      ],
+      "timestamp": "2026-08-07T17:59:58.285691+00:00"
+    },
+    {
+      "strategy_id": "harness.cross_entity_soft_warning.v1",
+      "status": "rejected",
+      "reasons": [
+        "behavior absorbed into hardened harness (cross-entity mismatch logs warning without blocking)",
+        "no runtime toggle exists; every benchmark run since phase1_smoke_hardened already includes it",
+        "historical gate-partial: 3 common subtasks, no regression, no improvement; cannot attribute separately"
+      ],
+      "timestamp": "2026-08-07T17:59:58.286537+00:00"
+    },
+    {
+      "strategy_id": "harness.proactive_question_delivery.v1",
+      "status": "rejected",
+      "reasons": [
+        "delivery absorbed into ADAPTMemory.read injection (suggested question emitted into system prompt)",
+        "no runtime toggle exists; supporting case U642088:subtask_2 still fails, so delivery alone is insufficient",
+        "further proactive gains must come from new diagnosis-driven candidates"
+      ],
+      "timestamp": "2026-08-07T17:59:58.287165+00:00"
+    }
+  ]
+}

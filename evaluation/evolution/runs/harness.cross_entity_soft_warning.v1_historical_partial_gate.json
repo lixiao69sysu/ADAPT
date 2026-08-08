@@ -1,0 +1,15 @@
+{
+  "strategy_id": "harness.cross_entity_soft_warning.v1",
+  "decision": "inconclusive",
+  "completed_common_cases": [
+    "U642088:subtask_0",
+    "U642088:subtask_2",
+    "U642088:subtask_3"
+  ],
+  "improvements": [],
+  "regressions": [],
+  "reasons": [
+    "no completed regression; partial evidence cannot promote"
+  ],
+  "promotion_allowed": false
+}

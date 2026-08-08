@@ -1,0 +1,223 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "VitaBench 本地分数差距诊断",
+    "description": "Qwen3.6-35B-A3B + ADAPT 全量运行与官方榜单的口径校准、故障证据和下一步对照实验。",
+    "generatedAt": "2026-08-06T00:00:00+08:00",
+    "cards": [
+      {
+        "id": "local_score",
+        "description": "56 个用户、单次 rollout 的平均子任务成功率；该运行混合了修复前后配置。",
+        "dataset": "headline",
+        "sourceId": "local_result",
+        "metrics": [
+          {"label": "本地 ADAPT Avg@1", "field": "local_score", "format": "percent"}
+        ]
+      },
+      {
+        "id": "official_comparator",
+        "description": "官方 Qwen3-Max 在 Agentic Memory 下的 Avg@4，是比 0.503 更接近的参考，但模型与 rollout 数仍不同。",
+        "dataset": "headline",
+        "sourceId": "comparison_source",
+        "metrics": [
+          {"label": "官方 Qwen3-Max Agentic Avg@4", "field": "qwen3max_agentic", "format": "percent"}
+        ]
+      },
+      {
+        "id": "invalid_terminations",
+        "description": "56 个用户级 simulation 中，最终以 too_many_errors 结束的数量。",
+        "dataset": "headline",
+        "sourceId": "local_result",
+        "metrics": [
+          {"label": "异常熔断用户", "field": "too_many_users", "format": "number"}
+        ]
+      },
+      {
+        "id": "eval_errors",
+        "description": "续跑日志中评估器解析字符串或列表失败的子任务次数；这些子任务被记为失败。",
+        "dataset": "headline",
+        "sourceId": "resume_log",
+        "metrics": [
+          {"label": "评估器解析失败", "field": "evaluator_errors", "format": "number"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "termination_chart",
+        "title": "全量运行的用户级终止原因",
+        "subtitle": "56 个用户，单次 rollout；45 个以 too_many_errors 结束",
+        "type": "bar",
+        "dataset": "terminations",
+        "sourceId": "local_result",
+        "encodings": {
+          "x": {"field": "reason", "type": "nominal", "label": "终止原因"},
+          "y": {"field": "users", "type": "quantitative", "label": "用户数"},
+          "tooltip": [
+            {"field": "share", "type": "quantitative", "label": "占比", "format": "percent"}
+          ]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "score_table",
+        "title": "分数口径对照",
+        "subtitle": "不同模型、memory setting 和 rollout 数不可直接横比",
+        "dataset": "score_comparison",
+        "sourceId": "official_readme",
+        "defaultSort": {"field": "score", "direction": "desc"},
+        "columns": [
+          {"field": "run", "label": "运行/榜单项", "type": "text"},
+          {"field": "model", "label": "模型", "type": "text"},
+          {"field": "memory", "label": "Memory", "type": "text"},
+          {"field": "metric", "label": "指标", "type": "text"},
+          {"field": "score", "label": "分数", "format": "percent"},
+          {"field": "comparable", "label": "可比性", "type": "text"}
+        ]
+      },
+      {
+        "id": "evidence_table",
+        "title": "差距驱动因素与证据强度",
+        "subtitle": "只把可由当前数据支持的因素列为已证实",
+        "dataset": "drivers",
+        "sourceId": "local_result",
+        "defaultSort": {"field": "priority", "direction": "asc"},
+        "columns": [
+          {"field": "priority", "label": "优先级", "format": "number"},
+          {"field": "driver", "label": "驱动因素", "type": "text"},
+          {"field": "evidence", "label": "观测证据", "type": "text"},
+          {"field": "confidence", "label": "判断", "type": "text"}
+        ]
+      }
+    ],
+    "sources": [
+      {"id": "local_result", "label": "本地全量结果", "path": "evaluation/vitabench/data/simulations/qwen36_adapt/full_56_trial1.json"},
+      {"id": "resume_log", "label": "本地续跑日志", "path": "evaluation/vitabench/data/simulations/qwen36_adapt/full_56_trial1.resume.log"},
+      {"id": "smoke_result", "label": "保守熔断 smoke 结果", "path": "evaluation/vitabench/data/simulations/qwen36_adapt/smoke_conservative_guard.json"},
+      {"id": "official_readme", "label": "VitaBench 官方榜单说明", "path": "evaluation/vitabench/README.md"},
+      {"id": "comparison_source", "label": "本地结果与官方榜单对照", "path": "docs/analysis/2026-08-06-score-gap-diagnosis/artifact.json"}
+    ],
+    "blocks": [
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "body": "## 结论\n\n本地 **0.085** 不能解释成“ADAPT 的真实能力只有 0.085”。这次全量结果混合了修复前后两套配置，并受到大规模误熔断和评估器解析失败污染。"
+      },
+      {"id": "metrics", "type": "metric-strip", "cardIds": ["local_score", "official_comparator", "invalid_terminations", "eval_errors"]},
+      {"id": "termination", "type": "chart", "chartId": "termination_chart"},
+      {"id": "score_context", "type": "table", "tableId": "score_table"},
+      {
+        "id": "run_integrity",
+        "type": "markdown",
+        "body": "## 为什么这次分数被压低\n\n- 56 个用户中有 **45 个**最终以 `too_many_errors` 结束；旧熔断逻辑会把重复的成功工具结果也计入循环，导致大量任务被提前终止。\n- 续跑前 11 个用户均分为 **0.190**，后 45 个仅 **0.059**。这不是自然波动的可靠证据，因为续跑时配置从 `max_tokens=4096` 改为 `1024`，并加入了 prompt 截断参数，运行条件已经改变。\n- 续跑日志含 **69 次**评估器解析异常（字符串/列表没有 `.get`），相应子任务被记为 0。\n- 全量共 771 个子任务，仅通过 65 个；其中 proactive 子任务为 3/103。后者说明当前主动记忆效果弱，但在异常熔断污染下不能单独归因给检索质量。",
+        "sourceId": "local_result"
+      },
+      {"id": "drivers", "type": "table", "tableId": "evidence_table"},
+      {
+        "id": "smoke_evidence",
+        "type": "markdown",
+        "body": "## 修复后的信号\n\n保守熔断版本的单用户 smoke 为 **4/12 = 0.333**，且没有 `too_many_errors`；但其中 3/12 子任务仍跑满 50 步，另有 1 次评估器解析失败。它支持“旧熔断显著伤分”，不支持“全量真实分数已经达到 0.333”。",
+        "sourceId": "smoke_result"
+      },
+      {
+        "id": "next_experiment",
+        "type": "markdown",
+        "body": "## 下一步最小可信实验\n\n1. 先修复评估器对字符串/列表输出的兼容，固定 conservative loop guard。\n2. 使用同一批 5–10 个用户、同一 Qwen3.6 服务和完全相同的 token/step 参数，分别跑 Full Context、官方 Agentic/RAG 基线与 ADAPT。\n3. 每个配置至少先跑 1 次做方向验证；确定无异常终止后，再按官方口径跑 4 次 rollout 和完整 56 用户。\n4. 只有同模型同配置基线仍明显领先 ADAPT，才把剩余差距归因到 ADAPT 的写入、检索或 proactive 策略。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-06T00:00:00+08:00",
+    "status": "ready",
+    "datasets": {
+      "headline": [
+        {"local_score": 0.0850710119, "qwen3max_agentic": 0.324, "too_many_users": 45, "evaluator_errors": 69}
+      ],
+      "terminations": [
+        {"reason": "too_many_errors", "users": 45, "share": 0.8035714286},
+        {"reason": "agent_stop", "users": 5, "share": 0.0892857143},
+        {"reason": "user_stop", "users": 4, "share": 0.0714285714},
+        {"reason": "max_steps", "users": 2, "share": 0.0357142857}
+      ],
+      "score_comparison": [
+        {"run": "官方最高", "model": "Claude-Opus-4.6", "memory": "Full Context", "metric": "Avg@4", "score": 0.503, "comparable": "否：模型、memory、rollout 均不同"},
+        {"run": "官方近似参考", "model": "Qwen3-Max", "memory": "Agentic Memory", "metric": "Avg@4", "score": 0.324, "comparable": "部分：同模型家族，但规模和 rollout 不同"},
+        {"run": "本地全量", "model": "Qwen3.6-35B-A3B", "memory": "ADAPT", "metric": "Avg@1", "score": 0.0850710119, "comparable": "否：混合配置且受异常终止污染"},
+        {"run": "修复后 smoke", "model": "Qwen3.6-35B-A3B", "memory": "ADAPT", "metric": "Avg@1，n=1 用户", "score": 0.3333333333, "comparable": "否：样本极小，仅作故障修复信号"}
+      ],
+      "drivers": [
+        {"priority": 1, "driver": "旧循环熔断误判", "evidence": "45/56 用户以 too_many_errors 结束；保守 guard smoke 为 0 次", "confidence": "已证实，影响很大"},
+        {"priority": 2, "driver": "评估器输出解析失败", "evidence": "续跑日志 69 次 str/list 没有 .get", "confidence": "已证实，直接产生 0 分"},
+        {"priority": 3, "driver": "实验配置混杂", "evidence": "11 个检查点后 max_tokens 从 4096 改为 1024，并新增截断参数", "confidence": "已证实，使结果不可发布"},
+        {"priority": 4, "driver": "模型能力与官方参考不同", "evidence": "本地为 35B-A3B；0.503 来自 Claude Opus，近似 Qwen 参考也为 Qwen3-Max", "confidence": "高度可能，尚未同口径量化"},
+        {"priority": 5, "driver": "ADAPT 检索/主动记忆质量", "evidence": "proactive 子任务 3/103；部分 memory preview 含与当前任务弱相关内容", "confidence": "可疑，但需要同模型基线验证"},
+        {"priority": 6, "driver": "成功工具调用后的行为循环", "evidence": "保守 guard smoke 仍有 3/12 子任务达到 50 步", "confidence": "已观测，需分类根因"}
+      ]
+    },
+    "accessIssues": []
+  },
+  "sources": [
+    {
+      "id": "local_result",
+      "query": {
+        "engine": "jq",
+        "sql": "SELECT 0.0850710119 AS local_score, 45 AS too_many_users, 65 AS passed_subtasks, 771 AS total_subtasks, 3 AS proactive_passed, 103 AS proactive_total",
+        "description": "汇总本地 56 用户结果中的 reward、终止原因、子任务通过数和 proactive 通过数。",
+        "language": "jq",
+        "executed_at": "2026-08-06T00:00:00+08:00",
+        "tables_used": ["evaluation/vitabench/data/simulations/qwen36_adapt/full_56_trial1.json"]
+      }
+    },
+    {
+      "id": "resume_log",
+      "query": {
+        "engine": "ripgrep",
+        "sql": "SELECT 69 AS evaluator_errors",
+        "description": "统计续跑日志中的配置变化、终止原因和评估器解析异常。",
+        "language": "shell",
+        "executed_at": "2026-08-06T00:00:00+08:00",
+        "tables_used": ["evaluation/vitabench/data/simulations/qwen36_adapt/full_56_trial1.resume.log"]
+      }
+    },
+    {
+      "id": "smoke_result",
+      "query": {
+        "engine": "jq",
+        "sql": "SELECT 1 AS users, 0.3333333333 AS avg_reward, 12 AS total_subtasks, 4 AS passed_subtasks",
+        "description": "汇总保守循环熔断修复后的单用户 smoke 结果。",
+        "language": "jq",
+        "executed_at": "2026-08-06T00:00:00+08:00",
+        "tables_used": ["evaluation/vitabench/data/simulations/qwen36_adapt/smoke_conservative_guard.json"]
+      }
+    },
+    {
+      "id": "official_readme",
+      "query": {
+        "engine": "file",
+        "sql": "SELECT 'Claude-Opus-4.6' AS model, 'Full Context' AS memory, 0.503 AS avg4 UNION ALL SELECT 'Qwen3-Max', 'Agentic Memory', 0.324",
+        "description": "读取官方 README 中三种 memory setting 的 Avg@4、Pass@4、Pass^4 定义和榜单值。",
+        "language": "markdown",
+        "executed_at": "2026-08-06T00:00:00+08:00",
+        "tables_used": ["evaluation/vitabench/README.md"]
+      }
+    },
+    {
+      "id": "comparison_source",
+      "query": {
+        "engine": "shell",
+        "sql": "SELECT '官方最高' AS run, 'Claude-Opus-4.6' AS model, 'Full Context' AS memory, 'Avg@4' AS metric, 0.503 AS score UNION ALL SELECT '官方近似参考', 'Qwen3-Max', 'Agentic Memory', 'Avg@4', 0.324 UNION ALL SELECT '本地全量', 'Qwen3.6-35B-A3B', 'ADAPT', 'Avg@1', 0.0850710119 UNION ALL SELECT '修复后 smoke', 'Qwen3.6-35B-A3B', 'ADAPT', 'Avg@1, n=1 用户', 0.3333333333",
+        "description": "将本地单次 rollout 结果与 README 公布的官方 Avg@4 榜单值并列，并人工标注可比性。",
+        "language": "shell",
+        "executed_at": "2026-08-06T00:00:00+08:00",
+        "tables_used": [
+          "evaluation/vitabench/data/simulations/qwen36_adapt/full_56_trial1.json",
+          "evaluation/vitabench/README.md"
+        ]
+      }
+    }
+  ]
+}

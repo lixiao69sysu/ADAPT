@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "source_results": "/tmp/adapt-vitabench-f60169e/data/simulations/adapt_agent/evolution_ab_baseline_20260807_v2.json",
+  "leakage_guard": "evaluation outcomes are used only for offline diagnosis and gating; rubrics are never copied into Agent runtime inputs",
+  "summary": {
+    "bad_case_count": 9,
+    "candidate_count": 7,
+    "diagnosis_counts": {
+      "memory_retrieval": 6,
+      "proactive_decision": 1,
+      "repeated_tool_call": 3,
+      "unclassified": 3
+    }
+  },
+  "bad_cases": [
+    {
+      "case_id": "U642088:subtask_1",
+      "task_id": "U642088",
+      "subtask_index": 1,
+      "instruction": "啊啊啊啊，上次出去玩，拖鞋忘酒店了，赶紧帮我买双新的，送到家里",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2024-03-02 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"上次看的那个果蔬星球，帮我点一杯牛油果奶昔\"}, {\"role\": \"assistant\", \"content\": \"好的！鲜榨牛油果奶昔2\n- 用户偏好商品: 大床房 4月2日-4日 两晚 (置信 0.60)\n- 观察[2024-06-14 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊\n- 观察[2024-05-28 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个外卖，要堂食店的，配送25分钟以内\"}, {\"role\": \"assistant\", \"content\": \"好的，筛选堂食店且25\n- 观察[2024-04-04 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"出差结束了，亚朵的体验一如既往的好\"}, {\"role\": \"assistant\", \"content\": \"很高兴你住得满意！亚朵的服务和\n【信息不完整，建议先向用户询问】您更倾向什么口味？比如清淡、麻辣、烧烤等。",
+      "tool_call_count": 9,
+      "search_call_count": 1,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_2",
+      "task_id": "U642088",
+      "subtask_index": 2,
+      "instruction": "现在的美甲已经配不上现在的我了",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [
+        "proactive"
+      ],
+      "memory_snapshot": "- 观察[2024-06-16 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"本来想周末回趟呼和浩特结果一看车票四个多小时，还是算了吧\"}, {\"role\": \"assistant\", \"content\": \"确实有点\n- 观察[2024-06-14 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊\n- 用户偏好商品: 纯色美甲 (置信 0.60)\n- 观察[2023-11-11 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"最近波司登有什么折扣吗？虽然我不缺羽绒服了，但万一有特别好的价格……\"}, {\"role\": \"assistant\", \"content\":\n- 观察[2024-06-17 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"今天天气也太热了吧，三十五六度了\"}, {\"role\": \"assistant\", \"content\": \"是呀，天津这两天确实进入高温了，",
+      "tool_call_count": 4,
+      "search_call_count": 2,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        },
+        {
+          "code": "proactive_decision",
+          "evidence": "failed subtask is labeled proactive by the evaluator",
+          "confidence": 0.7
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_3",
+      "task_id": "U642088",
+      "subtask_index": 3,
+      "instruction": "6号要去青岛呆几天，帮我订个三晚的酒店",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2024-08-04 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"上次去青岛真的念念不忘，想看看秋天的青岛是什么样的\"}, {\"role\": \"assistant\", \"content\": \"秋天的青岛也非\n- 观察[2024-07-19 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"到青岛了！刚到酒店放下行李，亚朵的房间很舒服。帮我看看附近有什么好吃的，想吃海鲜\"}, {\"role\": \"assistant\", \"con\n- 观察[2024-07-13 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"我确定了！7月19号到21号去青岛，帮我订票和酒店吧\"}, {\"role\": \"assistant\", \"content\": \"好嘞！我来帮\n- 观察[2024-07-07 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"最近想出去玩，你觉得夏天去哪里比较好？海边那种\"}, {\"role\": \"assistant\", \"content\": \"夏天去海边确实很舒\n- 观察[2024-03-28 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"四月初我要去北京出差两天，帮我订个酒店吧\"}, {\"role\": \"assistant\", \"content\": \"好的，你大概什么时候到北\n【信息不完整，建议先向用户询问】您更倾向什么口味？比如清淡、麻辣、烧烤等。",
+      "tool_call_count": 4,
+      "search_call_count": 1,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_4",
+      "task_id": "U642088",
+      "subtask_index": 4,
+      "instruction": "家里水果没有了，帮我买点水果送到家",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [
+        "update"
+      ],
+      "memory_snapshot": "- 观察[2024-08-13 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我买点水果，来一份苹果和牛油果\"}, {\"role\": \"assistant\", \"content\": \"好的，「果然好生鲜超市」有红富士\n- 观察[2024-06-18 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我在闪购看看有没有牛油果和苹果\"}, {\"role\": \"assistant\", \"content\": \"找到附近「鲜果时光」有售：\\n-\n- 观察[2024-04-15 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"水果快吃完了，帮我再买点牛油果和苹果\"}, {\"role\": \"assistant\", \"content\": \"好的！每日优鲜现在有「牛油果\n- 观察[2024-03-22 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我在闪购买点水果，要牛油果和苹果\"}, {\"role\": \"assistant\", \"content\": \"好的，广汇超市在售的有：牛油果\n- 观察[2022-09-17 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我看看附近有没有送牛肉套饭的外卖？最好别太远，我饿了。\"}, {\"role\": \"assistant\", \"content\": \"帮你搜了",
+      "tool_call_count": 24,
+      "search_call_count": 3,
+      "max_identical_calls": 2,
+      "tool_error_count": 0,
+      "paid": false,
+      "diagnoses": [
+        {
+          "code": "unclassified",
+          "evidence": "reward is zero but no supported deterministic symptom matched",
+          "confidence": 0.2
+        },
+        {
+          "code": "repeated_tool_call",
+          "evidence": "external Agent diagnostic evidence",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_6",
+      "task_id": "U642088",
+      "subtask_index": 6,
+      "instruction": "开年第一班，帮我点个喝的到公司哄哄自己吧",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2024-07-24 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个午饭外卖吧，在公司，想吃牛肉相关的\"}, {\"role\": \"assistant\", \"content\": \"滨海新区新港七号路附近\n- 观察[2024-07-15 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"今天加班好累，想吃羊肉犒劳一下自己，帮我点个外卖\"}, {\"role\": \"assistant\", \"content\": \"辛苦了！附近有这\n- 观察[2024-06-27 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个外卖吧，想吃牛肉面，要那种有实体店可以堂食的，不要纯外卖店\"}, {\"role\": \"assistant\", \"content\": \n- 观察[2023-10-04 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"假期在家待了几天，嘴巴寂寞了。帮我点个牛肉盖饭加几串不辣的烤羊肉串吧。\"}, {\"role\": \"assistant\", \"content\"\n- 观察[2022-10-12 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"中午帮我点个羊肉套饭吧，公司附近的都行，不要放辣椒。\"}, {\"role\": \"assistant\", \"content\": \"你公司在远洋",
+      "tool_call_count": 25,
+      "search_call_count": 24,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": false,
+      "diagnoses": [
+        {
+          "code": "unclassified",
+          "evidence": "reward is zero but no supported deterministic symptom matched",
+          "confidence": 0.2
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_7",
+      "task_id": "U642088",
+      "subtask_index": 7,
+      "instruction": "水果吃完了，帮我买点送到家里",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2025-04-08 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"再帮我买点香蕉，有没有便宜一些的？\"}, {\"role\": \"assistant\", \"content\": \"果缤纷闪购今天有活动，国产香蕉\n- 观察[2025-03-01 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"最近想买点水果吃，不要苹果，也不要芒果，有没有什么推荐的？\"}, {\"role\": \"assistant\", \"content\": \"好的，\n- 观察[2024-08-13 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我买点水果，来一份苹果和牛油果\"}, {\"role\": \"assistant\", \"content\": \"好的，「果然好生鲜超市」有红富士\n- 观察[2024-04-15 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"水果快吃完了，帮我再买点牛油果和苹果\"}, {\"role\": \"assistant\", \"content\": \"好的！每日优鲜现在有「牛油果\n- 观察[2024-03-22 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我在闪购买点水果，要牛油果和苹果\"}, {\"role\": \"assistant\", \"content\": \"好的，广汇超市在售的有：牛油果\n【信息不完整，建议先向用户询问】您更倾向什么口味？比如清淡、麻辣、烧烤等。",
+      "tool_call_count": 25,
+      "search_call_count": 3,
+      "max_identical_calls": 2,
+      "tool_error_count": 0,
+      "paid": false,
+      "diagnoses": [
+        {
+          "code": "unclassified",
+          "evidence": "reward is zero but no supported deterministic symptom matched",
+          "confidence": 0.2
+        },
+        {
+          "code": "repeated_tool_call",
+          "evidence": "external Agent diagnostic evidence",
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_9",
+      "task_id": "U642088",
+      "subtask_index": 9,
+      "instruction": "忙里偷个闲，去北海呆几天，帮我订明天的机票",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2025-06-01 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我查一下7月中旬天津飞青岛的机票，我想去青岛玩。\"}, {\"role\": \"assistant\", \"content\": \"好的，帮你查了\n- 观察[2024-11-14 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"我想趁着这个月找个周末去青岛玩两天，帮我看看机票和酒店\"}, {\"role\": \"assistant\", \"content\": \"好的！天津\n- 观察[2024-03-28 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"四月初我要去北京出差两天，帮我订个酒店吧\"}, {\"role\": \"assistant\", \"content\": \"好的，你大概什么时候到北\n- 观察[2025-07-09 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我订7月14号青岛飞天津的返程机票，下午的，经济舱。\"}, {\"role\": \"assistant\", \"content\": \"好的，7月\n- 用户偏好商品: SC4604 青岛胶东-天津滨海 7月14日 15:20 经济舱 (置信 0.60)",
+      "tool_call_count": 5,
+      "search_call_count": 1,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_10",
+      "task_id": "U642088",
+      "subtask_index": 10,
+      "instruction": "一个人在家想吃海鲜了，帮我点个外卖吧",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2025-08-23 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"好想吃羊肉啊，帮我找家附近吃烤羊肉的店，到店吃\"}, {\"role\": \"assistant\", \"content\": \"月光园一公里内有一\n- 观察[2025-07-13 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"崂山太美了！下来之后好饿，想吃烤羊腿，帮我找找之前说的那个小西湖清真烤羊腿。\"}, {\"role\": \"assistant\", \"conte\n- 观察[2025-04-24 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个水果外卖，买点香蕉\"}, {\"role\": \"assistant\", \"content\": \"好的，附近的鲜果时光有进口香蕉，约1k\n- 观察[2025-01-16 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"好冷啊不想出门，帮我点个外卖吧，想吃牛肉面\"}, {\"role\": \"assistant\", \"content\": \"天津这几天确实冷得很。\n- 观察[2024-11-23 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"到青岛啦！栈桥好多海鸥，超美的。帮我找个附近的海鲜馆子吧\"}, {\"role\": \"assistant\", \"content\": \"欢迎来到\n【信息不完整，建议先向用户询问】您更倾向什么口味？比如清淡、麻辣、烧烤等。",
+      "tool_call_count": 7,
+      "search_call_count": 1,
+      "max_identical_calls": 1,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        }
+      ]
+    },
+    {
+      "case_id": "U642088:subtask_11",
+      "task_id": "U642088",
+      "subtask_index": 11,
+      "instruction": "我好饿，想吃个粉！快给我点个外卖送到家里来",
+      "reward": 0.0,
+      "termination_reason": "agent_stop",
+      "skills": [],
+      "memory_snapshot": "- 观察[2025-09-08 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个外卖，想吃羊肉，不要辣的\"}, {\"role\": \"assistant\", \"content\": \"好的，为你找到以下羊肉外卖选项：\n- 观察[2025-04-24 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"帮我点个水果外卖，买点香蕉\"}, {\"role\": \"assistant\", \"content\": \"好的，附近的鲜果时光有进口香蕉，约1k\n- 观察[2025-01-16 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"好冷啊不想出门，帮我点个外卖吧，想吃牛肉面\"}, {\"role\": \"assistant\", \"content\": \"天津这几天确实冷得很。\n- 观察[2024-11-02 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"现在这天气等外卖送到都冷了，还是到店里吃吧，热乎乎的，最近还是不想点外卖\"}, {\"role\": \"assistant\", \"content\n- 观察[2024-10-19 00:00:00] (conversation): [{\"role\": \"user\", \"content\": \"突然好想吃烧烤，帮我点个外卖吧\"}, {\"role\": \"assistant\", \"content\": \"好嘞！附近评分较高的烧烤店有：1.\n【信息不完整，建议先向用户询问】您更倾向什么口味？比如清淡、麻辣、烧烤等。",
+      "tool_call_count": 11,
+      "search_call_count": 5,
+      "max_identical_calls": 2,
+      "tool_error_count": 0,
+      "paid": true,
+      "diagnoses": [
+        {
+          "code": "memory_retrieval",
+          "evidence": "task completed and paid but reward remained zero while a non-empty memory snapshot and search trajectory were present",
+          "confidence": 0.75
+        },
+        {
+          "code": "repeated_tool_call",
+          "evidence": "external Agent diagnostic evidence",
+          "confidence": 1.0
+        }
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "strategy_id": "harness.proactive_question_delivery.v1",
+      "diagnosis_code": "proactive_decision",
+      "mutation_kind": "policy",
+      "component": "harness.agent",
+      "changes": {
+        "suggested_question": "emit_to_user_or_use_memory"
+      },
+      "rationale": "prevent a generated clarification from being silently ignored",
+      "risk": "unnecessary questions can reduce task completion",
+      "supporting_case_ids": [
+        "U642088:subtask_2"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "harness.search_stage_progression.v1",
+      "diagnosis_code": "repeated_tool_call",
+      "mutation_kind": "policy",
+      "component": "harness.progress_guard",
+      "changes": {
+        "repeat_limit": 2,
+        "on_stall": "disable_search_family_and_require_next_stage"
+      },
+      "rationale": "advance from lookup to candidate selection instead of only rejecting",
+      "risk": "a weak initial result page can leave no acceptable candidate",
+      "supporting_case_ids": [
+        "U642088:subtask_4",
+        "U642088:subtask_7",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "retrieval.product_type_expansion.v2",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "product_type_expansions": {
+          "拖鞋": [
+            "人字拖"
+          ]
+        }
+      },
+      "rationale": "apply the successful product subtype bridge without global token filtering",
+      "risk": "the subtype can be stale when a newer preference has drifted",
+      "supporting_case_ids": [
+        "U642088:subtask_1",
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "retrieval.query_centered_raw_page.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "policy",
+      "component": "memory.context_paging",
+      "changes": {
+        "raw_excerpt": "query_centered",
+        "max_chars": 220
+      },
+      "rationale": "keep the matched preference visible instead of truncating the prefix",
+      "risk": "longer excerpts increase prompt size",
+      "supporting_case_ids": [
+        "U642088:subtask_1",
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "retrieval.query_normalization.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "product_type_expansions": {
+          "拖鞋": [
+            "人字拖"
+          ]
+        },
+        "ignore_generic_bigrams": true
+      },
+      "rationale": "bridge broad product terms to stable historical subtypes",
+      "risk": "an expansion can over-constrain a user whose preference has drifted",
+      "supporting_case_ids": [
+        "U642088:subtask_1",
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "retrieval.simulation_time_recency.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "policy",
+      "component": "memory.retrieval",
+      "changes": {
+        "recency_reference": "latest_observed_event_time"
+      },
+      "rationale": "use the task timeline rather than host wall-clock time",
+      "risk": "malformed future timestamps can flatten recency",
+      "supporting_case_ids": [
+        "U642088:subtask_1",
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    },
+    {
+      "strategy_id": "retrieval.structured_signal_priority.v1",
+      "diagnosis_code": "memory_retrieval",
+      "mutation_kind": "config",
+      "component": "memory.retrieval",
+      "changes": {
+        "structured_signal_boost": {
+          "order": 0.2,
+          "cart": 0.12,
+          "search": 0.08
+        }
+      },
+      "rationale": "rank explicit consumption evidence ahead of generic conversations",
+      "risk": "old purchases can dominate a newer conversational preference",
+      "supporting_case_ids": [
+        "U642088:subtask_1",
+        "U642088:subtask_2",
+        "U642088:subtask_3",
+        "U642088:subtask_9",
+        "U642088:subtask_10",
+        "U642088:subtask_11"
+      ],
+      "status": "pending"
+    }
+  ]
+}

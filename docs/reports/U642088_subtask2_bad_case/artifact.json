@@ -1,0 +1,196 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "U642088 子任务 2 零分诊断",
+    "description": "哈瓦娜浴室拖鞋订单为何未满足 VitaBench 个性化 expected state",
+    "generatedAt": "2026-08-06T08:50:00+08:00",
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# U642088 子任务 2 零分诊断"
+      },
+      {
+        "id": "summary",
+        "type": "markdown",
+        "body": "## 技术结论\n\n订单创建、家庭地址和支付均成功，0 分不是执行失败。决定性原因是最终商品为 **哈瓦娜浴室防滑拖鞋**，而 expected state 要求 **哈瓦娜女款人字拖**，并明确把浴室拖鞋列入禁止类别。根因位于 Memory Retrieval：相关偏好已经被保存，但没有进入该任务的 top-k memory，模型随后把查询改写为“居家拖鞋、软底、凉拖”，最终选错品类。",
+        "sourceId": "combined"
+      },
+      {
+        "id": "evidence_heading",
+        "type": "markdown",
+        "body": "## 品牌和地址正确，但商品类型命中硬性反例\n\n图表按 expected state 的四项要求标出是否满足；随后表格给出精确核对。四项中品牌和地址通过，商品类型与女款要求失败。单项任务 reward 为二元结果，关键品类条件失败足以使总分为 0。"
+      },
+      {
+        "id": "rubric_chart_block",
+        "type": "chart",
+        "chartId": "rubric_chart"
+      },
+      {
+        "id": "evidence_table_block",
+        "type": "table",
+        "tableId": "rubric_check"
+      },
+      {
+        "id": "root_cause",
+        "type": "markdown",
+        "body": "## 相关偏好已入库，却在检索阶段丢失\n\n离线复现得到 136 条 memory events，其中 12 条明确包含“哈瓦娜”“人字拖”或“拖鞋”。在与真实运行一致的机器时间计分下，2024-04-20 的哈瓦娜 Slim 人字拖订单仅排第 59，2024-06-02 的加购和搜索分别排第 131 和 135；即使把 recency 参照时间改为任务时间 2024-06-15，三者也只排第 53、92 和 95。它们都无法进入 top-20，`memory.read()` 反而返回牛油果奶昔、酒店、羊肉外卖等内容。\n\n根因是 relevance 的区分力失效。当前使用中文二元字符重叠：指令中的“拖鞋”与结构化信号“哈瓦娜 Slim 系列人字拖”没有相同二元组，正确订单的 relevance 仅为 0.25；包含“帮我”“酒店”“送到”等通用短语的无关对话却得到 0.7–0.9。该查询的 domain 推断返回 `None`，酒店、外卖、水果事件因而没有被抑制。此外，raw conversation 注入时只保留前 100 字符；真实 top-20 中虽有 1 条表面相关对话，哈瓦娜偏好位于截断位置之后，模型仍然看不到。",
+        "sourceId": "combined"
+      },
+      {
+        "id": "trajectory",
+        "type": "markdown",
+        "body": "## 查询漂移把错误进一步放大\n\n模型首次搜索“拖鞋”后，没有依据历史偏好直接筛选哈瓦娜人字拖；它调用询问工具生成了类型确认问题，却没有把问题真正问给用户，反而继续搜索“居家拖鞋、软底、凉拖”。最终从错误候选空间中选择了哈瓦娜浴室防滑拖鞋。Harness 只验证工具 schema、实体 ID 和订单幂等，无法判断“浴室拖鞋”违反个性化品类约束，因此该调用合法执行并支付。",
+        "sourceId": "combined"
+      },
+      {
+        "id": "scope",
+        "type": "markdown",
+        "body": "## 诊断范围与评分定义\n\n分析对象是 VitaBench personalization 用户 U642088 的 sub_U642088_2。控制来源为官方任务文件中的 expected state、hardened v3 对话轨迹，以及用相同 ADAPTMemory 代码对前两批 interactions 的离线复现。这里的 reward 是该子任务 expected state 是否满足的二元结果，不等同于订单 API 是否成功。",
+        "sourceId": "combined"
+      },
+      {
+        "id": "method",
+        "type": "markdown",
+        "body": "## 复核方法\n\n1. 从官方任务定义提取四项 state rubrics。\n2. 将最终 create/pay 轨迹与每项 rubric 对齐。\n3. 顺序回放前两个子任务的 interactions，得到 136 条 MemoryStream events。\n4. 对每条 event 重算 relevance、recency、importance 和综合分，同时比较默认机器时间与任务时间两种 recency 基准。\n5. 对同一指令调用 `ADAPTMemory.read()`，核对实际 top-20 及最终注入文本。\n6. 阅读 RetrievalScorer 的分词、domain gate 和排序实现，定位相关性漏召回机制。",
+        "sourceId": "combined"
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "body": "## 限制与不确定性\n\n轨迹 evaluator 本身使用 LLM，但本例的 expected state 与实际商品冲突是直接可验证的，不依赖 evaluator 主观解释。是否要求四项全部满足由 benchmark 聚合逻辑控制；无论聚合细节如何，“浴室拖鞋”都是 rubric 明示的反例。排名分析是对当前确定性打分器的离线回放，能证明漏召回机制，但不能单独证明某一新排序方案会提高全量成功率；后续仍需要固定基模的消融实验。"
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "body": "## 修复优先级\n\n1. 为产品类型建立同义词/包含关系：`拖鞋 → 人字拖`，避免只依赖二元字符完全重叠。\n2. 对 order、cart、search 等结构化消费信号设置 lexical exact/substring boost，并优先于 raw observations。\n3. 当前任务出现泛化品类时，注入稳定偏好摘要，例如“品牌=哈瓦娜；类型=人字拖；女款优先”。\n4. Harness 增加候选约束检查：选择候选前验证商品名称是否满足 memory 中的正向类型并排除冲突类型。\n5. 询问工具返回问题后，要么真正询问用户，要么使用已有偏好自主决策，不能无视问题并切换到相反查询。"
+      },
+      {
+        "id": "questions",
+        "type": "markdown",
+        "body": "## 后续验证问题\n\n- 修复检索后，哈瓦娜人字拖事件能否稳定进入前 5 条 memory？\n- 在 Full Context 条件下，相同基模是否会直接选中女款哈瓦娜人字拖？\n- 候选约束检查会不会误拦截真实的偏好漂移，需要怎样区分稳定偏好和新指令覆盖？"
+      }
+    ],
+    "charts": [
+      {
+        "id": "rubric_chart",
+        "title": "Expected state 条件命中情况",
+        "subtitle": "1 表示满足，0 表示未满足；sub_U642088_2",
+        "type": "bar",
+        "dataset": "rubric_check",
+        "sourceId": "combined",
+        "intent": "comparison",
+        "question": "最终订单满足了哪些 expected state 条件？",
+        "rationale": "四个离散条件与一个二元命中指标适合用简单条形图比较。",
+        "encodings": {
+          "x": {"field": "criterion", "type": "nominal", "label": "要求"},
+          "y": {"field": "met", "type": "quantitative", "label": "是否满足"},
+          "tooltip": [
+            {"field": "expected", "type": "text", "label": "Expected"},
+            {"field": "actual", "type": "text", "label": "实际"},
+            {"field": "status", "type": "text", "label": "结果"}
+          ]
+        },
+        "maxRows": 4,
+        "layout": "full"
+      }
+    ],
+    "tables": [
+      {
+        "id": "rubric_check",
+        "title": "Expected state 与实际订单核对",
+        "subtitle": "sub_U642088_2，单次 hardened v3 轨迹",
+        "dataset": "rubric_check",
+        "defaultSort": {"field": "priority", "direction": "asc"},
+        "density": "spacious",
+        "sourceId": "combined",
+        "layout": "full",
+        "columns": [
+          {"field": "priority", "label": "序号", "format": "number"},
+          {"field": "criterion", "label": "要求", "type": "text"},
+          {"field": "expected", "label": "Expected", "type": "text"},
+          {"field": "actual", "label": "实际", "type": "text"},
+          {"field": "status", "label": "结果", "type": "text"},
+          {"field": "impact", "label": "影响", "type": "text"}
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "combined",
+        "label": "VitaBench task definition, hardened v3 trace, and ADAPTMemory replay",
+        "query": {
+          "engine": "duckdb",
+          "sql": "SELECT * FROM (VALUES (1, '商品类型', 0, '人字拖；排除居家/浴室/凉拖等', '哈瓦娜浴室防滑拖鞋', '失败'), (2, '品牌', 1, '哈瓦娜 Havaianas', '哈瓦娜 Havaianas', '通过'), (3, '配送地址', 1, '家庭住址', '订单使用家庭住址', '通过'), (4, '性别款式', 0, '女款人字拖优先', '未证明为女款人字拖', '失败/未满足')) AS t(priority, criterion, met, expected, actual, status) ORDER BY priority",
+          "description": "Join the official subtask expected state to the observed order trajectory and replay the first two interaction batches through ADAPTMemory.",
+          "executed_at": "2026-08-06T08:49:10+08:00",
+          "language": "sql",
+          "filters": ["task_id=U642088", "subtask_id=sub_U642088_2", "official VitaBench commit=f60169e"],
+          "tables_used": ["personalization/tasks.json", "phase1_smoke_hardened_v3.log", "ADAPTMemory MemoryStream"]
+        }
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-06T08:50:00+08:00",
+    "status": "ready",
+    "datasets": {
+      "rubric_check": [
+        {
+          "priority": 1,
+          "criterion": "商品类型",
+          "met": 0,
+          "expected": "人字拖；排除居家/浴室/凉拖等",
+          "actual": "哈瓦娜浴室防滑拖鞋",
+          "status": "失败",
+          "impact": "决定性：rubric 明示反例"
+        },
+        {
+          "priority": 2,
+          "criterion": "品牌",
+          "met": 1,
+          "expected": "哈瓦娜 Havaianas",
+          "actual": "哈瓦娜 Havaianas",
+          "status": "通过",
+          "impact": "品牌命中但不能补偿品类错误"
+        },
+        {
+          "priority": 3,
+          "criterion": "配送地址",
+          "met": 1,
+          "expected": "天津市河东华龙道月光园小区1栋1单元1506",
+          "actual": "订单使用家庭住址",
+          "status": "通过",
+          "impact": "地址正确"
+        },
+        {
+          "priority": 4,
+          "criterion": "性别款式",
+          "met": 0,
+          "expected": "女款人字拖优先",
+          "actual": "浴室防滑拖鞋，未证明为女款人字拖",
+          "status": "失败/未满足",
+          "impact": "进一步偏离个性化要求"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "combined",
+      "label": "VitaBench task definition, hardened v3 trace, and ADAPTMemory replay",
+      "query": {
+        "engine": "duckdb",
+        "sql": "SELECT * FROM (VALUES (1, '商品类型', 0, '人字拖；排除居家/浴室/凉拖等', '哈瓦娜浴室防滑拖鞋', '失败'), (2, '品牌', 1, '哈瓦娜 Havaianas', '哈瓦娜 Havaianas', '通过'), (3, '配送地址', 1, '家庭住址', '订单使用家庭住址', '通过'), (4, '性别款式', 0, '女款人字拖优先', '未证明为女款人字拖', '失败/未满足')) AS t(priority, criterion, met, expected, actual, status) ORDER BY priority",
+        "description": "Join the official subtask expected state to the observed order trajectory and replay the first two interaction batches through ADAPTMemory.",
+        "executed_at": "2026-08-06T08:49:10+08:00",
+        "language": "sql",
+        "filters": ["task_id=U642088", "subtask_id=sub_U642088_2", "official VitaBench commit=f60169e"],
+        "tables_used": ["personalization/tasks.json", "phase1_smoke_hardened_v3.log", "ADAPTMemory MemoryStream"]
+      }
+    }
+  ]
+}

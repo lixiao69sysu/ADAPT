@@ -1,0 +1,28 @@
+{
+  "strategy_id": "retrieval.product_type_expansion.v2",
+  "promoted": true,
+  "reasons": [
+    "all gates passed"
+  ],
+  "baseline": {
+    "sample_count": 12,
+    "avg_reward": 0.25,
+    "bad_case_success_rate": 0.0,
+    "regression_success_rate": 1.0,
+    "invalid_tool_rate": 0.0,
+    "loop_rate": 0.25,
+    "avg_tokens": null,
+    "avg_duration_seconds": null
+  },
+  "candidate": {
+    "sample_count": 12,
+    "avg_reward": 0.3333333333333333,
+    "bad_case_success_rate": 0.1111111111111111,
+    "regression_success_rate": 1.0,
+    "invalid_tool_rate": 0.0,
+    "loop_rate": 0.25,
+    "avg_tokens": null,
+    "avg_duration_seconds": null
+  },
+  "cohort_rule": "baseline failures are bad cases; baseline successes are regression cases; missing candidate cases score as failures"
+}

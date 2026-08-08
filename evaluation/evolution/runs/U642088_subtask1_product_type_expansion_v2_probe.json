@@ -1,0 +1,110 @@
+{
+  "task_id": "U642088",
+  "subtask_index": 1,
+  "offline_only": true,
+  "baseline": {
+    "query": "啊啊啊啊，上次出去玩，拖鞋忘酒店了，赶紧帮我买双新的，送到家里",
+    "expanded_query": "啊啊啊啊，上次出去玩，拖鞋忘酒店了，赶紧帮我买双新的，送到家里",
+    "target_terms": [
+      "哈瓦娜",
+      "人字拖"
+    ],
+    "event_count": 136,
+    "best_target_rank": 12,
+    "target_in_top_5": false,
+    "target_in_top_20": true,
+    "target_visible_in_excerpt": false,
+    "target_excerpt": "[{\"role\": \"user\", \"content\": \"今天我生日诶！\"}, {\"role\": \"assistant\", \"content\": \"生日快乐呀！🎂 27岁的你一定会更加闪闪发光！今天",
+    "top_5": [
+      {
+        "rank": 1,
+        "score": 0.696731,
+        "type": "conversation",
+        "timestamp": "2024-06-14 00:00:00",
+        "text": "raw_observation [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊杂汤」是堂食店，配送约19分钟，评分4. [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊杂汤」"
+      },
+      {
+        "rank": 2,
+        "score": 0.689541,
+        "type": "order",
+        "timestamp": "2024-03-28 00:00:00",
+        "text": "prefers_product 大床房 4月2日-4日 两晚 {\"scenario\": \"hotel\", \"merchant_name\": \"亚朵酒店（北京国贸店）\", \"tags\": [\"四星级\", \"亚朵\"], \"items\": [{\"product_name\": \"大床房 4月2日-4日 两晚\", \"price\": 778, \"quantity\": 1}]}"
+      },
+      {
+        "rank": 3,
+        "score": 0.684107,
+        "type": "conversation",
+        "timestamp": "2024-05-28 00:00:00",
+        "text": "raw_observation [{\"role\": \"user\", \"content\": \"帮我点个外卖，要堂食店的，配送25分钟以内\"}, {\"role\": \"assistant\", \"content\": \"好的，筛选堂食店且25分钟内配送的：1.「炖香阁」配送23分钟 [{\"role\": \"user\", \"content\": \"帮我点个外卖，要堂食店的，配送25分钟以内\"}, {\"role\": \"assistant\", \"content\": \"好的，筛选堂食店且25分钟内"
+      },
+      {
+        "rank": 4,
+        "score": 0.680984,
+        "type": "conversation",
+        "timestamp": "2024-03-02 00:00:00",
+        "text": "raw_observation [{\"role\": \"user\", \"content\": \"上次看的那个果蔬星球，帮我点一杯牛油果奶昔\"}, {\"role\": \"assistant\", \"content\": \"好的！鲜榨牛油果奶昔28元。配送到月光园小区，预计20分钟送达 [{\"role\": \"user\", \"content\": \"上次看的那个果蔬星球，帮我点一杯牛油果奶昔\"}, {\"role\": \"assistant\", \"content\": \"好的！鲜榨牛油果奶昔28元。"
+      },
+      {
+        "rank": 5,
+        "score": 0.649072,
+        "type": "conversation",
+        "timestamp": "2024-04-04 00:00:00",
+        "text": "raw_observation [{\"role\": \"user\", \"content\": \"出差结束了，亚朵的体验一如既往的好\"}, {\"role\": \"assistant\", \"content\": \"很高兴你住得满意！亚朵的服务和环境确实一直很稳定。要帮你给酒店写个评价 [{\"role\": \"user\", \"content\": \"出差结束了，亚朵的体验一如既往的好\"}, {\"role\": \"assistant\", \"content\": \"很高兴你住得满意！亚朵的服务和环境确"
+      }
+    ]
+  },
+  "candidates": {
+    "retrieval.product_type_expansion.v2": {
+      "query": "啊啊啊啊，上次出去玩，拖鞋忘酒店了，赶紧帮我买双新的，送到家里",
+      "expanded_query": "啊啊啊啊，上次出去玩，拖鞋忘酒店了，赶紧帮我买双新的，送到家里 人字拖",
+      "target_terms": [
+        "哈瓦娜",
+        "人字拖"
+      ],
+      "event_count": 136,
+      "best_target_rank": 1,
+      "target_in_top_5": true,
+      "target_in_top_20": true,
+      "target_visible_in_excerpt": true,
+      "target_excerpt": "prefers_product: 哈瓦娜slim系列人字拖 珊瑚红",
+      "top_5": [
+        {
+          "rank": 1,
+          "score": 0.753204,
+          "type": "order",
+          "timestamp": "2024-04-20 00:00:00",
+          "text": "prefers_product 哈瓦娜slim系列人字拖 珊瑚红 {\"scenario\": \"instore\", \"merchant_name\": \"Havaianas哈瓦娜\", \"tags\": [\"人字拖\", \"夏季\"], \"items\": [{\"product_name\": \"哈瓦娜slim系列人字拖 珊瑚红\", \"price\": 228, \"quantity\": 1}]}"
+        },
+        {
+          "rank": 2,
+          "score": 0.708704,
+          "type": "conversation",
+          "timestamp": "2024-04-20 00:00:00",
+          "text": "raw_observation [{\"role\": \"user\", \"content\": \"今天我生日诶！\"}, {\"role\": \"assistant\", \"content\": \"生日快乐呀！🎂 27岁的你一定会更加闪闪发光！今天有什么安排吗？要不要去逛逛商场犒劳自己？ [{\"role\": \"user\", \"content\": \"今天我生日诶！\"}, {\"role\": \"assistant\", \"content\": \"生日快乐呀！🎂 27岁的你一定会更加闪闪发光！今天有什么"
+        },
+        {
+          "rank": 3,
+          "score": 0.696731,
+          "type": "conversation",
+          "timestamp": "2024-06-14 00:00:00",
+          "text": "raw_observation [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊杂汤」是堂食店，配送约19分钟，评分4. [{\"role\": \"user\", \"content\": \"今天又想吃羊肉了，帮我找个堂食店的外卖，送快一点的\"}, {\"role\": \"assistant\", \"content\": \"「清真·草原羊杂汤」"
+        },
+        {
+          "rank": 4,
+          "score": 0.689541,
+          "type": "order",
+          "timestamp": "2024-03-28 00:00:00",
+          "text": "prefers_product 大床房 4月2日-4日 两晚 {\"scenario\": \"hotel\", \"merchant_name\": \"亚朵酒店（北京国贸店）\", \"tags\": [\"四星级\", \"亚朵\"], \"items\": [{\"product_name\": \"大床房 4月2日-4日 两晚\", \"price\": 778, \"quantity\": 1}]}"
+        },
+        {
+          "rank": 5,
+          "score": 0.687734,
+          "type": "conversation",
+          "timestamp": "2024-06-02 00:00:00",
+          "text": "raw_observation [{\"role\": \"user\", \"content\": \"之前买的那双哈瓦娜人字拖太好穿了，想再入一双不同颜色的\"}, {\"role\": \"assistant\", \"content\": \"哈瓦娜确实是人字拖天花板！他家今年夏季新款颜色很多 [{\"role\": \"user\", \"content\": \"之前买的那双哈瓦娜人字拖太好穿了，想再入一双不同颜色的\"}, {\"role\": \"assistant\", \"content\": \"哈瓦娜确实是人字"
+        }
+      ],
+      "rank_delta": 11
+    }
+  }
+}

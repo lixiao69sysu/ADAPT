@@ -1,0 +1,18 @@
+{
+  "strategy_id": "retrieval.query_normalization.v1",
+  "decision": "rejected",
+  "completed_common_cases": [
+    "U642088:subtask_0",
+    "U642088:subtask_1"
+  ],
+  "improvements": [
+    "U642088:subtask_1"
+  ],
+  "regressions": [
+    "U642088:subtask_0"
+  ],
+  "reasons": [
+    "completed regression cases: U642088:subtask_0"
+  ],
+  "promotion_allowed": false
+}
