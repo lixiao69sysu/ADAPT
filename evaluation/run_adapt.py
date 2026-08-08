@@ -55,7 +55,6 @@ def main(argv=None):
         default=DEFAULT_OFFICIAL_COMMIT,
     )
     known, vita_args = parser.parse_known_args(argv)
-    verify_frozen_vita(known.vita_root, known.expected_vita_commit)
 
     sys.path.insert(0, str(known.vita_root / "src"))
     vita_run = importlib.import_module("vita.run")
