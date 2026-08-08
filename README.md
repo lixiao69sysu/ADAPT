@@ -77,18 +77,6 @@ ADAPT/
 
 在 VitaBench 2.0 Memory Arena 上对比 5 个官方基线（null / full_context / rewrite / rag / groundtruth），指标：Avg@4、Pass@4、Pass^4，外加成本效率与时间衰减曲线。详见 [PROJECT_PLAN.md](PROJECT_PLAN.md) 第三章。
 
-## 路线图
-
-五步执行路线（详见 [PROJECT_PLAN.md](PROJECT_PLAN.md) 第四章）：
-
-- [x] **Step 0 基线可信**：环境搭建、编码修复、模型接入
-- [x] **Step 1 记忆骨架**：ADAPTMemory + Memory Stream + 三维检索 + 自适应路由
-- [x] **Step 2 智能层**：漂移检测 + 选择性遗忘 + 主动询问 + 置信度累积
-- [ ] **Step 3 评测验证**：对比矩阵 + 消融实验 + 时间衰减曲线
-- [ ] **Step 4 工程收尾**：文档、测试、成绩展示
-
-当前进度：**Step 1-2 代码完成，单用户 smoke 0.333 Avg@1**
-
 ## 引用与致谢
 
 - VitaBench 2.0: `arXiv:2605.27141`（ICLR 2026）— [github.com/meituan-longcat/VitaBench-2.0](https://github.com/meituan-longcat/VitaBench-2.0)
