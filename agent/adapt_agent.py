@@ -279,13 +279,14 @@ class ADAPTAgent(PersonalizationAgent):
                 for tool in self.tools
                 if tool.name not in state.disabled_tool_names
             ]
+            _llm_args = {k: v for k, v in self.llm_args.items() if k != "tool_choice"}
             draft = generate(
                 model=self.llm,
                 tools=active_tools,
-                tool_choice=("required" if force_progress and active_tools else None),
+                tool_choice=None,
                 messages=internal_system + self._page_messages(state.messages),
                 enable_think=self.enable_think,
-                **self.llm_args,
+                **_llm_args,
             )
             if draft is None:
                 raise RuntimeError("Agent model returned no message")
