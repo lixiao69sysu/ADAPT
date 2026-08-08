@@ -1,1 +1,0 @@
-from vita.user.personalization_user import PersonalizationUser

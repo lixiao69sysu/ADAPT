@@ -30,22 +30,25 @@ VitaBench 2.0 揭示的行业现状：SOTA 模型在理想 Full Context 下仅 ~
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/your-org/ADAPT.git
+git clone https://github.com/lixiao69sysu/ADAPT.git
 cd ADAPT
 
-# 2. 安装 VitaBench 2.0
+# 2. 克隆 VitaBench 2.0（评测骨架，单独仓库）
+git clone https://github.com/meituan-longcat/VitaBench-2.0.git evaluation/vitabench
+
+# 3. 安装 VitaBench 依赖
 cd evaluation/vitabench
 pip install -e .
 
-# 3. 下载数据集
+# 4. 下载数据集
 huggingface-cli download meituan-longcat/VitaBench-2.0 \
   --repo-type dataset --local-dir data/vita/domains/personalization
 
-# 4. 配置 LLM（OpenAI 兼容端点均可）
+# 5. 配置 LLM（OpenAI 兼容端点均可）
 cp src/vita/models.yaml.example src/vita/models.yaml
 export OPENAI_API_KEY=sk-...   # DeepSeek / Claude / 任意兼容端点
 
-# 5. 运行子集评测（ADAPT vs 基线）
+# 6. 运行子集评测（ADAPT vs 基线）
 cd ../..
 bash evaluation/scripts/run_subsample.sh
 ```
@@ -55,17 +58,19 @@ bash evaluation/scripts/run_subsample.sh
 ```
 ADAPT/
 ├── agent/                 # ADAPT 智能体核心
-│   ├── memory/            # 记忆系统（Stream/检索/Reflection/生命周期）
-│   ├── proactive/         # 主动询问引擎
-│   ├── tools/             # 工具注册表
-│   └── agent.py           # ADAPT Agent（实现 BaseMemory）
+│   ├── memory/            # 记忆系统（Stream/检索/漂移检测/生命周期）
+│   ├── harness/           # Agent Harness（ToolGuard/ProgressGuard）
+│   ├── evolution/         # Evolution Harness（坏案例挖掘+策略门控）
+│   └── tests/             # 单元测试（43 个）
 ├── evaluation/
-│   ├── vitabench/         # VitaBench 2.0 子模块
-│   ├── scripts/           # 评测脚本
-│   └── results/           # 对比矩阵 + 曲线
-├── tests/                 # 测试
-├── docs/                  # 架构 + 评测方法论
-└── demos/                 # 可选演示
+│   ├── vitabench/         # VitaBench 2.0（需单独克隆）
+│   ├── run_adapt.py       # 冻结 VitaBench 启动器
+│   ├── evolve.py          # Evolution CLI
+│   ├── config/            # 模型配置
+│   └── scripts/           # 评测脚本
+├── docs/                  # 架构文档 + 评测方法论
+├── PROJECT_PLAN.md        # 详细项目规划
+└── SETUP.md               # 环境搭建指南
 ```
 
 ## 评测方法
@@ -76,13 +81,13 @@ ADAPT/
 
 五步执行路线（详见 [PROJECT_PLAN.md](PROJECT_PLAN.md) 第四章）：
 
-- [x] **Step 0 基线可信**：环境搭建、编码修复、DeepSeek Flash 接入
-- [ ] **Step 1 记忆骨架**：ADAPTMemory + Memory Stream + 三维检索（胜负手，~60% 时间）
-- [ ] **Step 2 智能层**：漂移检测 + 选择性遗忘 + 主动询问
+- [x] **Step 0 基线可信**：环境搭建、编码修复、模型接入
+- [x] **Step 1 记忆骨架**：ADAPTMemory + Memory Stream + 三维检索 + 自适应路由
+- [x] **Step 2 智能层**：漂移检测 + 选择性遗忘 + 主动询问 + 置信度累积
 - [ ] **Step 3 评测验证**：对比矩阵 + 消融实验 + 时间衰减曲线
 - [ ] **Step 4 工程收尾**：文档、测试、成绩展示
 
-当前进度：**Step 0 进行中**（Flash 基线子集验证）
+当前进度：**Step 1-2 代码完成，单用户 smoke 0.333 Avg@1**
 
 ## 引用与致谢
 
