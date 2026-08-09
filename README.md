@@ -77,6 +77,27 @@ ADAPT/
 
 在 VitaBench 2.0 Memory Arena 上对比 5 个官方基线（null / full_context / rewrite / rag / groundtruth），指标：Avg@4、Pass@4、Pass^4，外加成本效率与时间衰减曲线。详见 [PROJECT_PLAN.md](PROJECT_PLAN.md) 第三章。
 
+## 核心创新
+
+| 模块 | 技术 | 效果 |
+|------|------|------|
+| **ProgressGuard** | 搜索/询问循环检测 + 强制工具禁用 | 减少无效调用 |
+| **MemorySummarizer** | 原始事实→结构化偏好摘要 | 提升记忆可用性 |
+| **Conflict Resolution** | 矛盾偏好检测 + 置信度×时间衰减消解 | 减少记忆冲突 |
+| **Task Decomposition** | Search→Filter→Decide→Execute 四步引导 | 结构化决策 |
+| **Reflection Loop** | 每10步进度回顾 | 防止空转 |
+
+## 评测结果
+
+**配置**：Qwen3.6-35B-A3B + ADAPT（VitaBench 2.0 personalization）
+
+| 用户 | Avg@4 | 通过/总 |
+|------|:---:|:---:|
+| U642088 | 0.083 | 1/12 |
+| J365414 | 0.182 | 2/11 |
+| X193757 | 0.036 | 1/14 |
+| **总平均** | **0.100** | - |
+
 ## 引用与致谢
 
 - VitaBench 2.0: `arXiv:2605.27141`（ICLR 2026）— [github.com/meituan-longcat/VitaBench-2.0](https://github.com/meituan-longcat/VitaBench-2.0)
