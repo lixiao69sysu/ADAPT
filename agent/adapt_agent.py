@@ -22,11 +22,13 @@ from agent.harness.progress_guard import (
     is_write_tool,
     observe_result,
     record_calls,
+    search_call_count,
     SEARCH_TOOLS,
     should_force_act,
     should_force_select,
     stall_correction_message,
     over_questioning_correction_message,
+    question_call_count,
     validate_progress,
 )
 from agent.harness.tool_guard import EntityLedger, ToolGuard, ValidationIssue
@@ -277,11 +279,25 @@ class ADAPTAgent(PersonalizationAgent):
             state.messages.append(terminal)
             return terminal, state
 
+        # 跨步持久化的工具禁用：在生成前检查
+        _sc = search_call_count(state)
+        _qc = question_call_count(state)
+        logger.info("ADAPT_STEP step={} search_count={} question_count={} disabled={}", state.step_count, _sc, _qc, state.disabled_tool_names)
+        if should_force_select(state):
+            for tool in self.tools:
+                if any(s in tool.name.lower() for s in SEARCH_TOOLS):
+                    state.disabled_tool_names.add(tool.name)
+            logger.info("ADAPT_SEARCH_DISABLED step={} count={}", state.step_count, _sc)
+        if should_force_act(state):
+            for tool in self.tools:
+                if any(s in tool.name.lower() for s in {"suggest_question", "question"}):
+                    state.disabled_tool_names.add(tool.name)
+            logger.info("ADAPT_QUESTION_DISABLED step={} count={}", state.step_count, _qc)
+
         rejected_usage = {}
         rejected_cost = 0.0
         correction = None
         force_progress = False
-        _search_disabled = False
         for _ in range(self.max_internal_regenerations + 1):
             system_content = "\n\n".join(
                 message.content for message in state.system_messages
@@ -289,20 +305,12 @@ class ADAPTAgent(PersonalizationAgent):
             if should_force_act(state) and not correction:
                 correction = over_questioning_correction_message(state)
                 force_progress = True
-                # 禁用询问工具
-                for tool in self.tools:
-                    if any(s in tool.name.lower() for s in {"suggest_question", "question"}):
-                        state.disabled_tool_names.add(tool.name)
             if should_force_select(state) and not force_progress:
                 correction = stall_correction_message(state)
                 candidate_context = self._latest_candidate_context(state.messages)
                 if candidate_context:
                     correction += f"\n已有候选结果：\n{candidate_context}"
                 force_progress = True
-                # 禁用搜索工具
-                for tool in self.tools:
-                    if any(s in tool.name.lower() for s in SEARCH_TOOLS):
-                        state.disabled_tool_names.add(tool.name)
             # Reflection: 每 10 步回顾进度
             if state.step_count > 0 and state.step_count % 10 == 0 and state.step_count != state.last_reflection:
                 state.last_reflection = state.step_count
