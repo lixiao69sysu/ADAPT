@@ -12,6 +12,12 @@ def test_trace_metrics_are_aggregate_and_observable(tmp_path):
         "simulations": [{
             "reward_info": {
                 "reward": 0.5,
+                "info": {
+                    "subtask_rewards": {
+                        "subtask_0_reward": 1.0,
+                        "subtask_1_reward": 0.0,
+                    }
+                },
                 "window_evaluations": [{"reward": 0.4}, {"reward": 0.6}],
             },
             "messages": [
@@ -25,6 +31,11 @@ def test_trace_metrics_are_aggregate_and_observable(tmp_path):
     }), encoding="utf-8")
     metrics = summarize(path)
     assert metrics["avg_reward"] == 0.5
+    assert metrics["task_avg_at_1"] == 0.5
+    assert metrics["task_pass_at_1"] == 0.0
+    assert metrics["subtask_avg_at_1"] == 0.5
+    assert metrics["subtask_pass_at_1"] == 0.5
+    assert metrics["subtask_count"] == 2
     assert metrics["late_minus_early"] == 0.2
     assert metrics["tool_errors"] == 1
     assert "rubric" not in metrics
@@ -32,10 +43,18 @@ def test_trace_metrics_are_aggregate_and_observable(tmp_path):
 
 def test_metric_comparison_reports_reward_and_error_reduction():
     result = compare(
-        {"avg_reward": 0.2, "tool_errors": 10, "repeated_search_excess": 4,
+        {"avg_reward": 0.2, "task_avg_at_1": 0.2, "task_pass_at_1": 0.1,
+         "subtask_avg_at_1": 0.3, "subtask_pass_at_1": 0.3,
+         "tool_errors": 10, "repeated_search_excess": 4,
          "incomplete_payments": 2},
-        {"avg_reward": 0.25, "tool_errors": 5, "repeated_search_excess": 1,
+        {"avg_reward": 0.25, "task_avg_at_1": 0.25, "task_pass_at_1": 0.2,
+         "subtask_avg_at_1": 0.4, "subtask_pass_at_1": 0.4,
+         "tool_errors": 5, "repeated_search_excess": 1,
          "incomplete_payments": 0},
     )
     assert result["reward_delta"] == 0.05
+    assert result["task_avg_at_1_delta"] == 0.05
+    assert result["task_pass_at_1_delta"] == 0.1
+    assert result["subtask_avg_at_1_delta"] == 0.1
+    assert result["subtask_pass_at_1_delta"] == 0.1
     assert result["tool_errors_reduction"] == 0.5

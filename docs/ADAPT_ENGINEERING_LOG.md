@@ -528,6 +528,19 @@
 - **下一步**：为“需求到候选”构造不含真实品类的语义正反例，比较受约束 policy selector 与纯词面 anchor；必须同时测试短词、同义表达、替代需求和错误高分候选。只有跨至少两个虚构工具形态成立，才接入 runtime。支付授权继续按 E-023 独立评估，不因 benchmark STOP 放宽安全边界。
 - **能力抽象**：preference-to-candidate grounding / candidate-to-action execution / proactiveness calibration。
 
+## E-033：只看平均 reward 会混淆整轨迹与子任务成功率
+
+- **日期**：2026-08-24
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-INVARIANT`。指标直接复现 VitaBench `reward == 1.0` 的 strict-success 定义，不依赖用户、领域或候选内容。
+- **难点**：现有 `agent.trace_metrics` 只报告每用户聚合 reward 的均值，无法同时观察 task-level `Avg@1/Pass@1` 和 personalization subtask-level `Avg@1/Pass@1`。这会把“没有任何完整用户满分”误读为全部能力没有改善，也会诱导逐用户追求满分。
+- **已实现方案**：汇总结果同时输出 `task_avg_at_1`、`task_pass_at_1`、`subtask_avg_at_1`、`subtask_pass_at_1` 和子任务数；comparison 同时报告四项 delta。`avg_reward` 保持为 task-level Avg@1 的兼容别名。
+- **聚合重算**：`adapt_dev_tiered` 的 task Avg@1=`0.200424`、task Pass@1=`0`，而 112 个子任务的 Avg@1/Pass@1 均为 `0.214286`；`adapt_dev_pre_operation_gapfix` 分别为 `0.196778/0` 和 `0.205357/0.205357`。task Pass@1 为 0 只表示没有一个用户的整段轨迹满分，符合 VitaBench 2.0 长序列难度，不能作为要求逐用户修满的理由。
+- **失败簇证据**：`adapt_dev_tiered` 中 59 个 commit 子任务成功 CREATE 后进入支付询问，20 个成功；14 个 commit 子任务搜索后未完成 WRITE，全部失败；29 个 recommendation 被框架 finalize，仅 3 个成功。该统计用于排序能力投入，不推断隐藏目标候选。
+- **验证**：指标单测覆盖 task reward=0.5、两个二值子任务以及 comparison delta；只读取聚合 reward 和可观察 trace，不读取 rubric、target 或 evaluator 文本。
+- **下一步**：里程碑版本必须同时报告 task Avg@1 和 subtask strict Pass@1；优先减少 commit 的 search-without-completion，再评估候选语义和支付策略。不得通过放宽 WRITE 校验或默认自动支付换取表面动作率。
+- **能力抽象**：evaluation harness / candidate-to-action execution / long-horizon consistency。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

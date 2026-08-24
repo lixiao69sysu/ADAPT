@@ -19,11 +19,22 @@ def summarize(path: Path) -> dict[str, Any]:
     prevented_writes = 0
     repeated_search_excess = 0
     incomplete_payments = 0
+    subtask_rewards: list[float] = []
 
     for simulation in simulations:
         reward = (simulation.get("reward_info") or {}).get("reward")
         if isinstance(reward, (int, float)):
             rewards.append(float(reward))
+        breakdown = (
+            ((simulation.get("reward_info") or {}).get("info") or {})
+            .get("subtask_rewards")
+            or {}
+        )
+        subtask_rewards.extend(
+            float(value)
+            for value in breakdown.values()
+            if isinstance(value, (int, float))
+        )
         windows = _window_rewards(simulation.get("reward_info") or {})
         if windows:
             window_rewards.append(windows)
@@ -53,12 +64,33 @@ def summarize(path: Path) -> dict[str, Any]:
         incomplete_payments += int(pending_payment)
 
     early, late = _early_late(window_rewards)
+    task_avg_at_1 = _round(mean(rewards)) if rewards else None
+    task_pass_at_1 = (
+        _round(mean(float(reward == 1.0) for reward in rewards))
+        if rewards
+        else None
+    )
+    subtask_avg_at_1 = (
+        _round(mean(subtask_rewards)) if subtask_rewards else None
+    )
+    subtask_pass_at_1 = (
+        _round(mean(float(reward == 1.0) for reward in subtask_rewards))
+        if subtask_rewards
+        else None
+    )
     return {
         "path": str(path),
         "agent_kind": (payload.get("info") or {}).get("agent_kind"),
         "cohort": (payload.get("info") or {}).get("cohort"),
         "num_simulations": len(simulations),
-        "avg_reward": _round(mean(rewards)) if rewards else None,
+        # ``avg_reward`` remains for backward compatibility. The explicit
+        # names mirror VitaBench's task-level Avg@1 / Pass@1 definitions.
+        "avg_reward": task_avg_at_1,
+        "task_avg_at_1": task_avg_at_1,
+        "task_pass_at_1": task_pass_at_1,
+        "subtask_avg_at_1": subtask_avg_at_1,
+        "subtask_pass_at_1": subtask_pass_at_1,
+        "subtask_count": len(subtask_rewards),
         "early_window_reward": early,
         "late_window_reward": late,
         "late_minus_early": (
@@ -82,6 +114,20 @@ def compare(baseline: dict[str, Any], adapt: dict[str, Any]) -> dict[str, Any]:
         if isinstance(base_reward, (int, float)) and isinstance(adapt_reward, (int, float))
         else None
     )
+    for metric in (
+        "task_avg_at_1",
+        "task_pass_at_1",
+        "subtask_avg_at_1",
+        "subtask_pass_at_1",
+    ):
+        original = baseline.get(metric)
+        current = adapt.get(metric)
+        result[f"{metric}_delta"] = (
+            _round(current - original)
+            if isinstance(original, (int, float))
+            and isinstance(current, (int, float))
+            else None
+        )
     for metric in ("tool_errors", "repeated_search_excess", "incomplete_payments"):
         original = baseline.get(metric, 0)
         current = adapt.get(metric, 0)
