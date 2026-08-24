@@ -10,6 +10,11 @@ Sub-modules:
     reflection  - Insight synthesis + preference drift detection
     lifecycle   - Fact lifecycle + selective forgetting
 """
-from agent.memory.adapt_memory import ADAPTMemory
-
 __all__ = ["ADAPTMemory"]
+
+
+def __getattr__(name):
+    if name == "ADAPTMemory":
+        from agent.memory.adapt_memory import ADAPTMemory
+        return ADAPTMemory
+    raise AttributeError(name)

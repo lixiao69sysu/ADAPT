@@ -1,108 +1,55 @@
-# ADAPT: Agent with Dynamic Adaptive Preferences Toward Sustained Consumption Goals
+# ADAPT
 
-> ADAPT: 面向动态偏好与持续消费目标的长序列个性化消费智能体
+Project decisions, reproduced failure modes, effective fixes and remaining
+risks are maintained in [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md).
 
-[![Benchmark: VitaBench 2.0](https://img.shields.io/badge/Benchmark-VitaBench%202.0-green)](https://github.com/meituan-longcat/VitaBench-2.0)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+ADAPT 是运行在只读 VitaBench 2.0 之上的完整个性化消费 Agent。项目只保留
+一条路线：外部 runner 组合原版环境、用户模拟器、orchestrator 和 evaluator，
+所有决策、记忆、工具治理和 trace 分析均位于本仓库根目录的 `agent/` 中。
 
-## 概述
+## 架构
 
-ADAPT 是一个长序列个性化消费智能体：它能够跨越数年时间理解用户的**动态偏好**、检测**偏好漂移**、在信息不足时**主动询问**，并代表用户完成复杂的消费决策。
-
-### 核心问题
-
-VitaBench 2.0 揭示的行业现状：SOTA 模型在理想 Full Context 下仅 ~0.50 Avg@4，所有模型随时间显著退化，主动沟通是共同弱点。ADAPT 针对这三个痛点：
-
-1. **记忆**：多层记忆架构在长序列下稳定不崩
-2. **漂移**：检测偏好变化并选择性遗忘过时信息
-3. **主动**：信息不足时主动询问而非猜测
-
-### 技术方案
-
-- **骨架**：VitaBench 2.0 的 `LLMAgent` + `BaseMemory` 接口（与评测环境同构，零适配）
-- **记忆**：Memory Stream + 三维检索 + Reflection（借鉴 Generative Agents）
-- **主动**：信息缺口检测 + 主动询问策略（自研）
-- **工程**：工具注册表 + 记忆原语（借鉴 Hermes Agent 设计模式）
-
-> **借设计、不借代码**：每个优秀框架的精华用薄薄一层实现，不背重量级框架负担。
-
-## 快速开始
-
-```bash
-# 1. 克隆项目
-git clone https://github.com/lixiao69sysu/ADAPT.git
-cd ADAPT
-
-# 2. 克隆 VitaBench 2.0（评测骨架，单独仓库）
-git clone https://github.com/meituan-longcat/VitaBench-2.0.git evaluation/vitabench
-
-# 3. 安装 VitaBench 依赖
-cd evaluation/vitabench
-pip install -e .
-
-# 4. 下载数据集
-huggingface-cli download meituan-longcat/VitaBench-2.0 \
-  --repo-type dataset --local-dir data/vita/domains/personalization
-
-# 5. 配置 LLM（OpenAI 兼容端点均可）
-cp src/vita/models.yaml.example src/vita/models.yaml
-export OPENAI_API_KEY=sk-...   # DeepSeek / Claude / 任意兼容端点
-
-# 6. 运行子集评测（ADAPT vs 基线）
-cd ../..
-bash evaluation/scripts/run_subsample.sh
+```text
+agent/vitabench_runner.py
+  -> pristine VitaBench components
+  -> ADAPTAgent(PersonalizationAgent)
+       -> typed TaskSpec / bounded DecisionCard
+       -> TaskRuntime / ToolRegistry / QuestionGate
+       -> CandidateLedger / CandidateRanker / write validation
+       -> per-user executable ExecutionLessonStore
+       -> ADAPTMemory / incremental FactStore
 ```
 
-## 项目结构
+运行时不读取 reward、rubric、target product ID 或 target/distraction 标记；
+VitaBench 的 prompt、工具、数据库、模拟器、orchestrator、evaluator 和 metrics
+均不修改。
 
-```
-ADAPT/
-├── agent/                 # ADAPT 智能体核心
-│   ├── memory/            # 记忆系统（Stream/检索/漂移检测/生命周期）
-│   ├── harness/           # Agent Harness（ToolGuard/ProgressGuard）
-│   ├── evolution/         # Evolution Harness（坏案例挖掘+策略门控）
-│   └── tests/             # 单元测试（43 个）
-├── evaluation/
-│   ├── vitabench/         # VitaBench 2.0（需单独克隆）
-│   ├── run_adapt.py       # 冻结 VitaBench 启动器
-│   ├── evolve.py          # Evolution CLI
-│   ├── config/            # 模型配置
-│   └── scripts/           # 评测脚本
-├── docs/                  # 架构文档 + 评测方法论
-├── PROJECT_PLAN.md        # 详细项目规划
-└── SETUP.md               # 环境搭建指南
+## 验证
+
+```powershell
+./scripts/test_agent.ps1
 ```
 
-## 评测方法
+该命令运行 Agent 测试、编译检查，并确认 VitaBench 源码无 diff。
 
-在 VitaBench 2.0 Memory Arena 上对比 5 个官方基线（null / full_context / rewrite / rag / groundtruth），指标：Avg@4、Pass@4、Pass^4，外加成本效率与时间衰减曲线。详见 [PROJECT_PLAN.md](PROJECT_PLAN.md) 第三章。
+## 资源受限评测
 
-## 核心创新
+开发集和盲验集由稳定 hash `ADAPT-2026` 各选 8 个用户。日常仅运行相关单测
+和 1–2 用户 smoke；stock dev baseline 只运行一次并缓存。当前已知 evaluator
+模型映射错误会导致 stock baseline 无法完成，修复外部模型配置前不要把空缓存
+当作 baseline 成绩。
 
-| 模块 | 技术 | 效果 |
-|------|------|------|
-| **ProgressGuard** | 搜索/询问循环检测 + 强制工具禁用 | 减少无效调用 |
-| **MemorySummarizer** | 原始事实→结构化偏好摘要 | 提升记忆可用性 |
-| **Conflict Resolution** | 矛盾偏好检测 + 置信度×时间衰减消解 | 减少记忆冲突 |
-| **Task Decomposition** | Search→Filter→Decide→Execute 四步引导 | 结构化决策 |
-| **Reflection Loop** | 每10步进度回顾 | 防止空转 |
+```powershell
+python -m agent.vitabench_runner `
+  --agent adapt --cohort dev `
+  --agent-llm qwen38-agent --user-llm qwen35-user `
+  --evaluator-llm qwen36-evaluator `
+  --save-to data/simulations/adapt_dev.json `
+  --debug-to data/traces/adapt_dev.jsonl
+```
 
-## 评测结果
+对照组使用同一纯净环境下的 stock `PersonalizationAgent + rewrite`。先通过
+8-user dev 和 blind 门槛，再运行 56-user Avg@1；代码冻结后才运行 Avg@4。
+最终目标是完整 56 用户 Avg@4 >= 0.35。
 
-**配置**：Qwen3.6-35B-A3B + ADAPT（VitaBench 2.0 personalization）
-
-| 用户 | Avg@4 | 通过/总 |
-|------|:---:|:---:|
-| U642088 | 0.083 | 1/12 |
-| J365414 | 0.182 | 2/11 |
-| X193757 | 0.036 | 1/14 |
-| **总平均** | **0.100** | - |
-
-## 引用与致谢
-
-- VitaBench 2.0: `arXiv:2605.27141`（ICLR 2026）— [github.com/meituan-longcat/VitaBench-2.0](https://github.com/meituan-longcat/VitaBench-2.0)
-- 设计借鉴: Generative Agents (Park et al. 2023) · MemGPT (Packer et al. 2024) · Hermes Agent (Nous Research)
-
-## 许可证
-
-MIT License
+更多边界、晋级条件和命令见 `CLAUDE.md`。

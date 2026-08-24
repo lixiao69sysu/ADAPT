@@ -1,0 +1,30 @@
+# ASCII-only overlay: VitaBench opens this file with the Windows locale codec.
+default:
+  api_key: local
+  temperature: 0.0
+  max_input_tokens: 32768
+
+models:
+  - name: qwen38-agent
+    base_url: http://localhost:8000/v1
+    max_tokens: 2048
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    cost_1m_token_dollar: {prompt_price: 0.0, completion_price: 0.0}
+
+  - name: qwen36-evaluator
+    base_url: http://localhost:59863/v1
+    max_tokens: 2048
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    cost_1m_token_dollar: {prompt_price: 0.0, completion_price: 0.0}
+
+  - name: qwen35-user
+    base_url: http://localhost:8002/v1
+    max_tokens: 1024
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+    cost_1m_token_dollar: {prompt_price: 0.0, completion_price: 0.0}

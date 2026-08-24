@@ -20,15 +20,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from agent.memory.facts import fact_from_signal
 from agent.memory.signals import Signal
 
 # Predicates that represent a single preference *dimension* where a shift is
 # meaningful drift. Product-level predicates (prefers_product, intent_product)
 # are excluded — buying different dishes is normal variety, not drift.
 DIMENSION_PREDICATES = {
-    "likes_food",           # taste preference: spicy -> mild
-    "avoids_food",          # dislikes are durable, rarely drift
-    "brand_loyalty",        # store loyalty can shift to a new store
+    # Only genuinely single-valued dimensions participate. Likes, avoids, and
+    # brands are multi-valued sets and must not evict one another.
+    "taste_preference",
 }
 
 
@@ -61,23 +62,31 @@ class DriftDetector:
         """
         self.drift_threshold = drift_threshold
         self.decay_factor = decay_factor
-        self.slots: Dict[str, PreferenceSlot] = {}
+        self.slots: Dict[tuple[str, str, str, str], PreferenceSlot] = {}
+
+    @staticmethod
+    def _slot_key(signal: Signal) -> Optional[tuple[str, str, str, str]]:
+        if signal.predicate not in DIMENSION_PREDICATES:
+            return None
+        fact = fact_from_signal(signal)
+        # Single-valued dimensions share the default category within a scoped
+        # facet, while negative constraints remain additive and never get here.
+        return fact.scope, fact.facet, fact.dimension, "default"
 
     def observe(self, signal: Signal) -> Optional[str]:
         """Process a new signal, updating dimension slots.
 
         Returns the predicate if a drift was detected, else None.
         """
-        pred = signal.predicate
-        # Only tracked dimension predicates participate in drift.
-        if pred not in DIMENSION_PREDICATES:
+        key = self._slot_key(signal)
+        if key is None:
             return None
 
         value = signal.object
-        slot = self.slots.get(pred)
+        slot = self.slots.get(key)
 
         if slot is None:
-            self.slots[pred] = PreferenceSlot(value, signal.confidence, signal.timestamp)
+            self.slots[key] = PreferenceSlot(value, signal.confidence, signal.timestamp)
             return None
 
         # Same value -> reinforce.
@@ -95,7 +104,7 @@ class DriftDetector:
             slot.value = value
             slot.drifted = True
             slot.conflict_count = 0
-            return pred
+            return signal.predicate
 
         return None
 
@@ -107,17 +116,26 @@ class DriftDetector:
     def drift_summary(self) -> List[dict]:
         """List of drifted preferences (for diagnostics)."""
         return [
-            {"predicate": k, **v.to_dict()}
-            for k, v in self.slots.items() if v.drifted
+            {
+                "scope": key[0],
+                "facet": key[1],
+                "dimension": key[2],
+                "category": key[3],
+                **value.to_dict(),
+            }
+            for key, value in self.slots.items() if value.drifted
         ]
 
     def suppress_drifted(self, event) -> bool:
         """Whether an event belongs to a drifted-away preference value and should
         be de-prioritized during retrieval."""
         sig = event.signal
-        if sig is None or sig.predicate not in self.slots:
+        if sig is None:
             return False
-        slot = self.slots[sig.predicate]
+        key = self._slot_key(sig)
+        if key is None or key not in self.slots:
+            return False
+        slot = self.slots[key]
         if not slot.drifted:
             return False
         return not self._same_value(slot.value, sig.object)

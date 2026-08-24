@@ -7,32 +7,19 @@ __pycache__/
 *.pyc
 venv/
 .venv/
-.worktrees/
-.pytest_cache/
-*.egg-info/
 
-# Model files (too large for git)
-models/
-*.safetensors
-*.bin
-*.ckpt
-
-# Data & results (too large for git)
-evaluation/vitabench/data/
+# Data & results
 data/
 results/
-.tmp/
-
-# HTML reports (generated artifacts)
-docs/analysis/*.html
-docs/reports/**/*.html
+evaluation/vitabench/data/
+# VitaBench is cloned as a read-only external dependency, not vendored into
+# ADAPT's Git history.
+evaluation/vitabench/
 
 # IDE
 .idea/
 .vscode/
-*.swp
+.claude/
 
-# OS
-.DS_Store
-Thumbs.db
-evaluation/vitabench/
+# Local one-off trace/debug artifacts
+C*Tempsub3_hint.txt

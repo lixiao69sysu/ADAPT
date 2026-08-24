@@ -12,11 +12,8 @@ Design decisions:
 - recency uses exponential decay (half-life in days)
 - composite score = w_rel * relevance + w_rec * recency + w_imp * importance
 - weights are configurable (for ablation / sensitivity analysis)
-
-Phase 2 improvement: Adaptive retrieval routing — dynamically adjusts the
-three weights based on query type. Specific queries (e.g. "和上次一样") need
-higher relevance; exploratory queries (e.g. "推荐一个") need higher importance
-to surface high-value historical behavior.
+- tokenization: jieba (if installed) > Chinese bigram fallback
+- synonym expansion: domain-specific synonym groups for cross-term matching
 """
 
 from __future__ import annotations
@@ -25,10 +22,62 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from agent.memory.signals import Signal
 from agent.memory.stream import MemoryEvent, MemoryStream, parse_timestamp
+
+# --- Jieba lazy import (gracefully degrade to bigram if unavailable) ----------
+try:
+    import jieba
+    jieba.setLogLevel(60)   # suppress INFO logs
+    _JIEBA_AVAILABLE = True
+except ImportError:
+    _JIEBA_AVAILABLE = False
+
+# --- Synonym groups for Chinese food/travel domain ----------------------------
+# Each group: if ANY term in the group appears in query, ALL terms get credit.
+SYNONYM_GROUPS: List[Set[str]] = [
+    # Transport modes
+    {"高铁", "动车", "高速铁路", "G车", "G列"},
+    {"飞机", "航班", "机票", "航空", "空中"},
+    {"火车", "普铁", "K字头", "Z字头"},
+    # Food / taste
+    {"烧烤", "烤串", "BBQ", "炭烤", "烤肉"},
+    {"川菜", "四川菜", "麻辣", "麻辣烫", "川"},
+    {"日料", "日本菜", "日式", "寿司", "刺身", "拉面"},
+    {"粤菜", "广东菜", "粤式", "早茶"},
+    {"火锅", "麻辣锅", "鸳鸯锅", "涮锅"},
+    {"快餐", "外卖", "便当", "快食"},
+    {"米粉", "粉", "线粉", "螺蛳粉"},
+    {"面条", "拉面", "面", "刀削面", "炸酱面"},
+    # Accommodation
+    {"大床房", "大床", "King床"},
+    {"双人间", "双床房", "标准间"},
+    {"酒店", "宾馆", "旅馆", "民宿", "客栈"},
+    # Attraction / OTA
+    {"景点", "景区", "旅游", "观光", "门票"},
+    {"出行", "旅行", "旅游", "度假", "游览"},
+]
+
+# Build reverse lookup: term -> frozenset of all synonyms in its group
+_SYNONYM_EXPAND: Dict[str, Set[str]] = {}
+for _grp in SYNONYM_GROUPS:
+    for _term in _grp:
+        if _term not in _SYNONYM_EXPAND:
+            _SYNONYM_EXPAND[_term] = set()
+        _SYNONYM_EXPAND[_term].update(_grp)
+
+
+def _expand_synonyms(terms: Set[str]) -> Set[str]:
+    """Expand a set of tokens with their synonyms."""
+    expanded = set(terms)
+    for t in list(terms):
+        extra = _SYNONYM_EXPAND.get(t)
+        if extra:
+            expanded.update(extra)
+    return expanded
+
 
 # --- Domain keyword tables ---------------------------------------------------
 # Map subtask domain -> keywords that indicate relevance. This is a lightweight
@@ -38,8 +87,26 @@ from agent.memory.stream import MemoryEvent, MemoryStream, parse_timestamp
 DOMAIN_KEYWORDS: Dict[str, List[str]] = {
     "delivery": ["外卖", "吃", "餐", "饭", "食", "店", "商家", "单", "送", "点", "菜", "饮品", "夜宵", "早餐", "午餐", "晚餐"],
     "instore": ["探店", "餐厅", "吃", "餐", "到店", "预约", "包间", "桌", "聚餐", "饭", "食", "店", "菜"],
-    "ota": ["酒店", "机票", "航班", "火车", "高铁", "旅游", "旅行", "景点", "门票", "住宿", "出行", "度假", "房间", "大床房", "订票", "高铁票", "飞机", "动车", "去", "逛"],
+    "ota": ["酒店", "机票", "航班", "火车", "高铁", "旅游", "旅行", "景点", "门票", "住宿", "出行", "度假", "房间", "大床房", "订票", "高铁票", "飞机", "动车", "去", "逛", "订房", "两晚", "大床", "入住"],
 }
+
+# Strong single markers that alone identify the domain. Needed because OTA
+# queries are often short ("帮我订个酒店" = 1 keyword < 3-count threshold),
+# so the accumulated-count gate below would return None and disable domain
+# gating entirely — v12 leaked 锦州喜来登 into a 长春 hotel hint because of it.
+# Substring-matched: none of these compound markers can be a false positive.
+# Ambiguous travel words (旅游/旅行/去) stay in DOMAIN_KEYWORDS to avoid
+# misfiring on food-narrative queries.
+STRONG_KEYWORDS: Dict[str, List[str]] = {
+    "ota": ["酒店", "机票", "车票", "门票", "高铁票", "火车票", "航班", "火车", "高铁",
+            "动车", "景点", "订票", "民宿", "宾馆", "房间", "大床房", "大床", "入住", "住宿"],
+    "delivery": ["外卖", "闪购", "配送", "下单", "送到"],
+    "instore": ["探店", "到店", "包间", "预约"],
+}
+
+# Substrings containing 票 that are NOT tickets (男票/女票 = BF/GF slang, 发票…).
+# Bare "票" is an OTA marker (车票/门票/机票/去桂林的票) but must not fire here.
+_TICKET_GUARD: Tuple[str, ...] = ("男票", "女票", "发票", "股票", "彩票", "传票")
 
 # Predicate -> which domains it matters for. Keeps OTA facts from leaking into
 # delivery tasks and vice versa.
@@ -69,6 +136,18 @@ TYPE_PRIOR: Dict[str, float] = {
 }
 
 
+def _normalize_domain(d: Optional[str]) -> Optional[str]:
+    """Canonicalize a domain label for gating.
+
+    `instore` and `delivery` are the same local consumption domain (food/retail):
+    `_event_domain` only knows the "delivery" label, so normalizing instore ->
+    delivery stops food facts from being suppressed to 0.02 on instore queries
+    (instore is detected via 探店/到店/包间/预约 but food signals never carry it).
+    OTA stays distinct and is still suppressed.
+    """
+    return "delivery" if d == "instore" else d
+
+
 @dataclass
 class RetrievalConfig:
     """Weights for the 3D score. Exposed for ablation."""
@@ -78,22 +157,6 @@ class RetrievalConfig:
     w_importance: float = 0.3
     half_life_days: float = 180.0     # recency decay half-life
     top_k: int = 20
-    product_type_expansions: Dict[str, List[str]] = field(default_factory=dict)
-    ignore_generic_bigrams: bool = False
-    structured_signal_boost: Dict[str, float] = field(default_factory=dict)
-    enable_adaptive_routing: bool = True
-
-
-QUERY_TYPE_WEIGHTS = {
-    "specific":    {"w_relevance": 0.70, "w_recency": 0.15, "w_importance": 0.15},
-    "exploratory": {"w_relevance": 0.25, "w_recency": 0.20, "w_importance": 0.55},
-    "time_sensitive": {"w_relevance": 0.40, "w_recency": 0.45, "w_importance": 0.15},
-    "balanced":    {"w_relevance": 0.50, "w_recency": 0.20, "w_importance": 0.30},
-}
-
-SPECIFIC_MARKERS = ["上次", "之前", "那个", "一样", "还是", "上次那个", "和之前"]
-EXPLORATORY_MARKERS = ["推荐", "随便", "帮我挑", "不知道", "没想好", "都可以", "你看着", "帮我选"]
-TIME_SENSITIVE_MARKERS = ["今天", "明天", "下周", "下个月", "最近", "这几天"]
 
 
 class RetrievalScorer:
@@ -103,31 +166,43 @@ class RetrievalScorer:
         self.config = config or RetrievalConfig()
         self._kw_cache: Dict[str, frozenset] = {}
 
-    def _keywords(self, query: str) -> frozenset:
-        """Extract 2-gram Chinese keyword tokens from a string.
+    def _tokenize(self, text: str) -> Set[str]:
+        """Tokenize text using jieba (if available) else Chinese bigrams.
 
-        Uses character bigrams so short meaningful words ("面包", "酒店") match
-        inside longer phrases ("面包坊", "酒店预订"). This is a lightweight
-        substitute for a proper tokenizer — good enough for relevance gating.
+        Returns a set of tokens, expanded with domain synonyms so that
+        "动车" matches stored "高铁" tokens and vice versa.
         """
-        if query not in self._kw_cache:
-            chars = [c for c in query if "一" <= c <= "鿿"]
-            grams = {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
-            self._kw_cache[query] = frozenset(grams)
-        return self._kw_cache[query]
+        if _JIEBA_AVAILABLE:
+            tokens = set(jieba.lcut(text))
+            # Keep only CJK tokens with len >= 2 (single chars are too noisy)
+            tokens = {t for t in tokens if len(t) >= 2 and any("一" <= c <= "鿿" for c in t)}
+        else:
+            # Fallback: character bigrams
+            chars = [c for c in text if "一" <= c <= "鿿"]
+            tokens = {chars[i] + chars[i + 1] for i in range(len(chars) - 1)}
+        return _expand_synonyms(tokens)
 
-    def normalize_query(self, query: str) -> str:
-        additions = []
-        for source, targets in self.config.product_type_expansions.items():
-            if source in query:
-                additions.extend(targets)
-        return " ".join([query, *additions])
+    def _keywords(self, query: str) -> frozenset:
+        """Tokenize+expand query, cached."""
+        if query not in self._kw_cache:
+            self._kw_cache[query] = frozenset(self._tokenize(query))
+        return self._kw_cache[query]
 
     def domain(self, query: str) -> Optional[str]:
         """Guess the task domain from the instruction (delivery/instore/ota).
 
-        Uses character-level matching so short/mixed queries still hit.
+        Two-tier: a strong marker (酒店/机票/外卖/送到…) identifies the domain
+        directly — needed because short OTA queries ("帮我订个酒店") fall under
+        the accumulated-count threshold and lose gating entirely (v12 leaked
+        锦州喜来登 into a 长春 hotel hint because of it). Bare "票" is an OTA
+        marker guarded against romance slang 男票/女票.
         """
+        for d, skw in STRONG_KEYWORDS.items():
+            for k in skw:
+                if k in query:
+                    return d
+        if "票" in query and not any(g in query for g in _TICKET_GUARD):
+            return "ota"
         best_domain, best_score = None, 0
         for d, dkw in DOMAIN_KEYWORDS.items():
             # Character-overlap scoring: count domain keyword chars present in query.
@@ -137,23 +212,6 @@ class RetrievalScorer:
                 best_domain = d
         # Too low to be confident -> None (no domain gating).
         return best_domain if best_score >= 3 else None
-
-    def classify_query(self, query: str) -> str:
-        """Classify query into a type that determines retrieval strategy.
-
-        Returns one of: "specific", "exploratory", "time_sensitive", "balanced".
-        """
-        if any(m in query for m in SPECIFIC_MARKERS):
-            return "specific"
-        if any(m in query for m in EXPLORATORY_MARKERS):
-            return "exploratory"
-        if any(m in query for m in TIME_SENSITIVE_MARKERS):
-            return "time_sensitive"
-        return "balanced"
-
-    def _apply_adaptive_weights(self, query_type: str) -> dict:
-        """Return the weight dict for a given query type."""
-        return QUERY_TYPE_WEIGHTS.get(query_type, QUERY_TYPE_WEIGHTS["balanced"])
 
     def relevance_score(self, event: MemoryEvent, query: str, domain: Optional[str]) -> float:
         """How relevant is this event to the query? 0-1.
@@ -169,13 +227,8 @@ class RetrievalScorer:
             return 0.05
 
         text = f"{sig.predicate} {sig.object} {sig.raw}"
-        qkw = set(self._keywords(query))
-        textkw = set(self._keywords(text))
-        if self.config.ignore_generic_bigrams:
-            generic = {"帮我", "给我", "送到", "家里", "赶紧", "新的", "上次", "一个", "现在"}
-            qkw -= generic
-            textkw -= generic
-        overlap = qkw & textkw
+        qkw = self._keywords(query)
+        overlap = qkw & self._tokenize(text)
 
         # 1. Exact keyword overlap is the strongest relevance signal.
         if overlap:
@@ -185,7 +238,7 @@ class RetrievalScorer:
         #    A food query should not surface travel/hotel facts (and vice versa).
         if domain:
             event_dom = self._event_domain(sig, text)
-            if event_dom and event_dom != domain:
+            if event_dom and _normalize_domain(event_dom) != _normalize_domain(domain):
                 return 0.02  # strongly suppress mismatched domain
 
         # 3. Generic food/travel facts get a modest floor so memory isn't starved.
@@ -229,41 +282,31 @@ class RetrievalScorer:
         rec = self.recency_score(event, now)
         imp = self.importance_score(event)
         c = self.config
-        return (
-            c.w_relevance * rel
-            + c.w_recency * rec
-            + c.w_importance * imp
-            + c.structured_signal_boost.get(event.type, 0.0)
-        )
+        return c.w_relevance * rel + c.w_recency * rec + c.w_importance * imp
 
-    def retrieve(self, stream: MemoryStream, query: str, now: Optional[datetime] = None) -> List[MemoryEvent]:
-        """Return top-k events by 3D score, marking them as retrieved.
+    def retrieve(
+        self,
+        stream: MemoryStream,
+        query: str,
+        now: Optional[datetime] = None,
+        k: Optional[int] = None,
+        mark_retrieved: bool = False,
+    ) -> List[MemoryEvent]:
+        """Return top-k events by 3D score.
 
-        When adaptive routing is enabled, adjusts retrieval weights based on
-        query type (specific/exploratory/time_sensitive/balanced).
+        Retrieval is pure by default because VitaBench may call ``memory.read``
+        several times while constructing and logging a single system prompt.
+        Callers doing explicit analytics may opt into salience accounting.
         """
-        query = self.normalize_query(query)
         domain = self.domain(query)
-
-        if self.config.enable_adaptive_routing:
-            query_type = self.classify_query(query)
-            adaptive = self._apply_adaptive_weights(query_type)
-            orig_weights = (self.config.w_relevance, self.config.w_recency, self.config.w_importance)
-            self.config.w_relevance = adaptive["w_relevance"]
-            self.config.w_recency = adaptive["w_recency"]
-            self.config.w_importance = adaptive["w_importance"]
-
         scored: List[Tuple[float, MemoryEvent]] = []
         for ev in stream.all():
             s = self.score(ev, query, domain, now)
             if s > 0:
                 scored.append((s, ev))
         scored.sort(key=lambda x: x[0], reverse=True)
-        top = [ev for _, ev in scored[: self.config.top_k]]
-        for ev in top:
-            stream.mark_retrieved(ev)
-
-        if self.config.enable_adaptive_routing:
-            self.config.w_relevance, self.config.w_recency, self.config.w_importance = orig_weights
-
+        top = [ev for _, ev in scored[: (k or self.config.top_k)]]
+        if mark_retrieved:
+            for ev in top:
+                stream.mark_retrieved(ev)
         return top

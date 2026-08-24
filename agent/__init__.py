@@ -1,14 +1,13 @@
-"""ADAPT - Agent with Dynamic Adaptive Preferences Toward Sustained Consumption Goals.
+"""Complete ADAPT consumer agent assembled against a read-only VitaBench."""
 
-A long-term personalized consumer agent. This package implements the ADAPT
-memory system as an independent module that plugs into VitaBench 2.0 via the
---memory-class interface, without modifying VitaBench's original agent.
+__all__ = ["ADAPTAgent", "ADAPTMemory"]
 
-Usage:
-    vita run --memory-class agent.memory.ADAPTMemory ...
-"""
-"""ADAPT agent package."""
 
-from agent.adapt_agent import ADAPTAgent, ADAPTAgentState
-
-__all__ = ["ADAPTAgent", "ADAPTAgentState"]
+def __getattr__(name):
+    if name == "ADAPTAgent":
+        from agent.adapt_agent import ADAPTAgent
+        return ADAPTAgent
+    if name == "ADAPTMemory":
+        from agent.memory import ADAPTMemory
+        return ADAPTMemory
+    raise AttributeError(name)

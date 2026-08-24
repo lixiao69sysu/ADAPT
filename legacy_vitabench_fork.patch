@@ -1,0 +1,999 @@
+diff --git a/src/vita/agent/llm_agent.py b/src/vita/agent/llm_agent.py
+index b77e450..d7fa80e 100644
+--- a/src/vita/agent/llm_agent.py
++++ b/src/vita/agent/llm_agent.py
+@@ -95,6 +95,16 @@ class LLMAgent(LocalAgent[LLMAgentState]):
+         else:
+             state.messages.append(message)
+ 
++        # ADAPT-FORK: compact history before re-sending the full list.
++        # The stock loop never truncates, so long tool-heavy conversations grew
++        # to 129K input tokens and the whole trial was lost to a 400. Failing
++        # open here (log + continue) is safer than killing a trial on a guard bug.
++        try:
++            from agent.framework.context import compact_messages
++            compact_messages(state.messages)
++        except Exception as e:
++            logger.warning(f"[ADAPT-FORK] context guard failed, skipping: {e}")
++
+         messages = state.system_messages + state.messages
+ 
+         assistant_message = generate(
+diff --git a/src/vita/config.py b/src/vita/config.py
+index 7a98740..c01464f 100644
+--- a/src/vita/config.py
++++ b/src/vita/config.py
+@@ -70,7 +70,7 @@ def _deep_merge_dict(base_dict: dict, override_dict: dict) -> dict:
+ 
+ _models_yaml_path = _resolve_yaml_path()
+ 
+-with open(_models_yaml_path, "r") as f:
++with open(_models_yaml_path, "r", encoding="utf-8") as f:
+     models_config_yaml = yaml.safe_load(f)
+ 
+ models_config_yaml = _interpolate(models_config_yaml)
+diff --git a/src/vita/data_model/simulation.py b/src/vita/data_model/simulation.py
+index ee118a7..dce4c13 100644
+--- a/src/vita/data_model/simulation.py
++++ b/src/vita/data_model/simulation.py
+@@ -392,7 +392,7 @@ class Results(BaseModel):
+ 
+     @classmethod
+     def load(cls, path: Path) -> "Results":
+-        with open(path, "r") as f:
++        with open(path, "r", encoding="utf-8") as f:
+             return cls.model_validate_json(f.read())
+ 
+     def save(self, path: Path) -> None:
+@@ -431,7 +431,7 @@ class Results(BaseModel):
+                 "task_id": sim.task_id,
+                 "trial": sim.trial,
+                 "seed": sim.seed,
+-                "reward": sim.reward_info.reward,
++                "reward": sim.reward_info.reward if sim.reward_info else None,
+                 "agent_cost": sim.agent_cost,
+                 "user_cost": sim.user_cost,
+                 "termination_reason": sim.termination_reason,
+@@ -451,4 +451,17 @@ class Results(BaseModel):
+                 "info_agent_llm_args": clean_value_for_dataframe(self.info.agent_info.llm_args),
+             }
+             rows.append(row)
++        # If no simulations succeeded (e.g. all tasks failed), return an empty
++        # DataFrame with the expected columns so downstream metrics code
++        # (df.reward, df.task_id, ...) does not crash with AttributeError.
++        if not rows:
++            return pd.DataFrame(columns=[
++                "simulation_id", "task_id", "trial", "seed", "reward",
++                "agent_cost", "user_cost", "termination_reason", "duration",
++                "num_messages", "info_git_commit", "info_seed",
++                "info_num_trials", "info_max_steps", "info_max_errors",
++                "info_domain", "info_user_implementation", "info_user_llm",
++                "info_user_llm_args", "info_agent_implementation",
++                "info_agent_llm", "info_agent_llm_args",
++            ])
+         return pd.DataFrame(rows)
+diff --git a/src/vita/domains/delivery/environment.py b/src/vita/domains/delivery/environment.py
+index be39e88..951e3da 100644
+--- a/src/vita/domains/delivery/environment.py
++++ b/src/vita/domains/delivery/environment.py
+@@ -39,6 +39,6 @@ def get_environment(
+ 
+ def get_tasks(language: str = None) -> list[Task]:
+     task_path = get_task_file_path("delivery", language)
+-    with open(task_path, "r") as fp:
++    with open(task_path, "r", encoding="utf-8") as fp:
+         tasks = json.load(fp)
+     return [Task.model_validate(task) for task in tasks]
+diff --git a/src/vita/domains/delivery/tools.py b/src/vita/domains/delivery/tools.py
+index 5c2f952..c975fab 100644
+--- a/src/vita/domains/delivery/tools.py
++++ b/src/vita/domains/delivery/tools.py
+@@ -20,6 +20,9 @@ class DeliveryTools(ToolKitBase):
+ 
+     def __init__(self, db: DeliveryDB) -> None:
+         super().__init__(db)
++        # ADAPT-FORK: per-subtask search-loop guard (toolkits are rebuilt per subtask).
++        from agent.framework.search import SearchLoopGuard
++        self._search_guard = SearchLoopGuard()
+ 
+     def _check_user(self, user_id: str) -> bool:
+         """Check if the user is valid.
+@@ -106,28 +109,23 @@ class DeliveryTools(ToolKitBase):
+         return "done"
+ 
+     def _get_store(self, store_id: str) -> Store:
+-        """Get the store from the database.
+-        Args:
+-            store_id: The store id.
+-
+-        Returns:
+-            Store: The store.
+-        """
++        # ADAPT-FORK: accept a store name and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        store_id, _ = resolve_id_or_name(
++            {s.store_id: s.name for s in self.db.stores.values()}, store_id, kind="store"
++        )
+         if store_id not in self.db.stores.keys():
+             raise ValueError(f"Store {store_id} not found")
+         return self.db.stores[store_id]
+ 
+     def _get_store_product(self, product_id: str) -> StoreProduct:
+-        """Get the product from the database.
+-
+-        Args:
+-            product_id: The product id.
+-
+-        Returns:
+-            StoreProduct: The product.
+-        """
+-        # Resolve product from self.db.stores so lookups only see products
+-        # belonging to the current subtask's environment.
++        # ADAPT-FORK: resolve a product name to its canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        mapping = {}
++        for store in self.db.stores.values():
++            for product in store.products:
++                mapping[product.product_id] = f"{product.store_name} {product.name}"
++        product_id, _ = resolve_id_or_name(mapping, product_id, kind="product")
+         for store in self.db.stores.values():
+             for product in store.products:
+                 if product.product_id == product_id:
+@@ -152,23 +150,25 @@ class DeliveryTools(ToolKitBase):
+ 
+     @is_tool(ToolType.READ)
+     def delivery_store_search_recommand(self, keywords: List[str]) -> str:
+-        top_k = 100
++        # ADAPT-FORK: cap results + relevance floor (stock returned top-100 junk).
++        from agent.framework.search import rank_and_limit
+         store_tag_dict = self._get_store_tags()
+-        id_candidates_sorted = rerank("".join(keywords), store_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(keywords, store_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         selected_stores = [str(self._get_store(store_id)) for store_id in selected_ids]
+         selected_stores_repr = "\n".join(selected_stores)
+-        return selected_stores_repr
++        return selected_stores_repr + self._search_guard.note(selected_stores_repr)
+ 
+     @is_tool(ToolType.READ)
+     def delivery_product_search_recommand(self, keywords: List[str]) -> str:
+-        top_k = 100
++        # ADAPT-FORK: cap results + relevance floor.
++        from agent.framework.search import rank_and_limit
+         product_tag_dict = self._get_store_product_tags()
+-        id_candidates_sorted = rerank("".join(keywords), product_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(keywords, product_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         product_list = [self._get_store_product(product_id) for product_id in selected_ids]
+         selected_products_repr = "\n".join([repr(product) for product in product_list])
+-        return selected_products_repr
++        return selected_products_repr + self._search_guard.note(selected_products_repr)
+ 
+     @is_tool(ToolType.WRITE)
+     def create_delivery_order(
+diff --git a/src/vita/domains/instore/environment.py b/src/vita/domains/instore/environment.py
+index 1a76333..9649c80 100644
+--- a/src/vita/domains/instore/environment.py
++++ b/src/vita/domains/instore/environment.py
+@@ -44,6 +44,6 @@ def get_environment(
+ 
+ def get_tasks(language: str = None) -> list[Task]:
+     task_path = get_task_file_path("instore", language)
+-    with open(task_path, "r") as fp:
++    with open(task_path, "r", encoding="utf-8") as fp:
+         tasks = json.load(fp)
+     return [Task.model_validate(task) for task in tasks]
+diff --git a/src/vita/domains/instore/tools.py b/src/vita/domains/instore/tools.py
+index 09b4604..f0483c3 100644
+--- a/src/vita/domains/instore/tools.py
++++ b/src/vita/domains/instore/tools.py
+@@ -14,6 +14,9 @@ class InStoreTools(ToolKitBase):
+ 
+     def __init__(self, db: InStoreDB) -> None:
+         super().__init__(db)
++        # ADAPT-FORK: per-subtask search-loop guard.
++        from agent.framework.search import SearchLoopGuard
++        self._search_guard = SearchLoopGuard()
+ 
+     def _check_user(self, user_id: str) -> bool:
+         """Check if the user is valid.
+@@ -54,13 +57,23 @@ class InStoreTools(ToolKitBase):
+         return product_tags
+ 
+     def _get_shop(self, shop_id: str):
++        # ADAPT-FORK: accept a shop name and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        shop_id, _ = resolve_id_or_name(
++            {s.shop_id: s.shop_name for s in self.db.shops.values()}, shop_id, kind="shop"
++        )
+         if shop_id not in self.db.shops:
+             raise ValueError(f"Shop {shop_id} does not exist")
+         return self.db.shops[shop_id]
+ 
+     def _get_shop_product(self, product_id: str):
+-        # Resolve product from self.db.shops so lookups only see products
+-        # belonging to the current subtask's environment.
++        # ADAPT-FORK: resolve a product name to its canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        mapping = {}
++        for shop in self.db.shops.values():
++            for product in shop.products:
++                mapping[product.product_id] = f"{shop.shop_name} {product.name}"
++        product_id, _ = resolve_id_or_name(mapping, product_id, kind="product")
+         for shop in self.db.shops.values():
+             for product in shop.products:
+                 if product.product_id == product_id:
+@@ -174,23 +187,25 @@ class InStoreTools(ToolKitBase):
+ 
+     @is_tool(tool_type=ToolType.READ)
+     def instore_shop_search_recommend(self, keywords: List[str]) -> str:
+-        top_k = 100
++        # ADAPT-FORK: cap results + relevance floor.
++        from agent.framework.search import rank_and_limit
+         shop_tag_dict = self._get_shop_tags()
+-        id_candidates_sorted = rerank("".join(keywords), shop_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(keywords, shop_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         selected_shops = [str(self._get_shop(shop_id)) for shop_id in selected_ids]
+         selected_shops_repr = "\n".join(selected_shops)
+-        return selected_shops_repr
++        return selected_shops_repr + self._search_guard.note(selected_shops_repr)
+ 
+     @is_tool(tool_type=ToolType.READ)
+     def instore_product_search_recommend(self, keywords: List[str]) -> str:
+-        top_k = 100
++        # ADAPT-FORK: cap results + relevance floor.
++        from agent.framework.search import rank_and_limit
+         product_tag_dict = self._get_shop_product_tags()
+-        id_candidates_sorted = rerank("".join(keywords), product_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(keywords, product_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         product_list = [self._get_shop_product(product_id) for product_id in selected_ids]
+         selected_products_repr = "\n".join([repr(product) for product in product_list])
+-        return selected_products_repr
++        return selected_products_repr + self._search_guard.note(selected_products_repr)
+ 
+     @is_tool(tool_type=ToolType.WRITE)
+     def create_instore_product_order(self, user_id: str, shop_id: str, product_id: str, quantity: int = 1) -> str:
+diff --git a/src/vita/domains/ota/environment.py b/src/vita/domains/ota/environment.py
+index 6d4c36e..2e45f5d 100644
+--- a/src/vita/domains/ota/environment.py
++++ b/src/vita/domains/ota/environment.py
+@@ -48,6 +48,6 @@ def get_environment(
+ 
+ def get_tasks(language: str = None) -> list[Task]:
+     task_path = get_task_file_path("ota", language)
+-    with open(task_path, "r") as fp:
++    with open(task_path, "r", encoding="utf-8") as fp:
+         tasks = json.load(fp)
+     return [Task.model_validate(task) for task in tasks]
+diff --git a/src/vita/domains/ota/tools.py b/src/vita/domains/ota/tools.py
+index 6c6b34d..1082b67 100644
+--- a/src/vita/domains/ota/tools.py
++++ b/src/vita/domains/ota/tools.py
+@@ -20,6 +20,9 @@ class OTATools(ToolKitBase):
+ 
+     def __init__(self, db: OTADB) -> None:
+         super().__init__(db)
++        # ADAPT-FORK: per-subtask search-loop guard.
++        from agent.framework.search import SearchLoopGuard
++        self._search_guard = SearchLoopGuard()
+ 
+     def _check_user(self, user_id: str) -> bool:
+         """Check if the user is valid.
+@@ -118,6 +121,11 @@ class OTATools(ToolKitBase):
+         """
+         if hotel_id is None:
+             return list(self.db.hotels.values())
++        # ADAPT-FORK: accept a hotel name and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        hotel_id, _ = resolve_id_or_name(
++            {h.hotel_id: h.hotel_name for h in self.db.hotels.values()}, hotel_id, kind="hotel"
++        )
+         if hotel_id not in self.db.hotels:
+             raise ValueError(f"hotel {hotel_id} not found")
+         return self.db.hotels[hotel_id]
+@@ -132,6 +140,12 @@ class OTATools(ToolKitBase):
+         """
+         if attraction_id is None:
+             return list(self.db.attractions.values())
++        # ADAPT-FORK: accept an attraction name and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        attraction_id, _ = resolve_id_or_name(
++            {a.attraction_id: a.attraction_name for a in self.db.attractions.values()},
++            attraction_id, kind="attraction",
++        )
+         if attraction_id not in self.db.attractions:
+             raise ValueError(f"attraction {attraction_id} not found")
+         return self.db.attractions[attraction_id]
+@@ -146,6 +160,11 @@ class OTATools(ToolKitBase):
+         """
+         if flight_id is None:
+             return list(self.db.flights.values())
++        # ADAPT-FORK: accept a flight number and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        flight_id, _ = resolve_id_or_name(
++            {f.flight_id: f.flight_number for f in self.db.flights.values()}, flight_id, kind="flight"
++        )
+         if flight_id not in self.db.flights:
+             raise ValueError(f"flight {flight_id} not found")
+         return self.db.flights[flight_id]
+@@ -160,6 +179,11 @@ class OTATools(ToolKitBase):
+         """
+         if train_id is None:
+             return list(self.db.trains.values())
++        # ADAPT-FORK: accept a train number and resolve to the canonical id.
++        from agent.framework.tool_resolution import resolve_id_or_name
++        train_id, _ = resolve_id_or_name(
++            {t.train_id: t.train_number for t in self.db.trains.values()}, train_id, kind="train"
++        )
+         if train_id not in self.db.trains:
+             raise ValueError(f"train {train_id} not found")
+         return self.db.trains[train_id]
+@@ -238,18 +262,19 @@ class OTATools(ToolKitBase):
+ 
+             target_hotels.append(hotel)
+ 
+-        top_k = 100
+         if not target_hotels:
+-            return "No hotels found matching the criteria. Please check if the city name is correct and try again."
+-        
++            return "No hotels found matching the criteria. Please check if the city name is correct and try again." + self._search_guard.note("__no_hotels__")
++
++        # ADAPT-FORK: cap results + relevance floor.
++        from agent.framework.search import rank_and_limit
+         hotel_tag_dict = {}
+         for hotel in target_hotels:
+             hotel_tag_dict[hotel.hotel_id] = self._get_hotel_tags(hotel.hotel_id)
+-        id_candidates_sorted = rerank("".join(key_words or []), hotel_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(key_words or [], hotel_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         selected_hotels = [str(self._get_hotel(hotel_id)) for hotel_id in selected_ids]
+         selected_hotels_repr = "\n".join(selected_hotels)
+-        return selected_hotels_repr
++        return selected_hotels_repr + self._search_guard.note(selected_hotels_repr)
+ 
+     @is_tool(tool_type=ToolType.READ)
+     def attractions_search_recommend(self, city_name: str, key_words: List[str]) -> str:
+@@ -259,18 +284,19 @@ class OTATools(ToolKitBase):
+             if not fuzzy_match(city_name, attraction.location.address):
+                 continue
+             target_attractions.append(attraction)
+-        top_k = 100
+         if not target_attractions:
+-            return "No attractions found matching the criteria. Please check if the city name is correct and try again."
+-        
++            return "No attractions found matching the criteria. Please check if the city name is correct and try again." + self._search_guard.note("__no_attractions__")
++
++        # ADAPT-FORK: cap results + relevance floor.
++        from agent.framework.search import rank_and_limit
+         attraction_tag_dict = {}
+         for attraction in target_attractions:
+             attraction_tag_dict[attraction.attraction_id] = self._get_attraction_tags(attraction.attraction_id)
+-        id_candidates_sorted = rerank("".join(key_words), attraction_tag_dict)
+-        selected_ids = [ic[0] for ic in id_candidates_sorted[:top_k]]
++        id_candidates_sorted = rank_and_limit(key_words, attraction_tag_dict)
++        selected_ids = [ic[0] for ic in id_candidates_sorted]
+         selected_attractions = [str(self._get_attraction(attraction_id)) for attraction_id in selected_ids]
+         selected_attractions_repr = "\n".join(selected_attractions)
+-        return selected_attractions_repr
++        return selected_attractions_repr + self._search_guard.note(selected_attractions_repr)
+ 
+     @is_tool(tool_type=ToolType.READ)
+     def flight_search_recommend(self, departure: str, destination: str) -> str:
+diff --git a/src/vita/domains/personalization/environment.py b/src/vita/domains/personalization/environment.py
+index 86c06ab..99d4723 100644
+--- a/src/vita/domains/personalization/environment.py
++++ b/src/vita/domains/personalization/environment.py
+@@ -73,7 +73,7 @@ def get_tasks(language: str = None) -> List[PersonalizationTask]:
+         )
+         return []
+ 
+-    with open(task_path, "r") as fp:
++    with open(task_path, "r", encoding="utf-8") as fp:
+         tasks_data = json.load(fp)
+ 
+     tasks = [PersonalizationTask.model_validate(task) for task in tasks_data]
+diff --git a/src/vita/environment/environment.py b/src/vita/environment/environment.py
+index 172a021..c2c2a79 100644
+--- a/src/vita/environment/environment.py
++++ b/src/vita/environment/environment.py
+@@ -354,6 +354,6 @@ def get_cross_environment(
+ 
+ def get_cross_tasks(language: str = None) -> list[Task]:
+     task_path = get_task_file_path("cross_domain", language)
+-    with open(task_path, "r") as fp:
++    with open(task_path, "r", encoding="utf-8") as fp:
+         tasks = json.load(fp)
+     return [Task.model_validate(task) for task in tasks]
+diff --git a/src/vita/evaluator/evaluator_traj.py b/src/vita/evaluator/evaluator_traj.py
+index 6a5f858..e680e75 100644
+--- a/src/vita/evaluator/evaluator_traj.py
++++ b/src/vita/evaluator/evaluator_traj.py
+@@ -278,6 +278,12 @@ class TrajectoryEvaluator(EvaluatorBase):
+         if result_data:
+             for result in result_data:
+                 rubric_idx = result.get("rubric_idx")
++                # Normalize rubric_idx: evaluator LLMs may return int (0) or
++                # str ("rubric_0"). Our states keys are always "rubric_<n>".
++                if rubric_idx is not None:
++                    rubric_idx = str(rubric_idx)
++                    if not rubric_idx.startswith("rubric_"):
++                        rubric_idx = f"rubric_{rubric_idx}"
+                 if rubric_idx and rubric_idx in updated_states:
+                     updated_states[rubric_idx]["justification"] = result.get("justification", "No justification provided")
+                     updated_states[rubric_idx]["meetExpectation"] = result.get("meetExpectation", updated_states[rubric_idx]["meetExpectation"])
+diff --git a/src/vita/memory.yaml b/src/vita/memory.yaml
+index 5c1f7f8..a428500 100644
+--- a/src/vita/memory.yaml
++++ b/src/vita/memory.yaml
+@@ -3,7 +3,10 @@
+ # Per-memory configs inherit from 'default' section.
+ 
+ default:
+-  top_k: 5
++  # ADAPTMemory read() retrieval window. 5 starved the categorical blocks
++  # (only 5 events reached read(); taste/brand/product categories drained).
++  # rewrite ignores top_k (swallowed by **kwargs); rag/rag_cache override to 8.
++  top_k: 20
+   similarity_threshold: 0.0
+ 
+ memory:
+diff --git a/src/vita/memory/__init__.py b/src/vita/memory/__init__.py
+index 23aa181..d5a59f4 100644
+--- a/src/vita/memory/__init__.py
++++ b/src/vita/memory/__init__.py
+@@ -56,7 +56,7 @@ def _load_memory_config() -> dict:
+         return {}
+ 
+     try:
+-        with open(config_path, "r") as f:
++        with open(config_path, "r", encoding="utf-8") as f:
+             raw = yaml.safe_load(f) or {}
+     except Exception as e:
+         logger.warning(f"Failed to load memory.yaml: {e}")
+diff --git a/src/vita/memory/rewrite_memory.py b/src/vita/memory/rewrite_memory.py
+index 55095d7..f4278af 100644
+--- a/src/vita/memory/rewrite_memory.py
++++ b/src/vita/memory/rewrite_memory.py
+@@ -18,6 +18,14 @@ from vita.prompts import get_prompts
+ from vita.utils.llm_utils import generate
+ 
+ 
++# Hard cap on the single text blob. The LLM rewrite path is bounded by
++# max_tokens (~2048 tokens), so anything past this is accumulated
++# append-fallback noise from failed updates — which, left alone, balloons the
++# next update's prompt and turns a recoverable stall into a spiral (v17 saw one
++# user reach 67K chars).
++MAX_MEMORY_CHARS = 12000
++
++
+ class RewriteMemory(BaseMemory):
+     """Simple text rewrite memory.
+ 
+@@ -30,6 +38,24 @@ class RewriteMemory(BaseMemory):
+         self.max_tokens = max_tokens
+         self._memory_text: str = ""
+ 
++    def _cap_memory(self) -> None:
++        """Hard-cap the memory blob (see MAX_MEMORY_CHARS).
++
++        Drops the excess while preserving newline boundaries where possible, so
++        repeated LLM failures (append fallback) can't grow the blob without
++        bound — the growth that made one user's memory-update prompt
++        pathologically large and slow.
++        """
++        if len(self._memory_text) > MAX_MEMORY_CHARS:
++            cut = self._memory_text.rfind("\n", 0, MAX_MEMORY_CHARS)
++            if cut < MAX_MEMORY_CHARS // 2:
++                cut = MAX_MEMORY_CHARS
++            self._memory_text = self._memory_text[:cut]
++            logger.warning(
++                f"memory capped to {len(self._memory_text)} chars "
++                f"(was over {MAX_MEMORY_CHARS})"
++            )
++
+     def read(self, query: str = None) -> str:
+         """Return the current memory content. Query parameter is ignored (rewrite is always a full summary)."""
+         if not self._memory_text:
+@@ -70,6 +96,7 @@ class RewriteMemory(BaseMemory):
+                 self._memory_text = (
+                     f"User preference observations from interactions:\n{interactions_text}"
+                 )
++            self._cap_memory()
+             return self._memory_text
+ 
+         # Use LLM to rewrite memory
+@@ -107,7 +134,7 @@ class RewriteMemory(BaseMemory):
+         # self.max_tokens wins without a TypeError.
+         llm_args = {
+             k: v for k, v in llm_args.items()
+-            if k not in ("max_tokens", "max_completion_tokens")
++            if k not in ("max_tokens", "max_completion_tokens", "num_retries")
+         }
+ 
+         try:
+@@ -117,6 +144,7 @@ class RewriteMemory(BaseMemory):
+                 model=llm,
+                 messages=messages,
+                 max_tokens=self.max_tokens,
++                num_retries=0,
+                 **llm_args,
+             )
+             if response is not None and response.content:
+@@ -146,6 +174,7 @@ class RewriteMemory(BaseMemory):
+                     f"User preference observations:\n{interactions_text}"
+                 )
+ 
++        self._cap_memory()
+         return self._memory_text
+ 
+     # ── Tools: auto-discovered by framework via @is_tool ──
+diff --git a/src/vita/metrics/agent_metrics.py b/src/vita/metrics/agent_metrics.py
+index 75158d9..dd11461 100644
+--- a/src/vita/metrics/agent_metrics.py
++++ b/src/vita/metrics/agent_metrics.py
+@@ -136,6 +136,9 @@ def get_metrics_df(results: Results) -> tuple[pd.DataFrame, int]:
+ 
+     task_ids_counts = [(tid, count) for tid, count in df.task_id.value_counts().items()]
+     task_ids_counts.sort(key=lambda x: x[1])
++    if not task_ids_counts:
++        # No simulations succeeded (all tasks failed): return empty df with max_k=0
++        return df, 0
+     min_k = task_ids_counts[0][1]
+     if min_k < max_k:
+         logger.warning(
+@@ -157,6 +160,9 @@ def get_tasks_pass_hat_k(results: Results) -> pd.DataFrame:
+         )
+         res.name = f"pass^{k}"
+         dfs.append(res)
++    if not dfs:
++        # No simulations succeeded: return an empty DataFrame
++        return pd.DataFrame()
+     df_pass_hat_k = pd.concat(dfs, axis=1)
+     return df_pass_hat_k
+ 
+diff --git a/src/vita/orchestrator/orchestrator.py b/src/vita/orchestrator/orchestrator.py
+index 972305f..772b62e 100644
+--- a/src/vita/orchestrator/orchestrator.py
++++ b/src/vita/orchestrator/orchestrator.py
+@@ -331,6 +331,11 @@ class Orchestrator:
+             for tool_call in self.message.tool_calls:
+                 tool_msg = self.environment.get_response(tool_call)
+                 tool_msgs.append(tool_msg)
++            # ADAPT-FORK: count consecutive tool errors so --max-errors actually
++            # fires. The stock loop never increments num_errors, so an error
++            # storm burned the whole step budget while re-sending full history.
++            from agent.framework.loop_policy import update_consecutive_errors
++            self.num_errors = update_consecutive_errors(self.num_errors, tool_msgs)
+             assert len(self.message.tool_calls) == len(tool_msgs), (
+                 "Number of tool calls and tool messages should be the same"
+             )
+diff --git a/src/vita/orchestrator/personalization_orchestrator.py b/src/vita/orchestrator/personalization_orchestrator.py
+index bf0cc3c..65b0719 100644
+--- a/src/vita/orchestrator/personalization_orchestrator.py
++++ b/src/vita/orchestrator/personalization_orchestrator.py
+@@ -208,6 +208,11 @@ class PersonalizationOrchestrator:
+                 self.agent.time = subtask_time + " " + get_weekday(subtask_time, self.language)
+                 print(f"      Agent time set to: {self.agent.time}")
+ 
++            # Set current instruction BEFORE reading system_prompt so the memory
++            # injected into the prompt uses THIS subtask's instruction (not the
++            # previous subtask's, or None on the first subtask).
++            self.agent.set_current_instruction(subtask.instruction)
++
+             # Print the system prompt preview
+             sys_prompt = self.agent.system_prompt
+             print(f"\n      📄 Agent system prompt preview ({len(sys_prompt)} chars):")
+@@ -215,9 +220,6 @@ class PersonalizationOrchestrator:
+                 print(f"         {line}")
+             print(f"         ...")
+ 
+-            # Set current instruction for memory retrieval
+-            self.agent.set_current_instruction(subtask.instruction)
+-
+             # Capture the memory content that will be injected into the agent's system prompt
+             memory_read_content = self.agent.memory.read(query=subtask.instruction)
+             print(f"\n      🧠 Memory read for this subtask ({len(memory_read_content)} chars):")
+diff --git a/src/vita/prompts/__init__.py b/src/vita/prompts/__init__.py
+index 693ecf5..9c0ee24 100644
+--- a/src/vita/prompts/__init__.py
++++ b/src/vita/prompts/__init__.py
+@@ -12,7 +12,7 @@ class Prompts:
+         prompt_yamls = self.get_prompt_yamls()
+         for prompt_yaml in prompt_yamls:
+             prompt_name = prompt_yaml.split('.')[0]
+-            with open(os.path.join(os.path.dirname(__file__), prompt_yaml), 'r') as f:
++            with open(os.path.join(os.path.dirname(__file__), prompt_yaml), 'r', encoding='utf-8') as f:
+                 prompt_data = yaml.load(f, Loader=yaml.FullLoader)
+                 if self.language not in prompt_data:
+                     raise ValueError(f"Language {self.language} not found in prompt {prompt_yaml}")
+diff --git a/src/vita/prompts/agent_system_prompt.yaml b/src/vita/prompts/agent_system_prompt.yaml
+index 3b20305..c892cfb 100644
+--- a/src/vita/prompts/agent_system_prompt.yaml
++++ b/src/vita/prompts/agent_system_prompt.yaml
+@@ -1,5 +1,7 @@
+ name: agent_system_prompt
+ chinese: |-
++  /no_think
++
+   # 环境
+   - 当前时间：{time}
+ 
+diff --git a/src/vita/prompts/full_trajectory_eval_template.yaml b/src/vita/prompts/full_trajectory_eval_template.yaml
+index 8241d2a..fd8e68f 100644
+--- a/src/vita/prompts/full_trajectory_eval_template.yaml
++++ b/src/vita/prompts/full_trajectory_eval_template.yaml
+@@ -1,5 +1,7 @@
+ name: full_trajectory_eval_template
+ chinese: |-
++  /no_think
++
+   # 系统信息
+   {env_info}
+ 
+diff --git a/src/vita/prompts/full_trajectory_no_rubrics_eval_template.yaml b/src/vita/prompts/full_trajectory_no_rubrics_eval_template.yaml
+index d7a2492..8eb7025 100644
+--- a/src/vita/prompts/full_trajectory_no_rubrics_eval_template.yaml
++++ b/src/vita/prompts/full_trajectory_no_rubrics_eval_template.yaml
+@@ -1,5 +1,7 @@
+ name: full_trajectory_no_rubrics_eval_template
+ chinese: |-
++  /no_think
++
+   # 系统信息
+   {env_info}
+ 
+diff --git a/src/vita/prompts/personalization_agent_proactive_system_prompt.yaml b/src/vita/prompts/personalization_agent_proactive_system_prompt.yaml
+index 86a5cf9..9002cad 100644
+--- a/src/vita/prompts/personalization_agent_proactive_system_prompt.yaml
++++ b/src/vita/prompts/personalization_agent_proactive_system_prompt.yaml
+@@ -1,5 +1,7 @@
+ name: personalization_agent_proactive_system_prompt
+ chinese: |-
++  /no_think
++
+   # 环境
+   - 当前时间：{time}
+ 
+diff --git a/src/vita/prompts/personalization_agent_system_prompt.yaml b/src/vita/prompts/personalization_agent_system_prompt.yaml
+index 4cf155d..cbb5e7e 100644
+--- a/src/vita/prompts/personalization_agent_system_prompt.yaml
++++ b/src/vita/prompts/personalization_agent_system_prompt.yaml
+@@ -1,21 +1,48 @@
+ name: personalization_agent_system_prompt
+ chinese: |-
++  /no_think
++
+   # 环境
+   - 当前时间：{time}
+ 
+   # 角色设定
+   你是一位个性化智能服务助手。你需要根据用户的偏好记忆来为用户提供更贴心、更符合其习惯的购买服务。
+ 
++  # 工具调用前必查步骤（重要，每次调用search/filter/recommend类工具前必须执行）
++  1. 【检查常用商家/品牌】偏好记忆中是否记录了"忠诚店铺"或"常用餐厅"？若有，直接将店铺名作为搜索参数，无需大范围搜索。
++  2. 【检查口味/品类偏好】偏好记忆中是否有"喜欢"或"偏好"信息？将其直接作为 keyword/category 参数传入工具。
++  3. 【检查忌口/不喜欢】偏好记忆中是否有"不喜欢"或"忌口"？在搜索或候选筛选时排除这些内容。
++  4. 【候选排序】工具返回多个候选时，优先选择偏好记忆中明确出现的店铺/商品，而非仅按评分/距离排序。
++  5. 【直接执行】若偏好记忆已提供足够信息（常用店铺+常点商品），可直接构造下单参数，无需再次询问用户确认已知信息。
++
+   # 工具使用规范：
+   - 当用户需求需要调工具来完成时，先判断是否已知全部参数信息，如果已知则抽取相应参数，否则询问用户相关参数值
+   - 当用户无法提供相关信息时，首先查看用户偏好记忆，再通过工具获取相关信息
+   - 当用户请求比较模糊时（如"帮我点个外卖"），优先参考用户偏好记忆来推断用户可能的需求
+   - 参考Precondition和Postcondition完成任务
+ 
++  # 工具参数 ID 使用规范（强制，所有域通用）
++  - store_id / product_id / order_id / shop_id / hotel_id / room_id / flight_id / train_id / ticket_id 等 ID 参数必须原样使用工具返回结果中的完整 ID 字符串（如 S1779...），禁止把店铺/商品的中文名称当 ID 传、也禁止自行编造编号
++  - 若目标商家/商品不在搜索结果里，向用户说明无法满足，不要编造 ID 硬调
++  - 若工具报错 "xxx not found"，回看上一次搜索返回里的准确 ID 再重试，不要反复传同一个无效 ID
++
++  # 下单/支付执行规范（下单与支付必须通过工具调用完成，禁止文字模拟）
++  - 创建订单只能通过调用对应工具完成：外卖调 create_delivery_order、到店点餐调 create_instore_product_order、酒店/景点/机票/火车/打车分别调 create_hotel_order / create_attraction_order / create_flight_order / create_train_order / create_taxi_order。禁止仅用文字描述"订单创建中/订单已创建"而不调用工具。
++  - 一旦确定商家与商品（用户明确选择，或已授权"随便/你看着办/都可以"），立即调用下单工具完成订单，不要继续搜索或反复列出候选。
++  - 下单工具返回订单号后，若用户已授权（"随便/你看着办/都可以"），直接调用对应支付工具（如 pay_delivery_order / pay_instore_order / pay_hotel_order）完成支付；若用户尚未授权，最多询问一次确认，得到确认后立即支付，不要停留在"等待确认"状态不动。
++  - 支付完成后根据工具返回结果向用户汇报最终结果（订单号、送达时间等）。
++
++  # 决策与匹配规范（防止搜索空转）
++  - 禁止为寻找"完全精确匹配"的商品（如某品牌+某口味+某规格的组合）而反复搜索同一个不存在的组合；同一搜索（或近义词组合）最多重复2次，之后必须基于已有搜索结果直接决策
++  - 若搜索结果中没有与偏好记忆完全一致的商品，选择与用户需求最接近、可用的商品下单，并向用户简要说明选择理由
++  - 搜索工具返回的结果就是当前环境可购买的全部选项；不要期待搜索能返回结果中不存在、仅出现在偏好记忆里的商品
++  - 用户当下的明确需求（如"嗓子不舒服"）优先于记忆中过于具体的品牌/口味偏好；记忆偏好只作为参考，不作为必须精确满足的硬性条件
++
+   # 偏好记忆使用规范
+   - 优先依据偏好记忆中的信息完成任务，偏好匹配度高于商家评分、距离等其他因素
+   - 当用户请求模糊时，使用偏好记忆中的信息来做出合理推断和推荐
+   - 向用户确认基于偏好做出的推荐，但不要过度追问已经在记忆中有答案的问题
++  - 若用户有明确的历史偏好（如常点某店、偏爱某口味），直接按偏好执行，只需在完成后简要告知用户
+ 
+   # 对话规范
+   - 仅利用上文已有信息和偏好记忆，禁止无根据地构造信息并回复用户
+@@ -35,6 +62,17 @@ english: |-
+   - When the user's request is vague (e.g., "order some food for me"), prioritize consulting user preference memory to infer likely needs
+   - Complete tasks based on Precondition and Postcondition
+ 
++  # Tool Parameter ID Rules (mandatory, all domains)
++  - ID parameters (store_id / product_id / order_id / shop_id / hotel_id / room_id / flight_id / train_id / ticket_id) must be passed verbatim as the full ID string returned by tools (e.g. S1779...). Never pass a store/product Chinese name as an ID, and never invent numbers
++  - If the target store/product is absent from search results, tell the user it cannot be fulfilled — do not fabricate an ID and force a call
++  - If a tool errors with "xxx not found", look back at the exact ID in the previous search output and retry — do not repeat the same invalid ID
++
++  # Decision and Matching Guidelines (avoid search loops)
++  - Do not repeatedly search for a non-existent exact product match (e.g. a specific brand + flavor + spec combination); run the same search (or near-synonym variants) at most twice, then decide directly from the results you already have
++  - If no result exactly matches the preference memory, order the closest available product that fits the user's need and briefly tell the user why
++  - Search results are the complete set of purchasable options in the current environment; do not expect a search to return products that exist only in preference memory but not in the results
++  - The user's current explicit need (e.g. "sore throat") takes priority over overly specific brand/flavor preferences in memory; treat memory preferences as a reference, not a hard requirement
++
+   # Preference Memory Usage Guidelines
+   - Prioritize completing tasks based on preference memory; preference match takes precedence over store ratings, distance, and other factors
+   - When the user's request is vague, use information from the preference memory to make reasonable inferences and recommendations
+diff --git a/src/vita/prompts/personalization_user_system_prompt.yaml b/src/vita/prompts/personalization_user_system_prompt.yaml
+index bc75094..891fa49 100644
+--- a/src/vita/prompts/personalization_user_system_prompt.yaml
++++ b/src/vita/prompts/personalization_user_system_prompt.yaml
+@@ -1,5 +1,7 @@
+ name: personalization_user_system_prompt
+ chinese: |-
++  /no_think
++
+   # 角色设定
+   你在扮演一名与智能体交互的用户。你的人物设定在<persona>标签中。
+ 
+diff --git a/src/vita/prompts/sliding_window_eval_no_rubrics_eval_template.yaml b/src/vita/prompts/sliding_window_eval_no_rubrics_eval_template.yaml
+index 273e77c..eb75fe1 100644
+--- a/src/vita/prompts/sliding_window_eval_no_rubrics_eval_template.yaml
++++ b/src/vita/prompts/sliding_window_eval_no_rubrics_eval_template.yaml
+@@ -1,5 +1,7 @@
+ name: sliding_window_eval_no_rubrics_eval_template
+ chinese: |-
++  /no_think
++
+   # 系统信息
+   {env_info}
+ 
+diff --git a/src/vita/prompts/sliding_window_eval_template.yaml b/src/vita/prompts/sliding_window_eval_template.yaml
+index 40565c8..d2bc762 100644
+--- a/src/vita/prompts/sliding_window_eval_template.yaml
++++ b/src/vita/prompts/sliding_window_eval_template.yaml
+@@ -1,5 +1,7 @@
+ name: sliding_window_eval_template
+ chinese: |-
++  /no_think
++
+   # 系统信息
+   {env_info}
+ 
+diff --git a/src/vita/prompts/user_system_prompt.yaml b/src/vita/prompts/user_system_prompt.yaml
+index a037e2a..eb37df7 100644
+--- a/src/vita/prompts/user_system_prompt.yaml
++++ b/src/vita/prompts/user_system_prompt.yaml
+@@ -1,5 +1,7 @@
+ name: user_system_prompt
+ chinese: |-
++  /no_think
++
+   # 角色设定
+   你在扮演一名与智能体交互的用户。你的人物设定在<persona>标签中，你的任务是将<instructions>中的内容通过用户对话的形式传达给智能体。
+ 
+diff --git a/src/vita/run.py b/src/vita/run.py
+index 6a83a2a..c60ab8d 100644
+--- a/src/vita/run.py
++++ b/src/vita/run.py
+@@ -318,51 +318,61 @@ def run_tasks(
+                 raise FileExistsError(
+                     f"File {save_to} already exists. Please delete it or use a different save_to name."
+                 )
+-            with open(save_to, "r") as fp:
+-                prev_simulation_results = Results.model_validate_json(fp.read())
+-                # Check if the run config has changed
+-                if get_pydantic_hash(prev_simulation_results.info) != get_pydantic_hash(
+-                    simulation_results.info
+-                ):
+-                    diff = show_dict_diff(
+-                        prev_simulation_results.info.model_dump(),
+-                        simulation_results.info.model_dump(),
+-                    )
+-                    ConsoleDisplay.console.print(
+-                        f"The run config has changed.\n\n{diff}\n\nDo you want to resume the run? (y/n)"
+-                    )
+-                    response = (
+-                        ConsoleDisplay.console.input(
+-                            "[yellow]File [bold]{}[/bold] already exists. Do you want to resume the run? (y/n)[/yellow] ".format(
+-                                save_to
++            with open(save_to, "r", encoding="utf-8") as fp:
++                prev_ckpt = json.load(fp)
++                prev_sims = prev_ckpt.get("simulations") or []
++                if prev_ckpt.get("info") is not None:
++                    # Full-format checkpoint: stock validation + config checks.
++                    prev_simulation_results = Results.model_validate(prev_ckpt)
++                    # Check if the run config has changed
++                    if get_pydantic_hash(prev_simulation_results.info) != get_pydantic_hash(
++                        simulation_results.info
++                    ):
++                        diff = show_dict_diff(
++                            prev_simulation_results.info.model_dump(),
++                            simulation_results.info.model_dump(),
++                        )
++                        ConsoleDisplay.console.print(
++                            f"The run config has changed.\n\n{diff}\n\nDo you want to resume the run? (y/n)"
++                        )
++                        response = (
++                            ConsoleDisplay.console.input(
++                                "[yellow]File [bold]{}[/bold] already exists. Do you want to resume the run? (y/n)[/yellow] ".format(
++                                    save_to
++                                )
+                             )
++                            .lower()
++                            .strip()
+                         )
+-                        .lower()
+-                        .strip()
+-                    )
+-                    if response != "y":
++                        if response != "y":
++                            raise ValueError(
++                                "The run config has changed. Please delete the existing file or use a different save_to name."
++                            )
++                    # Check if the task set has changed
++                    if not all(
++                        get_pydantic_hash(task) == get_pydantic_hash(prev_task)
++                        for task, prev_task in zip(
++                            sorted(simulation_results.tasks, key=lambda x: x.id),
++                            sorted(prev_simulation_results.tasks, key=lambda x: x.id),
++                        )
++                    ):
+                         raise ValueError(
+-                            "The run config has changed. Please delete the existing file or use a different save_to name."
++                            "The task set has changed. Please delete the existing file or use a different save_to name."
+                         )
+-                # Check if the task set has changed
+-                if not all(
+-                    get_pydantic_hash(task) == get_pydantic_hash(prev_task)
+-                    for task, prev_task in zip(
+-                        sorted(simulation_results.tasks, key=lambda x: x.id),
+-                        sorted(prev_simulation_results.tasks, key=lambda x: x.id),
++                    simulation_results = prev_simulation_results
++                else:
++                    # ADAPT-FORK: partial checkpoint written by the incremental
++                    # _save() (info=None, tasks=[]). Nothing to hash-compare; trust
++                    # the user's y, keep the freshly built results so the final
++                    # return carries proper info/tasks, and adopt only the done set.
++                    logger.info(
++                        f"Resuming partial checkpoint from {len(prev_sims)} runs "
++                        "(info=None; skipping config/task-set checks)."
+                     )
+-                ):
+-                    raise ValueError(
+-                        "The task set has changed. Please delete the existing file or use a different save_to name."
+-                    )
+-                # Check which of the runs have already been done
+                 done_runs = set(
+-                    [
+-                        (sim.trial, sim.task_id, sim.seed)
+-                        for sim in prev_simulation_results.simulations
+-                    ]
++                    (s.get("trial"), s.get("task_id"), s.get("seed"))
++                    for s in prev_sims
+                 )
+-                simulation_results = prev_simulation_results
+                 ConsoleDisplay.console.print(
+                     f"[bold yellow]Resuming run from {len(done_runs)} runs. {len(tasks) * num_trials - len(done_runs)} runs remaining.[/bold yellow]"
+                 )
+@@ -383,11 +393,22 @@ def run_tasks(
+         if save_to is None:
+             return
+         with lock:
+-            with open(save_to, "r") as fp:
+-                ckpt = json.load(fp)
+-            
++            # If save_to doesn't exist, create a fresh checkpoint; if it exists
++            # but is corrupt/legacy-encoded, rebuild it instead of crashing.
++            if Path(save_to).exists():
++                try:
++                    with open(save_to, "r", encoding="utf-8") as fp:
++                        ckpt = json.load(fp)
++                except (UnicodeDecodeError, json.JSONDecodeError):
++                    logger.warning(
++                        f"{save_to} is corrupt or legacy-encoded; rebuilding it."
++                    )
++                    ckpt = {"timestamp": get_now(), "info": None, "tasks": [], "simulations": []}
++            else:
++                ckpt = {"timestamp": get_now(), "info": None, "tasks": [], "simulations": []}
++
+             simulation_dict = simulation.model_dump()
+-            
++
+             ckpt["simulations"].append(simulation_dict)
+             with open(save_to, "w", encoding="utf-8") as fp:
+                 json.dump(ckpt, fp, indent=2, ensure_ascii=False, default=serialize_datetime)
+@@ -899,7 +920,7 @@ def re_evaluate_simulation(config: RunConfig) -> Results:
+         raise FileNotFoundError(f"Simulation file not found: {re_evaluate_file}")
+     
+     # Load the original results
+-    with open(simulation_path, "r") as fp:
++    with open(simulation_path, "r", encoding="utf-8") as fp:
+         original_results = Results.model_validate_json(fp.read())
+     
+     logger.info(f"Loaded simulation file: {re_evaluate_file}")
+diff --git a/src/vita/utils/io_utils.py b/src/vita/utils/io_utils.py
+index 2a5439a..b5e7bca 100644
+--- a/src/vita/utils/io_utils.py
++++ b/src/vita/utils/io_utils.py
+@@ -66,15 +66,15 @@ def load_file(path: str | Path, **kwargs: Any) -> dict[str, Any]:
+     """
+     path = Path(path)
+     if path.suffix == ".json":
+-        with open(path, "r") as fp:
++        with open(path, "r", encoding="utf-8") as fp:
+             data = json.load(fp, **kwargs)
+     elif path.suffix == ".yaml" or path.suffix == ".yml":
+-        with open(path, "r") as fp:
++        with open(path, "r", encoding="utf-8") as fp:
+             data = yaml.load(fp, Loader=yaml.SafeLoader, **kwargs)
+         # Apply environment variable substitution for YAML files
+         data = _recursive_substitute(data)
+     elif path.suffix == ".toml":
+-        with open(path, "r") as fp:
++        with open(path, "r", encoding="utf-8") as fp:
+             data = toml.load(fp, **kwargs)
+     elif path.suffix == ".txt" or path.suffix == ".md":
+         encoding = kwargs.pop("encoding", None)
+@@ -99,15 +99,15 @@ def dump_file(path: str | Path, data: dict[str, Any], **kwargs: Any) -> None:
+     os.makedirs(path.parent, exist_ok=True)
+ 
+     if path.suffix == ".json":
+-        with open(path, "w") as fp:
++        with open(path, "w", encoding="utf-8") as fp:
+             json.dump(data, fp, ensure_ascii=False, **kwargs)
+     elif path.suffix == ".yaml" or path.suffix == ".yml":
+-        with open(path, "w") as fp:
++        with open(path, "w", encoding="utf-8") as fp:
+             yaml.dump(data, fp, **kwargs)
+     elif path.suffix == ".toml":
+         data_str = json.dumps(data, ensure_ascii=False)
+         new_data = json.loads(data_str)
+-        with open(path, "w") as fp:
++        with open(path, "w", encoding="utf-8") as fp:
+             toml.dump(new_data, fp, **kwargs)
+     elif path.suffix == ".txt" or path.suffix == ".md":
+         encoding = kwargs.pop("encoding", None)
+diff --git a/src/vita/utils/llm_utils.py b/src/vita/utils/llm_utils.py
+index df9e92f..350b119 100644
+--- a/src/vita/utils/llm_utils.py
++++ b/src/vita/utils/llm_utils.py
+@@ -1,4 +1,5 @@
+ import json
++import os
+ import re
+ from typing import Any, Optional
+ 
+@@ -43,7 +44,23 @@ def _get_client(base_url: str, api_key: str, max_retries: int) -> OpenAI:
+     key = (base_url, api_key, max_retries)
+     client = _CLIENT_CACHE.get(key)
+     if client is None:
+-        client = OpenAI(base_url=base_url, api_key=api_key, max_retries=max_retries)
++        # ADAPT-FORK: fail-fast read timeout. The SDK default (600s) is already
++        # far above any legitimate generation (agent <=2048t is <90s at the
++        # engine's ~48 tok/s); a call past it is a hang, not slow work. We
++        # deliberately no longer read ADAPT_LLM_TIMEOUT — the old 3600s env
++        # override let a hung memory-update call block for 60 min with no
++        # self-recovery, which the outer watchdog then misread as a run-level
++        # stall and killed. Memory call sites pass num_retries=0 so a hang
++        # raises once in <=600s instead of being retried 3x (4x600s = 40 min).
++        # The timeout applies uniformly to every backend/role; measurement
++        # apparatus untouched.
++        timeout = 600.0
++        client = OpenAI(
++            base_url=base_url,
++            api_key=api_key,
++            max_retries=max_retries,
++            timeout=timeout,
++        )
+         _CLIENT_CACHE[key] = client
+     return client
+ 

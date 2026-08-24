@@ -1,0 +1,8 @@
+# ASCII-only overlay for VitaBench's locale-dependent YAML loader.
+default:
+  top_k: 20
+  similarity_threshold: 0.0
+
+memory:
+  - name: rewrite
+    max_length: 12000

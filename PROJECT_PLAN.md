@@ -1,6 +1,11 @@
 # ADAPT: Agent with Dynamic Adaptive Preferences Toward Sustained Consumption Goals
 ## 面向动态偏好与持续消费目标的长序列智能体 —— 项目规划（v2.0 最终定稿）
 
+> 历史文档：本文的 Memory Arena/双轨设想已停止执行。当前唯一有效路线是
+> 外部完整 `ADAPTAgent` + 只读 VitaBench；以根目录 `CLAUDE.md` 和
+> `agent/vitabench_runner.py` 为准。不要从本文恢复 Track A、VitaBench fork
+> 或 evaluator-reward 驱动的运行时学习。
+
 ---
 
 ## 一、项目定位
@@ -11,40 +16,6 @@
 **项目性质**：不是发论文，而是做一个能体现 Agent 算法能力的完整工程项目。交付质量 = 代码完整 + 评测硬成绩 + 工程闭环。
 
 **核心诉求**：积累长序列 Agent 的全栈工程能力（记忆系统、检索、主动决策、评测方法论、LLM 集成）。
-
-### 2026-08-06 决策修订（优先于本文其他约定）
-
-本修订不改变既有 ADAPT 架构，只更新模型、实现边界、优化目标和执行顺序。若正文其他章节与本节冲突，以本节为准。
-
-1. **基模固定为 Qwen3.6-35B-A3B**：开发、调试、消融和正式评测均使用同一基模；官方其他模型成绩只作为外部参考线，不参与项目内模型选型。
-2. **VitaBench 2.0 公共运行时完全冻结**：任务与环境数据、Orchestrator、用户模拟器、工具实现及语义、终止条件、Evaluator、Reward 和聚合方式均保持官方版本不变。
-3. **所有新增能力必须位于 Agent 接口以内**：允许增强 Memory、Prompt/Context 组织、Planning、状态跟踪、工具参数校验、错误恢复、重复行为识别、主动澄清、Reflection 和完成判断；Agent 只能使用公开消息、工具 Schema 和工具返回，禁止读取环境 DB、参考答案或评估器内部数据。
-4. **以最终效果为主，不做严格 token 对齐**：ADAPT Agent 可以为规划、校验和反思增加内部模型调用，不要求与标准 Agent 使用完全相同的 token；仍需记录 token、调用次数、延迟和 GPU 时间，作为工程诊断指标而非硬性成功约束。
-5. **先形成完整 Agent 候选，再做干净评测**：优先实现最可能直接提分的 Agent Harness、工具校验和 Context Paging，再按失败分析决定是否补充 Reflection 与更完整的 Tool Registry；每项能力通过子集评测后才进入最终版本。随后从零开始运行统一配置的基线与 ADAPT 评测，不复用此前混合配置或修改过公共运行时的检查点。
-
-### 目标优先级与创新准入
-
-**正式目标**：
-
-> 在冻结的 VitaBench 2.0 公共运行时和固定 Qwen3.6-35B-A3B 基模下，构建以任务成功率为第一目标的长序列个性化消费 Agent；在不牺牲成功率和评测公平性的前提下，吸收并验证近期 Agent 技术，使 ADAPT 在长期记忆、动态偏好、主动交互和复杂消费执行上超过标准 Agent 与现有 memory 基线。
-
-项目按以下顺序做决策：
-
-1. **P0 — 评测可信**：冻结 VitaBench，禁止信息泄漏、隐藏答案访问和面向单个 benchmark 样例的特殊规则。
-2. **P1 — 最终效果**：以 Avg@4 为主指标，首先提高完整 ADAPT Agent 的任务成功率。
-3. **P2 — 稳定性**：减少工具参数错误、无效重试、行为循环、错误结束和长序列性能退化。
-4. **P3 — Agent 创新性**：在效果不退化的前提下，优先吸收与任务相关的 Planning、Test-time Reasoning、Reflection/Self-correction、Stateful Workflow、Context Engineering、动态记忆路由、工具调用验证、不确定性判断和主动澄清等方向。
-5. **P4 — 效率**：记录 token、调用次数、延迟和 GPU 时间，用于工程诊断；当前不作为限制 Agent 能力的硬门槛。
-
-任何候选模块都必须满足以下准入条件：
-
-- 位于 Agent 或 Memory 接口内，不修改 benchmark 公共运行时；
-- 针对已观测失败类型或长序列消费任务中的明确能力缺口；
-- 通过统一子集和固定配置评测证明能提高成功率、稳定性或关键能力分项；
-- 若消融后分数不降、模块自身不提分，或引入明显回归，则简化、重做或删除；
-- 不以“采用了新技术”作为保留理由，以可复现的效果证据作为最终依据。
-
-因此，Reflection、Context Paging、Tool Registry、漂移检测、选择性遗忘和主动询问均是**候选能力**，不是必须无条件保留的固定资产。Agent Harness 是承载规划、校验、恢复、上下文组织和完成判断的统一接口层，也必须通过最终成功率验证其价值。
 
 ### 为什么这个任务值得做
 
@@ -128,8 +99,8 @@ VitaBench 2.0 揭示的现状：**SOTA 模型在理想 Full Context 下也仅 ~0
 | 骨架 | VitaBench `LLMAgent` + `BaseMemory` | 评测同构、零适配 |
 | 向量后端 | ChromaDB（开发期）/ FAISS（评测期） | 轻量、本地可跑 |
 | 结构化存储 | SQLAlchemy + SQLite | 偏好图谱、事实生命周期 |
-| 固定基模 | **Qwen3.6-35B-A3B** | 项目所有开发、消融和正式评测统一使用，确保提升来自 Agent 系统 |
-| 外部参考 | VitaBench 2.0 官方 leaderboard | 仅用于判断完整 ADAPT Agent 是否超过先进模型，不替换项目基模 |
+| 主力 LLM | **DeepSeek-V4-Pro** | leaderboard 非 thinking 最优（Full Context 0.456 / Agentic 0.427）+ 成本低 |
+| 验证 LLM | Claude（阶段 2 扫描） | 最高分参考（0.503），验证可移植性 |
 
 ---
 
@@ -157,11 +128,11 @@ VitaBench 2.0 揭示的现状：**SOTA 模型在理想 Full Context 下也仅 ~0
 
 ### 3.3 控制变量（保证归因正确）
 
-1. **基模固定**：Agent 基模统一使用 Qwen3.6-35B-A3B；User/Evaluator 及其参数在整个对比组中保持一致
+1. **LLM 固定**：agent/user/evaluator 三个 LLM 定死后整个对比组不许换
 2. **同任务集**：全部 56 用户 × 771 子任务
 3. **同工具环境**：66 工具完全一致
 4. **同 rollout 次数**：Avg@4
-5. **公共预算一致**：VitaBench 的 max-steps、终止条件和评测配置保持一致；Agent 内部允许增加规划、校验和反思调用，但必须记录资源消耗
+5. **同 max-steps/预算**：不靠多花 token 赢
 
 ### 3.4 消融实验（证明每个模块的贡献）
 
@@ -174,19 +145,19 @@ VitaBench 2.0 揭示的现状：**SOTA 模型在理想 Full Context 下也仅 ~0
 
 > 任何模块消融不掉分 → 是负担不是资产，砍掉。
 
-### 3.5 固定基模策略
+### 3.5 两阶段 LLM 策略
 
 | 阶段 | 策略 | 目的 |
 |------|------|------|
-| 开发/消融期 | **固定 Qwen3.6-35B-A3B** | 快速迭代，分数变化只来自 Agent 架构 |
-| 正式评测期 | **继续固定 Qwen3.6-35B-A3B** | 形成同基模的干净基线与最终成绩 |
+| 开发/消融期 | **固定** DeepSeek-V4-Pro | 快速迭代，分数差只来自架构 |
+| 选型扫描期 | 全架构组 × 2-3 LLM | 验证可移植性，选性价比最优 |
 
 ### 3.6 评测成本分层
 
 ```
 快速迭代：10 用户 × 核心 2-3 架构 × 固定 LLM   → 几小时看趋势
 全量基准：56 用户 × 全部架构 × 固定 LLM        → 正式对比矩阵
-最终复核：56 用户 × 入围架构 × 4 rollouts      → 只做一次
+选型扫描：56 用户 × 6 架构 × 2-3 个 LLM        → 只做一次
 ```
 （VitaBench 支持 `--num-tasks N` 子集）
 
@@ -213,7 +184,7 @@ VitaBench 2.0 揭示的现状：**SOTA 模型在理想 Full Context 下也仅 ~0
 > 深度点 = 每个模块真正的技术难点（深水区）——做浅了就是玩具，做到位才有竞争力。
 
 ```
-Step 0  基线可信     → Qwen3.6-35B-A3B 跑通 + 官方公共运行时冻结 + 子集基线
+Step 0  基线可信     → 当前进行中：DeepSeek Flash 跑通 + 编码修复 + 子集基线
 Step 1  记忆骨架     → ADAPTMemory(BaseMemory) + Memory Stream + 三维检索  【胜负手，~60% 时间】
 Step 2  智能层       → Reflection + 漂移检测 + 选择性遗忘 + 主动询问
 Step 3  评测验证     → 对比矩阵 + 消融实验 + 时间衰减曲线 + 成本表
@@ -257,7 +228,7 @@ D 去主动询问    → A−D = 主动贡献
 
 ### 赢的定义
 
-> **固定 Qwen3.6-35B-A3B，完整 ADAPT Agent 的 Avg@4 超过同基模 rewrite/rag/full_context，并争取超过官方先进模型参考线；token 与延迟如实记录，但不作为硬性成功门槛。**
+> **Avg@4 超 rewrite/rag，追 groundtruth 的 90%，token 花 full_context 的 1/5，时间衰减曲线更平。**
 
 ---
 
@@ -267,7 +238,7 @@ D 去主动询问    → A−D = 主动贡献
 | # | 任务 | 产出 |
 |---|------|------|
 | 0.1 | VitaBench 部署 + 数据集下载（56用户/771子任务） | ✅ 可运行评测环境 |
-| 0.2 | models.yaml 配置（Qwen3.6-35B-A3B） | ✅ 本地 LLM 接入 |
+| 0.2 | models.yaml 配置（DeepSeek Flash） | ✅ LLM 接入 |
 | 0.3 | 复现官方基线（null + full_context + rewrite 各跑 10 用户子集） | 基线可信度确认 |
 
 **M0 里程碑**：评测环境可用，基线分数与官方 leaderboard 对齐
@@ -310,7 +281,7 @@ D 去主动询问    → A−D = 主动贡献
 |---|------|------|
 | 4.1 | 代码规范化（类型、docstring、pytest 覆盖核心模块） | 工程化代码 |
 | 4.2 | README + 架构文档 + API 文档 + 成绩展示 | 完整文档 |
-| 4.3 | Qwen3.6-35B-A3B 最终 4-rollout 复核 | 可复现的最终成绩 |
+| 4.3 | 选型扫描（DeepSeek Flash + Claude 全组对比） | 可移植性验证 |
 | 4.4 | 可选：Mini-TUI 演示界面 | 可交互 demo |
 
 **M4 里程碑**：项目完整交付——能跑、有成绩、有文档、可复现
@@ -371,7 +342,7 @@ ADAPT/
 - [ ] ADAPT 在 Avg@4 上**超过 rewrite 和 rag**（10 用户子集）
 - [ ] ADAPT 在 Avg@4 上**达到 groundtruth 的 ~90%**
 - [ ] **时间衰减曲线比 rewrite 平**（后期不崩）
-- [ ] **完整记录 token、调用次数、延迟和 GPU 时间，不以严格 token 对齐限制 Agent 能力**
+- [ ] **token 成本显著低于 full_context**
 - [ ] 四组消融实验**归因清晰**，每个模块贡献为正
 - [ ] 完整对比矩阵 + 成本效率表 + 曲线图
 - [ ] 代码可复现：`pip install -e .` + 一条命令跑通全部评测

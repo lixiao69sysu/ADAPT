@@ -1,59 +1,73 @@
-"""Proactive asking engine: detect information gaps and ask targeted questions.
+"""Backward-compatible pure question proposal for typed information gaps.
 
-VitaBench 2.0's proactive subtasks hide `user_intention` — it is only
-disclosed when the agent proactively asks a directly relevant question. The
-rubric then checks the agent picked the *right* option for that hidden intent.
+The ADAPT runtime now treats :class:`TaskSpec` as the source of required
+dimensions. This component remains available to memory-only callers, but its
+proposals never spend budget and never create runtime requirements.
 
-Two gap patterns drive asking:
-1. Missing decision dimension: the instruction omits a key choice the rubric
-   grades (e.g. "买去迪的票" doesn't say 高铁/飞机/汽车 — must ask).
-2. Vague + no memory: instruction is uncertain AND memory lacks a preference.
+Two observable patterns drive a proposal:
+1. A transaction omits an operational choice needed to select tool arguments.
+2. A vague request has neither a current value nor stable memory evidence.
 
 Key heuristics (domain-specific):
 - ota: if instruction mentions a trip but not the transport mode -> ask
 - delivery/instore: if instruction vague about taste/type -> ask
-
-Phase 4 improvement: Expanded missing-dimension detection across more
-domains and service types (delivery product type, OTA date/hotel type,
-instore occasion). Added should_stop_asking() to avoid over-asking.
+- instore: if group dining but no headcount/room specified -> ask
 """
 
 from __future__ import annotations
 
 from typing import List, Optional
 
+from agent.runtime.information import InformationGap
+
 VAGUE_MARKERS = [
     "随便", "帮我挑", "帮我看", "没想好", "不知道", "都可以", "听你的",
     "你看着", "推荐", "哪家", "帮我选", "不想纠结", "帮我想想",
 ]
 
-# Decision dimensions per domain that the rubric is likely to grade.
+# Backward-compatible wording for common typed decision dimensions.
 # (dimension_name, question)
 DOMAIN_QUESTIONS: dict[str, List[tuple[str, str]]] = {
     "delivery": [
         ("口味偏好", "您更倾向什么口味？比如清淡、麻辣、烧烤等。"),
         ("预算", "这餐大概的预算范围是多少呢？"),
+        ("餐厅类型", "您想吃什么类型的美食？比如中餐、西餐、日料等。"),
     ],
     "instore": [
         ("场景人数", "大概是几个人一起呢？有包间或其他要求吗？"),
         ("餐厅类型", "您更想吃什么类型的呢？火锅、川菜、西餐或其他？"),
+        ("预算", "这顿饭大概的预算范围是多少呢？"),
     ],
     "ota": [
         ("出行方式", "这趟出行您是倾向飞机还是高铁呢？"),
+        ("住宿类型", "您住宿有特别要求吗？比如大床房、亲子房，或者特定品牌酒店？"),
         ("预算", "大概的预算范围是多少呢？"),
     ],
 }
 
 # Missing-dimension detectors: given an instruction, return the dimension that
 # is *missing* (None if the instruction already specifies it).
-TRANSPORT_KEYWORDS = ("高铁", "飞机", "动车", "火车", "机票", "航班", "经济舱")
-HOTEL_TYPE_KEYWORDS = ("大床房", "双床房", "套房", "标间", "豪华", "经济")
-DATE_KEYWORDS = ("明天", "后天", "周一", "周二", "周三", "周四", "周五", "周六", "周日",
-                 "下周一", "下周二", "这周", "下周", "今天", "号", "月")
-FOOD_TYPE_KEYWORDS = ("火锅", "川菜", "粤菜", "西餐", "烧烤", "面条", "米饭", "饺子",
-                      "粥", "粉", "米线", "汉堡", "披萨", "寿司", "麻辣烫", "海鲜")
-DELIVERY_PRODUCT_KEYWORDS = ("衣服", "外套", "裤子", "鞋", "帽", "包", "手表", "口红",
-                             "面膜", "手机", "电脑", "书", "水果", "花", "礼品")
+TRANSPORT_KEYWORDS = ("高铁", "飞机", "动车", "火车", "机票", "航班", "经济舱", "高铁票", "火车票")
+
+# Keywords indicating instore group/private dining
+GROUP_DINING_KEYWORDS = ("聚餐", "包间", "订座", "预约", "几个人", "朋友", "家人", "同事", "请客", "宴请")
+GROUP_SPEC_KEYWORDS = ("个人", "位", "人吃饭", "人的包间", "人桌", "包厢")
+
+# Keywords indicating hotel/accommodation request
+HOTEL_KEYWORDS = ("酒店", "住宿", "宾馆", "旅馆", "民宿", "房间", "入住", "预订房")
+HOTEL_TYPE_KEYWORDS = ("大床", "双床", "标准间", "套房", "亲子", "豪华", "商务")
+
+# Time-of-day / time-anchor keywords for the "missing time" gap.
+TIME_OF_DAY_KEYWORDS = ("下午", "晚上", "中午", "上午", "早上", "凌晨", "傍晚", "几点", "点半", "点整")
+TIME_ANCHOR_KEYWORDS = ("明天", "今天", "后天", "号", "周末", "下周", "下个月", "这周", "今晚", "明晚")
+
+# Caffeine signal words (user wants a functional effect, so strength matters).
+CAFFEINE_SIGNAL_KEYWORDS = ("提神", "开会", "加班", "熬夜", "检查", "犯困", "困", "备考", "赶")
+CAFFEINE_LEVEL_KEYWORDS = ("高咖啡因", "低咖啡因", "浓", "淡", "脱因", "无咖啡因", "双份浓缩")
+
+# Substrings containing 票 that are NOT travel tickets (男票/女票 = BF/GF slang,
+# 发票/股票/彩票/传票). Guards the bare "票" OTA marker against romance slang.
+_TICKET_GUARD: tuple = ("男票", "女票", "发票", "股票", "彩票", "传票")
 
 
 class ProactiveEngine:
@@ -62,9 +76,13 @@ class ProactiveEngine:
     def __init__(self, max_questions: int = 2) -> None:
         self.max_questions = max_questions
         self.asked_this_subtask: int = 0
+        self.asked_questions: set[str] = set()
+        self.pending_question: Optional[str] = None
 
     def reset_subtask(self) -> None:
         self.asked_this_subtask = 0
+        self.asked_questions.clear()
+        self.pending_question = None
 
     def is_vague(self, instruction: str) -> bool:
         """Whether the instruction signals uncertainty / wants us to decide."""
@@ -78,7 +96,7 @@ class ProactiveEngine:
             return False
         if domain == "ota":
             return any(k in low for k in ("酒店", "机票", "航班", "高铁", "出行", "住宿", "房间", "景点"))
-        return any(k in low for k in ("口味", "喜欢", "爱吃", "偏好", "餐", "店"))
+        return any(k in low for k in ("口味", "喜欢", "爱吃", "偏好", "餐", "店", "常用商家"))
 
     # -- missing-dimension detectors ---------------------------------------
 
@@ -90,151 +108,190 @@ class ProactiveEngine:
         enough (e.g. "去聚餐"). The presence of 票/订票/出行/机票 strongly
         implies travel ticketing.
         """
-        travel_buying = any(k in instruction for k in ("票", "机票", "订票", "出行", "车票"))
+        travel_buying = any(k in instruction for k in ("票", "机票", "订票", "出行", "车票")) \
+            and not any(g in instruction for g in _TICKET_GUARD)
         specifies_transport = any(k in instruction for k in TRANSPORT_KEYWORDS)
         return travel_buying and not specifies_transport
+
+    def _missing_hotel_type(self, instruction: str) -> bool:
+        """OTA: instruction involves booking a hotel but no room type specified."""
+        has_hotel = any(k in instruction for k in HOTEL_KEYWORDS)
+        specifies_type = any(k in instruction for k in HOTEL_TYPE_KEYWORDS)
+        return has_hotel and not specifies_type
+
+    def _missing_group_size(self, instruction: str) -> bool:
+        """Instore: group/private dining context but headcount not specified."""
+        has_group = any(k in instruction for k in GROUP_DINING_KEYWORDS)
+        specifies_size = any(k in instruction for k in GROUP_SPEC_KEYWORDS)
+        return has_group and not specifies_size
 
     def _missing_taste(self, instruction: str) -> bool:
         """delivery/instore: vague about what to eat."""
         if any(k in instruction for k in ("吃", "餐", "饭", "菜", "外卖", "店")):
             # If no explicit taste/cuisine is given, it's a gap.
-            return not any(k in instruction for k in ("辣", "清淡", "火锅", "烧烤", "川菜", "粤菜", "西餐", "类型"))
+            return not any(k in instruction for k in ("辣", "清淡", "火锅", "烧烤", "川菜", "粤菜", "西餐", "类型", "日料", "面", "米粉", "烤", "炸"))
         return False
 
-    def _missing_food_type(self, instruction: str) -> bool:
-        """Delivery: instruction says '点个外卖' but doesn't say what kind of food."""
-        if any(k in instruction for k in ("外卖", "点个", "来一份")):
-            return not any(k in instruction for k in FOOD_TYPE_KEYWORDS)
-        return False
+    def _missing_time(self, instruction: str) -> bool:
+        """Instruction has a concrete time anchor (明天/今天/N号) and a time-sensitive
+        action, but no time-of-day.
 
-    def _missing_delivery_product_type(self, instruction: str) -> bool:
-        """Delivery (non-food): '帮我买X' but X is vague or generic."""
-        if any(k in instruction for k in ("买", "帮我买")):
-            has_product = any(k in instruction for k in DELIVERY_PRODUCT_KEYWORDS)
-            is_food = any(k in instruction for k in FOOD_TYPE_KEYWORDS)
-            if not has_product and not is_food:
-                return True
-        return False
-
-    def _missing_hotel_type(self, instruction: str) -> bool:
-        """OTA: booking hotel but room type not specified."""
-        if any(k in instruction for k in ("订酒店", "住宿", "住酒店", "酒店")):
-            return not any(k in instruction for k in HOTEL_TYPE_KEYWORDS)
-        return False
-
-    def _missing_date(self, instruction: str) -> bool:
-        """OTA/instore: planning a trip or reservation but no specific date."""
-        has_travel = any(k in instruction for k in ("去", "订票", "出行", "旅游", "订酒店", "预约"))
-        has_date = any(k in instruction for k in DATE_KEYWORDS)
-        return has_travel and not has_date
-
-    def _missing_instore_occasion(self, instruction: str) -> bool:
-        """Instore: dining out but occasion/size unspecified."""
-        if any(k in instruction for k in ("探店", "到店", "餐厅", "吃")):
-            has_occasion = any(k in instruction for k in ("聚餐", "约会", "生日", "商务", "家庭", "朋友"))
-            has_size = any(k in instruction for k in ("个人", "两个人", "几个人", "大家"))
-            return not has_occasion and not has_size
-        return False
-
-    def _count_missing_dimensions(self, instruction: str, domain: str) -> list[tuple[str, str]]:
-        """Return all missing dimensions as [(dimension_name, question), ...].
-        Sorted by estimated information gain (highest first).
+        Excludes transport bookings (机票/高铁/航班) — there the date anchor is the
+        travel date, not a time-of-day the user needs to pin down upfront.
         """
-        gaps = []
+        has_anchor = any(k in instruction for k in TIME_ANCHOR_KEYWORDS)
+        time_sensitive = any(k in instruction for k in
+                             ("点", "订", "买", "推荐", "送", "约", "下单", "外卖", "咖啡", "奶茶", "餐", "玩", "吃"))
+        specifies_time = any(k in instruction for k in TIME_OF_DAY_KEYWORDS)
+        is_transport = any(k in instruction for k in TRANSPORT_KEYWORDS)
+        return has_anchor and time_sensitive and not specifies_time and not is_transport
 
-        if domain == "ota":
-            if self._missing_transport(instruction):
-                gaps.append(("出行方式", "这趟出行您是倾向飞机还是高铁呢？"))
-            if self._missing_hotel_type(instruction):
-                gaps.append(("房间类型", "您对房间类型有偏好吗？比如大床房、双床房等。"))
-            if self._missing_date(instruction):
-                gaps.append(("出行日期", "请问您计划什么时候出发呢？"))
+    def _missing_caffeine(self, instruction: str) -> bool:
+        """Coffee + a functional signal (提神/开会/加班) but no caffeine level."""
+        has_coffee = "咖啡" in instruction
+        has_signal = any(k in instruction for k in CAFFEINE_SIGNAL_KEYWORDS)
+        specifies_level = any(k in instruction for k in CAFFEINE_LEVEL_KEYWORDS)
+        return has_coffee and has_signal and not specifies_level
 
-        elif domain == "delivery":
-            if self._missing_food_type(instruction):
-                gaps.append(("餐品类型", "您更想吃哪类餐品？比如面条、米饭、火锅、烧烤等。"))
-            elif self._missing_taste(instruction):
-                gaps.append(("口味偏好", "您更倾向什么口味？清淡、麻辣、或其他？"))
-            if self._missing_delivery_product_type(instruction):
-                gaps.append(("商品类型", "您具体想买哪一类商品呢？"))
+    def _personalized_question(self, domain: Optional[str], memory_text: str,
+                                dimension_idx: int = 0) -> str:
+        """Return a question, optionally personalized with existing memory context.
 
-        elif domain == "instore":
-            if self._missing_instore_occasion(instruction):
-                gaps.append(("用餐场景", "大概是几个人一起呢？有包间或其他要求吗？"))
-            if self._missing_taste(instruction):
-                gaps.append(("餐厅类型", "您更想吃什么类型的呢？火锅、川菜、西餐或其他？"))
-
-        return gaps
-
-    def should_stop_asking(self, instruction: str, memory_text: str, domain: str) -> bool:
-        """Determine if we already have enough information to proceed.
-
-        Returns True when memory covers the key decision dimensions,
-        meaning further asking would be counterproductive.
+        If memory already contains a preference for the asked dimension, frame it as
+        a confirmation question instead of an open-ended ask.
         """
-        gaps = self._count_missing_dimensions(instruction, domain)
-        if not gaps:
-            return True
+        domain = domain or "delivery"
+        base_q = DOMAIN_QUESTIONS[domain][dimension_idx][1]
+
+        # Check if memory has a relevant past value — confirm rather than ask cold
         if memory_text and memory_text != "No user preference information available yet.":
-            uncovered = [g for g in gaps if not self._domain_covered(memory_text, domain)]
-            if not uncovered:
-                return True
-        return False
+            if domain == "ota" and dimension_idx == 0:
+                # Check if we know a transport preference
+                for kw in ("高铁", "飞机", "动车"):
+                    if kw in memory_text:
+                        return f"您之前偏好{kw}出行，这次也一样吗？"
+            elif domain in ("delivery", "instore") and dimension_idx == 0:
+                # Check if we know a taste preference
+                for kw in ("麻辣", "清淡", "川菜", "粤菜", "火锅", "烧烤"):
+                    if kw in memory_text:
+                        return f"您平时喜欢{kw}，这次有什么特别的口味要求吗？"
 
-    def decide_to_ask(
+        return base_q
+
+    def propose_question(
         self,
         instruction: str,
         memory_text: str,
         domain: Optional[str],
-        consume: bool = False,
+        known_slots: Optional[dict[str, str]] = None,
     ) -> Optional[str]:
-        """Return the question to ask, or None if no gap / budget exhausted.
+        """Purely propose a question, or return None if no gap/budget exists.
 
-        Uses multi-dimension gap detection to find the highest-information-gap
-        question. Falls back to vague + memory-uncovered pattern.
+        This method never consumes budget. Only :meth:`commit_question` records
+        that the agent actually sent a question to the user.
+
+        Precedence:
+        1. Missing critical decision dimension (transport) -> ask, regardless of
+           the domain classifier (which may be None for short/terse queries).
+        2. Instore group dining without headcount -> ask.
+        3. Missing hotel type in OTA accommodation request -> ask.
+        4. Vague instruction + domain not covered by memory -> ask.
+        5. Missing taste type in food tasks -> ask.
         """
-        if consume and self.asked_this_subtask >= self.max_questions:
-            return None
+        gap = self.propose_gap(
+            instruction, memory_text, domain, known_slots=known_slots
+        )
+        return gap.question if gap else None
 
-        if self.should_stop_asking(instruction, memory_text, domain or "delivery"):
+    def propose_gap(
+        self,
+        instruction: str,
+        memory_text: str,
+        domain: Optional[str],
+        known_slots: Optional[dict[str, str]] = None,
+    ) -> Optional[InformationGap]:
+        """Return the typed gap consumed by both prompt and runtime control."""
+        if self.asked_this_subtask >= self.max_questions or self.pending_question:
             return None
-
-        question = None
+        known = known_slots or {}
 
         # Pattern 1: missing transport mode — the highest-value proactive case.
-        if self._missing_transport(instruction):
-            question = "这趟出行您是倾向飞机还是高铁呢？"
-        else:
-            domain = domain or "delivery"
+        # Checked independently of domain classification.
+        if self._missing_transport(instruction) and "transport" not in known:
+            return InformationGap(
+                "transport",
+                self._personalized_question("ota", memory_text, 0),
+                "memory",
+            )
 
-            # Pattern 2: multi-dimension gap detection.
-            gaps = self._count_missing_dimensions(instruction, domain)
-            if gaps:
-                uncovered = [
-                    g for g in gaps
-                    if not self._domain_covered(memory_text, domain)
-                ]
-                if uncovered:
-                    question = uncovered[0][1]
-                elif gaps:
-                    question = gaps[0][1]
+        domain = domain or "delivery"
 
-            # Pattern 3: vague + memory doesn't cover the domain.
-            if not question and self.is_vague(instruction) and not self._domain_covered(memory_text, domain):
-                question = DOMAIN_QUESTIONS[domain][0][1]
+        # Pattern 2: coffee + functional signal but no caffeine level.
+        if self._missing_caffeine(instruction) and "caffeine" not in known:
+            return InformationGap(
+                "caffeine", "您需要高咖啡因还是低咖啡因的咖啡？", "memory"
+            )
 
-            # Pattern 4: memory is sparse → suggest exploration instead of asking
-            if not question and memory_text == "No user preference information available yet.":
-                if domain == "ota":
-                    question = "我先帮您搜索一下相关选项，请稍等。"
-                elif domain == "delivery":
-                    question = "我先帮您搜索一下附近的选项。"
-                elif domain == "instore":
-                    question = "我先帮您搜索一下附近的餐厅。"
+        # Pattern 3: time-anchored action but no time-of-day.
+        if self._missing_time(instruction) and "time" not in known:
+            return InformationGap(
+                "time",
+                "您希望什么时间呢？比如下午三点、中午等，我好按时间安排。",
+                "memory",
+            )
 
-        if question and consume:
-            self.asked_this_subtask += 1
-        return question
+        # Pattern 4: instore group dining without headcount.
+        if domain == "instore" and self._missing_group_size(instruction) and "party_size" not in known:
+            return InformationGap(
+                "party_size", DOMAIN_QUESTIONS["instore"][0][1], "memory"
+            )
+
+        # Pattern 5: hotel booking without room type.
+        if domain == "ota" and self._missing_hotel_type(instruction) and "room_type" not in known:
+            return InformationGap(
+                "room_type",
+                self._personalized_question("ota", memory_text, 1),
+                "memory",
+            )
+
+        # Pattern 6: vague + memory doesn't cover the domain.
+        if self.is_vague(instruction) and not self._domain_covered(memory_text, domain):
+            dimension = {
+                "ota": "transport",
+                "instore": "party_size",
+                "delivery": "taste",
+            }.get(domain, "preference")
+            return InformationGap(
+                dimension,
+                self._personalized_question(domain, memory_text, 0),
+                "memory",
+            )
+
+        # Pattern 7: missing taste type in food tasks.
+        if domain in ("delivery", "instore") and self._missing_taste(instruction) and "taste" not in known:
+            return InformationGap(
+                "taste",
+                self._personalized_question(domain, memory_text, 0),
+                "memory",
+            )
+
+        return None
+
+    def decide_to_ask(self, instruction: str, memory_text: str, domain: Optional[str]) -> Optional[str]:
+        """Backward-compatible pure alias for :meth:`propose_question`."""
+        return self.propose_question(instruction, memory_text, domain)
+
+    def commit_question(self, question: str) -> bool:
+        """Record a question only when it was actually sent to the user."""
+        normalized = (question or "").strip()
+        if not normalized or normalized in self.asked_questions:
+            return False
+        if self.asked_this_subtask >= self.max_questions:
+            return False
+        self.asked_questions.add(normalized)
+        self.asked_this_subtask += 1
+        self.pending_question = normalized
+        return True
 
     def record_answer(self, question: str, answer: str, memory) -> None:
         """Store a confirmed preference from a user answer back into memory."""
@@ -246,7 +303,8 @@ class ProactiveEngine:
             confidence=0.95,
             timestamp="",
             type="conversation",
-            raw=f"用户回答: {answer}",
+            raw=f"主动询问: {question}; 用户回答: {answer}",
             importance=8.0,
         )
         memory.stream.add(sig)
+        self.pending_question = None
