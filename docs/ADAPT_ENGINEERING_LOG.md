@@ -538,7 +538,8 @@
 - **聚合重算**：`adapt_dev_tiered` 的 task Avg@1=`0.200424`、task Pass@1=`0`，而 112 个子任务的 Avg@1/Pass@1 均为 `0.214286`；`adapt_dev_pre_operation_gapfix` 分别为 `0.196778/0` 和 `0.205357/0.205357`。task Pass@1 为 0 只表示没有一个用户的整段轨迹满分，符合 VitaBench 2.0 长序列难度，不能作为要求逐用户修满的理由。
 - **失败簇证据**：`adapt_dev_tiered` 中 59 个 commit 子任务成功 CREATE 后进入支付询问，20 个成功；14 个 commit 子任务搜索后未完成 WRITE，全部失败；29 个 recommendation 被框架 finalize，仅 3 个成功。该统计用于排序能力投入，不推断隐藏目标候选。
 - **验证**：指标单测覆盖 task reward=0.5、两个二值子任务以及 comparison delta；只读取聚合 reward 和可观察 trace，不读取 rubric、target 或 evaluator 文本。
-- **下一步**：里程碑版本必须同时报告 task Avg@1 和 subtask strict Pass@1；优先减少 commit 的 search-without-completion，再评估候选语义和支付策略。不得通过放宽 WRITE 校验或默认自动支付换取表面动作率。
+- **评测取舍**：开发、smoke 和 56 用户单次验证只以 task-level `Avg@1` 决定晋级；task/subtask Pass@1 仅作失败诊断。最终四次完整评测同时报告并优化 `Avg@4` 与 `Pass@4`。
+- **下一步**：优先减少 commit 的 search-without-completion，再评估候选语义和支付策略。不得通过放宽 WRITE 校验或默认自动支付换取表面动作率。
 - **能力抽象**：evaluation harness / candidate-to-action execution / long-horizon consistency。
 
 ## 新记录模板
