@@ -24,11 +24,10 @@ def test_retail_task_does_not_receive_restaurant_avoid_memory():
     assert "香菜" not in card.avoid
 
 
-def test_slipper_replay_records_size_once_then_uses_first_candidate():
+def test_unseen_retail_request_does_not_invent_size_requirement():
     runtime = TaskRuntime.begin(TaskSpec.compile("脚冷，该买一双新的拖鞋了，帮我下单一双送到家里"))
-    assert runtime.next_question_dimension() == "size"
-    runtime.commit_question("size")
-    runtime.observe_user("42-43码，第一双吧，直接下单。")
+    assert runtime.next_question_dimension() == ""
+    runtime.observe_user("第一双吧，直接下单。")
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
@@ -36,7 +35,6 @@ def test_slipper_replay_records_size_once_then_uses_first_candidate():
         "product_id=S1_P00001, quantity=5)",
     )
     runtime.observe_candidates(1)
-    assert runtime.resolved_slots["size"] == "42-43"
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
     assert runtime.next_question_dimension() == ""
 

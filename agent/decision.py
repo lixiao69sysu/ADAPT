@@ -62,78 +62,6 @@ _PARTY_SIZE_RE = re.compile(r"([一二两三四五六七八九十\d]+)\s*(?:个)
 _ROUTE_RE = re.compile(
     r"(?:从)([^，。；;!！?？]{1,24}?)(?:到|去)([^，。；;!！?？]{1,24})"
 )
-_ATTRIBUTE_TERMS = (
-    "少糖",
-    "半糖",
-    "无糖",
-    "正常糖",
-    "多冰",
-    "少冰",
-    "去冰",
-    "常温",
-    "热饮",
-    "大床房",
-    "双床房",
-    "海景房",
-    "城景房",
-    "靠窗",
-    "靠过道",
-    "二等座",
-    "一等座",
-    "经济舱",
-    "商务舱",
-    "高铁",
-    "飞机",
-    "火车",
-    "低咖啡因",
-    "高咖啡因",
-)
-_PRODUCT_CATEGORIES = (
-    "鼠标",
-    "拖鞋",
-    "运动鞋",
-    "休闲鞋",
-    "板鞋",
-    "跑鞋",
-    "鞋",
-    "衣服",
-    "充电宝",
-    "手办",
-    "奶茶",
-    "咖啡",
-    "饮品",
-    "汤锅",
-    "火锅",
-    "汤",
-    "饭",
-    "外卖",
-    "酒店",
-    "机票",
-    "高铁票",
-    "火车票",
-    "景点",
-    "门票",
-    "健身",
-    "撸铁",
-    "真人CS",
-    "密室逃脱",
-    "猫咖",
-    "团购券",
-    "套餐",
-)
-_TOPPING_VALUES = (
-    "布蕾",
-    "珍珠",
-    "芋泥",
-    "芋圆",
-    "波霸",
-    "椰果",
-    "仙草",
-    "布丁",
-    "红豆",
-    "奶冻",
-)
-_TOPPING_NEGATIONS = ("不加小料", "无小料", "不要小料", "不放小料")
 _DOMAIN_MARKERS = {
     "ota": ("酒店", "机票", "车票", "航班", "火车", "高铁", "门票", "景点", "打车", "住宿"),
     "instore": (
@@ -155,12 +83,6 @@ _DOMAIN_MARKERS = {
         "真人",
     ),
     "delivery": ("外卖", "配送", "送到", "送去", "下单", "闪购", "帮我点", "帮我买"),
-}
-_ALTERNATIVE_CHOICE_RE = re.compile(r"(?:或者|或是|任选|都行|均可|二选一)")
-_SINGLE_CATEGORY_PATTERNS = {
-    "鞋": re.compile(r"(?:买|要|想要|推荐|挑|选|一双|双)\s*[^，。]{0,6}?鞋(?:了|吧|呀|啊|，|。|$)"),
-    "饭": re.compile(r"(?:吃|点|来|买)\s*[^，。]{0,6}?饭(?:了|吧|呀|啊|，|。|$)"),
-    "汤": re.compile(r"(?:喝|点|来|买)\s*[^，。]{0,6}?汤(?:了|吧|呀|啊|，|。|$)"),
 }
 
 
@@ -218,28 +140,6 @@ class TaskSpec:
             value = match.group(1).strip()
             if not any(fragment in value for fragment in _GENERIC_ENTITY_FRAGMENTS):
                 must.append(Constraint("entity", value, evidence_span=match.group(0)))
-        # The closed vocabulary is a high-precision compatibility path only.
-        # Single-character substrings (e.g. 饭 inside 电饭煲) and explicit
-        # alternatives are deferred to candidate-induced open-world grounding.
-        if not _ALTERNATIVE_CHOICE_RE.search(text):
-            category_added = False
-            for category in sorted(_PRODUCT_CATEGORIES, key=len, reverse=True):
-                if len(category) >= 2 and category in text:
-                    must.append(
-                        Constraint("category", category, evidence_span=category)
-                    )
-                    category_added = True
-                    break
-            if not category_added:
-                for category, pattern in _SINGLE_CATEGORY_PATTERNS.items():
-                    if pattern.search(text):
-                        must.append(
-                            Constraint("category", category, evidence_span=category)
-                        )
-                        break
-        for term in _ATTRIBUTE_TERMS:
-            if term in text:
-                must.append(Constraint("attribute", term, evidence_span=term))
         if facet == "restaurant":
             party_match = _PARTY_SIZE_RE.search(text)
             if party_match:
@@ -380,9 +280,6 @@ class TaskSpec:
         resolved = {}
         if any(c.kind == "address" for c in must):
             resolved["address"] = next(c.value for c in must if c.kind == "address")
-        caffeine_preference = _infer_caffeine_preference(text)
-        if caffeine_preference:
-            resolved["caffeine"] = caffeine_preference
         return cls(
             text,
             domain,
@@ -498,94 +395,63 @@ def build_decision_card(
         # soft preferences, but remains a preference rather than a hard
         # candidate constraint. This lets ranking understand requests such as
         # "coffee for staying alert" without making inference write-blocking.
-        prefer=_instruction_preferences(spec),
+        prefer=[],
         constraints=[*spec.must, *spec.avoid],
         task_intent=[spec.instruction] if spec.instruction else [],
     )
-    food_facets = {"restaurant", "beverage"}
     local_scopes = {"delivery", "instore", "local_commerce"}
-    transferable_general = {
-        "hotel": {"budget", "room_type"},
-        "train": {"transport", "seat", "budget"},
-        "flight": {"transport", "seat", "budget"},
-        "restaurant": {
-            "safety"
-        },
-        "beverage": {
-            "safety"
-        },
-        "retail": {"size", "color", "budget", "attribute"},
-    }
+    active_categories: dict[tuple[str, str, str], set[str]] = {}
+    for fact in facts:
+        if fact.status != "active" or not fact.category:
+            continue
+        active_categories.setdefault(
+            (fact.scope, fact.facet, fact.dimension), set()
+        ).add(fact.category)
     broad_local_task = (
         spec.domain in {"delivery", "instore"}
-        and any(marker in spec.instruction for marker in ("外卖", "吃点", "点个吃的"))
-        and not any(c.kind in {"entity", "attribute"} for c in spec.must)
-    )
-    latest_topping_avoidance = max(
-        (
-            fact.observed_at
-            for fact in facts
-            if fact.status == "active"
-            and fact.polarity == "negative"
-            and "小料" in fact.value
-            and fact.observed_at
-        ),
-        default="",
+        and not any(constraint.kind == "entity" for constraint in spec.must)
+        and any(marker in spec.instruction for marker in ("吃", "点", "餐", "外卖"))
     )
     relevant = []
-    current_categories = {
-        constraint.value for constraint in spec.must if constraint.kind == "category"
-    }
     for fact in facts:
         if fact.status != "active":
-            continue
-        if (
-            latest_topping_avoidance
-            and fact.polarity == "positive"
-            and any(topping in fact.value for topping in _TOPPING_VALUES)
-            and not any(negation in fact.value for negation in _TOPPING_NEGATIONS)
-            and fact.observed_at
-            and fact.observed_at <= latest_topping_avoidance
-        ):
-            # A later broad topping rejection supersedes older specific
-            # topping likes. A newer concrete topping preference remains as an
-            # explicit exception (e.g. the later-discovered preference for
-            # brulee).
             continue
         scope_match = fact.scope == spec.domain or (
             spec.domain in local_scopes and fact.scope in local_scopes
         )
-        category_match = (
-            spec.facet not in food_facets
-            or fact.dimension == "safety"
-            or not current_categories
-            or fact.category in {"general", spec.facet, *current_categories}
-            or (
-                fact.category in {"火锅", "汤锅"}
-                and bool(current_categories & {"火锅", "汤锅"})
-            )
-        )
-        exact = scope_match and fact.facet == spec.facet and category_match
-        general_transfer = (
-            fact.scope == "general"
-            and fact.facet == "general"
-            and fact.dimension in transferable_general.get(spec.facet, set())
-        )
-        broad_local = broad_local_task and (
-            fact.scope in local_scopes
-            or (
-                fact.scope == "general"
-                and fact.dimension
-                in {"brand", "product", "like", "taste", "avoid", "attribute"}
-            )
-        )
+        exact = scope_match and fact.facet == spec.facet
         directly_named = scope_match and fact.value and fact.value in spec.instruction
-        food_transfer = (
-            spec.facet in food_facets
-            and fact.facet in food_facets
-            and fact.dimension == "safety"
+        safety_transfer = fact.dimension == "safety"
+        # Category-tagged facts are retrieval metadata, not pre-search policy.
+        # They become active only when their value grounds to the current
+        # candidate schema in ADAPTMemory.apply_candidate_grounding().
+        category_set = active_categories.get(
+            (fact.scope, fact.facet, fact.dimension), set()
         )
-        if exact or general_transfer or broad_local or directly_named or food_transfer:
+        category_named = bool(
+            fact.category and fact.category.casefold() in spec.instruction.casefold()
+        )
+        category_unambiguous = len(category_set) <= 1
+        category_scoped_exact = exact and (
+            not fact.category
+            or category_named
+            or (fact.polarity != "negative" and category_unambiguous)
+            or (fact.polarity == "negative" and fact.category == fact.facet)
+        )
+        general_local_retrieval = (
+            broad_local_task
+            and fact.scope == "general"
+            and fact.facet == "general"
+            and fact.dimension
+            in {"brand", "product", "like", "taste", "avoid", "safety", "attribute"}
+        )
+        if (
+            category_scoped_exact
+            or directly_named
+            or safety_transfer
+            or fact.dimension == "conditional"
+            or general_local_retrieval
+        ):
             relevant.append(fact)
     dimension_priority = {
         "explicit": 6,
@@ -642,7 +508,6 @@ def build_decision_card(
                 ]
             )
         )
-    resolved_conditionals: list[str] = []
     for fact in relevant:
         if not _valid_fact_value(fact.value):
             continue
@@ -676,28 +541,10 @@ def build_decision_card(
                 )
                 if not resolved:
                     continue
-                resolved_conditionals.append(resolved)
                 card.prefer.append(resolved)
             else:
                 card.prefer.append(fact.value)
         card.evidence.append(f"{fact.value} <- {evidence}")
-    if resolved_conditionals:
-        chosen_families = {
-            family
-            for value in resolved_conditionals
-            if (family := _taste_family(value))
-        }
-        card.prefer[:] = _dedup(
-            [
-                *resolved_conditionals,
-                *(
-                    value
-                    for value in card.prefer
-                    if not _taste_family(value)
-                    or _taste_family(value) in chosen_families
-                ),
-            ]
-        )
     noncritical = {"address", "product", "shop_or_service", "city"}
     card.ask.extend(
         slot
@@ -727,33 +574,6 @@ def _resolve_conditional_preference(value: str, instruction: str) -> str:
     return ""
 
 
-def _taste_family(value: str) -> str:
-    for canonical, markers in (
-        ("麻辣", ("麻辣", "牛油", "红油", "辣锅")),
-        ("菌汤", ("菌汤", "菌菇", "竹荪")),
-        ("番茄", ("番茄",)),
-        ("清汤", ("清汤", "清淡", "养生")),
-    ):
-        if any(marker in value for marker in markers):
-            return canonical
-    return ""
-
-
-def _instruction_preferences(spec: TaskSpec) -> list[str]:
-    """Translate visible functional intent into task-local soft preferences."""
-    preference = _infer_caffeine_preference(spec.instruction or "")
-    return [preference] if spec.facet == "beverage" and preference else []
-
-
-def _infer_caffeine_preference(text: str) -> str:
-    """Infer caffeine only from an explicit level or unambiguous time of day."""
-    if any(marker in text for marker in ("低咖啡因", "脱因", "下午", "晚上", "晚间")):
-        return "低咖啡因"
-    if any(marker in text for marker in ("高咖啡因", "上午", "早上", "早晨")):
-        return "高咖啡因"
-    return ""
-
-
 @dataclass
 class Candidate:
     candidate_id: str
@@ -766,6 +586,7 @@ class Candidate:
     price: float | None = None
     inventory: int | None = None
     observed_turn: int = 0
+    hard_attribute_keys: tuple[str, ...] = ()
 
 
 class CandidateLedger:
@@ -790,13 +611,34 @@ class CandidateLedger:
         self.require_max_preference_coverage = False
         self._turn = 0
 
-    def observe(self, tool_name: str, content: str | None) -> None:
-        text = content or ""
+    def observe(
+        self, tool_name: str, content: Any, observation_schema: Any = None
+    ) -> None:
+        text = content if isinstance(content, str) else json.dumps(
+            content, ensure_ascii=False
+        )
         if not text:
             return
         self._turn += 1
+        structured = content
+        if isinstance(content, str) and content.lstrip().startswith(("{", "[")):
+            try:
+                structured = json.loads(content)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                structured = None
+        observed_structured = False
+        if observation_schema is not None and isinstance(
+            structured, (dict, list)
+        ):
+            observed_structured = self._observe_structured(
+                tool_name, structured, observation_schema
+            )
         context_parent_ids: list[str] = []
-        for chunk in (line.strip() for line in text.splitlines() if line.strip()):
+        for chunk in (
+            ()
+            if observed_structured
+            else (line.strip() for line in text.splitlines() if line.strip())
+        ):
             ids = _ID_RE.findall(chunk)
             fields = {key: value.strip() for key, value in _FIELD_RE.findall(chunk)}
             explicit_parents = [
@@ -861,6 +703,52 @@ class CandidateLedger:
             else:
                 self.pending_payment_ids.clear()
 
+    def _observe_structured(
+        self, tool_name: str, payload: Any, schema: Any
+    ) -> bool:
+        records = list(_records_with_field(payload, schema.id_field))
+        for record in records:
+            candidate_id = str(record.get(schema.id_field, "")).strip()
+            if not candidate_id:
+                continue
+            name = str(record.get(schema.name_field, "")).strip() if schema.name_field else ""
+            parent_ids = _dedup(
+                str(record.get(field, "")).strip()
+                for field in schema.parent_fields
+                if record.get(field) not in (None, "")
+            )
+            attributes: dict[str, str] = {}
+            for field in schema.attribute_fields:
+                value = record.get(field)
+                if isinstance(value, dict):
+                    attributes.update(
+                        {str(key): str(item) for key, item in value.items()}
+                    )
+                elif value not in (None, ""):
+                    attributes[field] = str(value)
+            raw = json.dumps(record, ensure_ascii=False, sort_keys=True)
+            self.candidates[candidate_id] = Candidate(
+                candidate_id=candidate_id,
+                entity_type=schema.entity_type,
+                name=name,
+                raw=raw,
+                tool_name=tool_name,
+                attributes=attributes,
+                parent_ids=parent_ids,
+                price=_to_float(record.get(schema.price_field))
+                if schema.price_field
+                else None,
+                inventory=_to_int(record.get(schema.inventory_field))
+                if schema.inventory_field
+                else None,
+                observed_turn=self._turn,
+                hard_attribute_keys=tuple(
+                    "name" if field == schema.name_field else field
+                    for field in getattr(schema, "constraint_fields", ())
+                ),
+            )
+        return bool(records)
+
     @staticmethod
     def search_family(tool_name: str) -> str:
         lowered = tool_name.lower()
@@ -905,17 +793,28 @@ class CandidateLedger:
         # tool available and enforce the normalized signature in preflight.
         return True
 
-    def selected_candidates(self, arguments: dict[str, Any]) -> list[Candidate]:
+    def selected_candidates(
+        self,
+        arguments: dict[str, Any],
+        id_arguments: dict[str, str] | None = None,
+    ) -> list[Candidate]:
         selected: list[Candidate] = []
         for key, value in arguments.items():
-            if key == "user_id" or not key.endswith(("_id", "_ids")):
+            if id_arguments:
+                if key not in id_arguments or id_arguments[key] == "user":
+                    continue
+            elif key == "user_id" or not key.endswith(("_id", "_ids")):
                 continue
             for item in value if isinstance(value, list) else [value]:
                 if str(item) in self.candidates:
                     selected.append(self.candidates[str(item)])
         return selected
 
-    def constraint_candidates(self, arguments: dict[str, Any]) -> list[Candidate]:
+    def constraint_candidates(
+        self,
+        arguments: dict[str, Any],
+        id_arguments: dict[str, str] | None = None,
+    ) -> list[Candidate]:
         """Return the purchased/booked entity, excluding relational parent IDs.
 
         Product search rows repeat a store ID for every product.  The ledger's
@@ -924,7 +823,7 @@ class CandidateLedger:
         product ID (or hotel/flight/etc. ID), while the store ID is validated
         only for provenance and type.
         """
-        selected = self.selected_candidates(arguments)
+        selected = self.selected_candidates(arguments, id_arguments)
         for entity_type in (
             "product",
             "hotel",
@@ -937,6 +836,9 @@ class CandidateLedger:
             typed = [candidate for candidate in selected if candidate.entity_type == entity_type]
             if typed:
                 return typed
+        children = [candidate for candidate in selected if candidate.parent_ids]
+        if children:
+            return children
         return selected
 
     def shortlist(self, card: DecisionCard, limit: int = 5) -> list[Candidate]:
@@ -964,6 +866,54 @@ class CandidateLedger:
         from agent.runtime.ranking import CandidateRanker
 
         return CandidateRanker().rank(candidates, card, limit)
+
+    def ground_task_constraints(self, card: DecisionCard) -> list[Constraint]:
+        """Promote only schema-declared constraint fields from live results.
+
+        Unannotated fields remain useful for open-world ranking but can never
+        become global WRITE constraints merely because their values occur in
+        the instruction.  This prevents attributes from different candidates
+        (or different result columns) being combined into an impossible
+        conjunction.  A tool opts a field into hard validation explicitly with
+        ``x-adapt-constraint``; no product or service vocabulary is consulted.
+        """
+        instruction = " ".join(card.task_intent).strip()
+        if not instruction:
+            return []
+        from agent.runtime.alignment import CandidateAttributeMap
+
+        existing = {
+            (constraint.kind, constraint.value, constraint.source)
+            for constraint in card.constraints
+        }
+        added: list[Constraint] = []
+        for candidate in self.candidates.values():
+            if candidate.entity_type in {"order", "unknown"}:
+                continue
+            for attribute in CandidateAttributeMap.from_candidate(candidate).attributes:
+                if attribute.key not in candidate.hard_attribute_keys:
+                    continue
+                value = attribute.value.strip()
+                if len(value) < 2 or value not in instruction:
+                    continue
+                key = attribute.key or "observed_attribute"
+                identity = (key, value, "candidate_schema_grounding")
+                if identity in existing:
+                    continue
+                constraint = Constraint(
+                    key,
+                    value,
+                    ConstraintTarget.CANDIDATE,
+                    ConstraintOperator.CONTAINS,
+                    source="candidate_schema_grounding",
+                    hard=True,
+                    evidence_span=value,
+                )
+                card.constraints.append(constraint)
+                card.must.append(value)
+                existing.add(identity)
+                added.append(constraint)
+        return added
 
     def unique_evidence_leader(self, card: DecisionCard) -> Candidate | None:
         """Return a candidate only when observable preference evidence is decisive.
@@ -997,10 +947,13 @@ class CandidateLedger:
         return leaders[0] if len(leaders) == 1 else None
 
     def preference_coverage_gap(
-        self, arguments: dict[str, Any], card: DecisionCard
+        self,
+        arguments: dict[str, Any],
+        card: DecisionCard,
+        id_arguments: dict[str, str] | None = None,
     ) -> str:
         """Describe an observable lower-evidence choice without hidden labels."""
-        chosen = self.constraint_candidates(arguments)
+        chosen = self.constraint_candidates(arguments, id_arguments)
         ranked = self.shortlist(card, limit=8)
         if not chosen or not ranked or not card.alignment_preferences():
             return ""
@@ -1031,6 +984,7 @@ class CandidateLedger:
         arguments: dict[str, Any],
         card: DecisionCard,
         selected_candidate_id: str = "",
+        id_arguments: dict[str, str] | None = None,
     ) -> list[str]:
         """Keep WRITE inside the compliant shortlist without taking over choice.
 
@@ -1039,7 +993,7 @@ class CandidateLedger:
         explicit user selection always locks execution; otherwise a unique,
         strictly preference-evidence-leading candidate is locked as well.
         """
-        chosen = self.constraint_candidates(arguments)
+        chosen = self.constraint_candidates(arguments, id_arguments)
         if not chosen:
             return []
         chosen_id = chosen[0].candidate_id
@@ -1126,12 +1080,23 @@ class CandidateLedger:
         arguments: dict[str, Any],
         card: DecisionCard,
         profile: dict[str, Any] | None = None,
+        tool_meta: Any = None,
     ) -> list[str]:
-        if not _is_commit_tool(tool_name):
+        role = getattr(getattr(tool_meta, "role", None), "value", "")
+        if not _is_commit_tool(tool_name) and role not in {
+            "create",
+            "pay",
+            "cancel",
+            "modify",
+        }:
             return []
+        id_arguments = getattr(tool_meta, "id_arguments", None)
         errors: list[str] = []
         for key, value in arguments.items():
-            if key == "user_id" or not key.endswith(("_id", "_ids")):
+            if id_arguments is not None:
+                if key not in id_arguments or id_arguments[key] == "user":
+                    continue
+            elif key == "user_id" or not key.endswith(("_id", "_ids")):
                 continue
             for item in value if isinstance(value, list) else [value]:
                 item_text = str(item)
@@ -1143,7 +1108,11 @@ class CandidateLedger:
                         f"{key}={item_text} was not returned by a tool in this subtask"
                     )
                 candidate = self.candidates.get(item_text)
-                expected_type = key.removesuffix("_ids").removesuffix("_id")
+                expected_type = (
+                    id_arguments.get(key, "")
+                    if id_arguments is not None
+                    else key.removesuffix("_ids").removesuffix("_id")
+                )
                 compatible = {
                     "shop": {"shop"},
                     "store": {"store"},
@@ -1159,19 +1128,20 @@ class CandidateLedger:
                 }
                 if (
                     candidate
-                    and expected_type in compatible
-                    and candidate.entity_type not in compatible[expected_type]
+                    and expected_type
+                    and candidate.entity_type
+                    not in compatible.get(expected_type, {expected_type})
                 ):
                     errors.append(
                         f"{key} expects {expected_type} ID but {item_text} is {candidate.entity_type}"
                     )
-        errors.extend(self._validate_parent_relationships(arguments))
+        errors.extend(self._validate_parent_relationships(arguments, id_arguments))
         # Payment consumes an already-created order. Product, room, date and
         # address constraints were validated before CREATE and are not fields
         # of PAY tools; reapplying them here produces impossible requirements.
-        if tool_name.startswith("pay_"):
+        if tool_name.startswith("pay_") or role == "pay":
             return _dedup(errors)
-        constraint_candidates = self.constraint_candidates(arguments)
+        constraint_candidates = self.constraint_candidates(arguments, id_arguments)
         selected_text = "\n".join(c.raw for c in constraint_candidates)
         constraints = card.constraints or [
             *[Constraint("legacy", value) for value in card.must],
@@ -1193,18 +1163,8 @@ class CandidateLedger:
                         errors.append(
                             f"selected candidate contains forbidden value: {constraint.value}"
                         )
-                elif (
-                    constraint.value
-                    and not _category_satisfied_by_tool(
-                        constraint.kind, constraint.value, tool_name
-                    )
-                    and not (
-                        constraint.kind == "category"
-                        and not _category_groundable_in_ledger(
-                            constraint.value, self.candidates.values()
-                        )
-                    )
-                    and not _constraint_present(constraint.value, selected_text)
+                elif constraint.value and not _constraint_present(
+                    constraint.value, selected_text
                 ):
                     errors.append(
                         f"selected candidate does not show required value: {constraint.value}"
@@ -1223,7 +1183,11 @@ class CandidateLedger:
         selected_ids = {
             str(item)
             for key, value in arguments.items()
-            if key.endswith(("_id", "_ids")) and key != "user_id"
+            if (
+                key in id_arguments and id_arguments[key] != "user"
+                if id_arguments is not None
+                else key.endswith(("_id", "_ids")) and key != "user_id"
+            )
             for item in (value if isinstance(value, list) else [value])
         }
         selected = [
@@ -1247,7 +1211,11 @@ class CandidateLedger:
                 )
         return _dedup(errors)
 
-    def _validate_parent_relationships(self, arguments: dict[str, Any]) -> list[str]:
+    def _validate_parent_relationships(
+        self,
+        arguments: dict[str, Any],
+        id_arguments: dict[str, str] | None = None,
+    ) -> list[str]:
         errors: list[str] = []
         relationships = (
             ("room_id", "hotel_id"),
@@ -1289,6 +1257,33 @@ class CandidateLedger:
                     errors.append(
                         f"{child_key}={child_id} was not observed under parent={parent_id}"
                     )
+        if id_arguments:
+            selected_by_argument = {
+                key: [str(item) for item in (value if isinstance(value, list) else [value])]
+                for key, value in arguments.items()
+                if key in id_arguments and id_arguments[key] != "user"
+            }
+            all_selected = {
+                item for values in selected_by_argument.values() for item in values
+            }
+            leaf_ids = {
+                candidate.candidate_id
+                for candidate in self.constraint_candidates(arguments, id_arguments)
+            }
+            for key, values in selected_by_argument.items():
+                for candidate_id in values:
+                    if candidate_id not in leaf_ids:
+                        continue
+                    candidate = self.candidates.get(candidate_id)
+                    if (
+                        candidate
+                        and candidate.parent_ids
+                        and len(all_selected) > 1
+                        and all_selected.isdisjoint(candidate.parent_ids)
+                    ):
+                        errors.append(
+                            f"{key}={candidate_id} was not observed under any selected parent"
+                        )
         return errors
 
 
@@ -1312,16 +1307,7 @@ def _required_slots(domain: str, facet: str, action: str, text: str) -> list[str
     if action != "commit":
         return []
     if domain == "delivery":
-        slots = ["product", "address"]
-        if "拖鞋" in text or "鞋" in text:
-            slots.append("size")
-        if (
-            facet == "beverage"
-            and "咖啡" in text
-            and any(marker in text for marker in ("提神", "犯困", "熬夜", "加班", "开会"))
-        ):
-            slots.append("caffeine")
-        return slots
+        return ["address"]
     if facet in {"train", "flight"}:
         return ["departure", "destination", "date", "quantity"]
     if domain == "ota" and facet == "travel":
@@ -1337,7 +1323,6 @@ def _required_slots(domain: str, facet: str, action: str, text: str) -> list[str
 
 def _slot_is_present(slot: str, text: str) -> bool:
     markers = {
-        "product": _PRODUCT_CATEGORIES,
         "address": ("送到", "送去", "家", "公司", "单位", "学校", "店里"),
         "size": ("码", "尺码", "42-43", "44-45"),
         "departure": ("从", "出发", "离开"),
@@ -1391,7 +1376,7 @@ def _validate_argument_constraint(
     ]
     joined = " ".join(value for value in values if value)
     if constraint.operator == ConstraintOperator.RESOLVES_PROFILE:
-        expected = _profile_address(profile, constraint.value)
+        expected = resolve_profile_address(profile, constraint.value)
         if not joined:
             return [
                 f"missing {constraint.kind} argument for profile alias {constraint.value}"
@@ -1448,18 +1433,36 @@ def _candidate_bound_values(kind: str, selected_text: str) -> list[str]:
     )
 
 
-def _profile_address(profile: dict[str, Any], alias: str) -> str:
+def resolve_profile_address(profile: dict[str, Any], alias: str) -> str:
+    preferred = (
+        ("home_address", "home", "常住住址", "家庭住址", "家庭地址", "收货地址")
+        if alias == "home"
+        else ("company_address", "work_address", "工作地址", "单位地址", "公司地址")
+    )
     markers = (
         ("home", "家", "家庭", "常住")
         if alias == "home"
-        else ("company", "公司", "单位", "工作")
+        else ("company", "work", "公司", "单位", "工作")
     )
+    candidates: list[tuple[int, int, str]] = []
     for key, value in profile.items():
-        if any(marker.lower() in str(key).lower() for marker in markers):
-            if isinstance(value, dict):
-                return str(value.get("address", ""))
-            return str(value)
-    return ""
+        lowered = str(key).casefold()
+        if not any(marker.casefold() in lowered for marker in markers):
+            continue
+        resolved = (
+            str(value.get("address", ""))
+            if isinstance(value, dict)
+            else str(value)
+        ).strip()
+        if not resolved:
+            continue
+        score = 4 if lowered in {item.casefold() for item in preferred} else 0
+        if any(token in lowered for token in ("address", "地址", "住址")):
+            score += 2
+        # A city/region field such as `常住地` is a fallback, not a
+        # deliverable street address when a more specific address exists.
+        candidates.append((score, len(resolved), resolved))
+    return max(candidates, default=(0, 0, ""))[2]
 
 
 def _normalize_search_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1507,6 +1510,18 @@ def _to_int(value: str | None) -> int | None:
         return None
 
 
+def _records_with_field(payload: Any, field_name: str) -> Iterable[dict[str, Any]]:
+    """Yield nested objects carrying a schema-declared candidate identity."""
+    if isinstance(payload, dict):
+        if field_name in payload:
+            yield payload
+        for value in payload.values():
+            yield from _records_with_field(value, field_name)
+    elif isinstance(payload, list):
+        for value in payload:
+            yield from _records_with_field(value, field_name)
+
+
 def _dedup(values: Iterable[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -1541,8 +1556,6 @@ def _valid_fact_value(value: str) -> bool:
 
 
 def _constraint_present(requirement: str, selected: str) -> bool:
-    if requirement in {"汤锅", "火锅"}:
-        return "汤锅" in selected or "火锅" in selected
     if requirement in selected:
         return True
     day_match = re.fullmatch(r"(\d{1,2})号", requirement)
@@ -1582,31 +1595,3 @@ def _normalize_chinese_count(value: str) -> str:
         "十": 10,
     }
     return str(mapping.get(value, value))
-
-
-def _category_groundable_in_ledger(
-    value: str, candidates: Iterable[Candidate]
-) -> bool:
-    from agent.runtime.ranking import category_is_groundable
-
-    observable = [
-        candidate
-        for candidate in candidates
-        if candidate.entity_type not in {"order", "unknown", "store"}
-    ]
-    return category_is_groundable(value, observable)
-
-
-def _category_satisfied_by_tool(kind: str, value: str, tool_name: str) -> bool:
-    """Use typed OTA create tools as evidence for their parent entity class."""
-    if kind != "category":
-        return False
-    expected_marker = {
-        "酒店": "hotel",
-        "机票": "flight",
-        "高铁票": "train",
-        "火车票": "train",
-        "景点": "attraction",
-        "门票": "attraction",
-    }.get(value)
-    return bool(expected_marker and expected_marker in tool_name.lower())

@@ -818,56 +818,78 @@ def test_unserialized_category_hypernym_does_not_erase_observed_candidates():
     )
 
 
-def test_shoe_category_uses_product_name_not_store_name():
+def test_task_identity_uses_candidate_name_not_parent_name():
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
         "\n".join(
             [
-                "StoreProduct(store_name=特步运动鞋城, store_id=S1_S00001, "
-                "product_name=运动毛巾, product_id=S1_P00001, quantity=30)",
-                "StoreProduct(store_name=特步运动鞋城, store_id=S1_S00001, "
-                "product_name=男子休闲鞋, product_id=S1_P00002, quantity=20)",
-                "StoreProduct(store_name=特步运动鞋城, store_id=S1_S00001, "
-                "product_name=记忆海绵鞋垫, product_id=S1_P00003, quantity=40, "
-                "tags=['鞋垫', '配件'])",
+                "StoreProduct(store_name=星港航标核心总汇, store_id=S1_S00001, "
+                "product_name=折叠绳, product_id=S1_P00001, quantity=30)",
+                "StoreProduct(store_name=星港航标核心总汇, store_id=S1_S00001, "
+                "product_name=航标核心, product_id=S1_P00002, quantity=20)",
+                "StoreProduct(store_name=星港航标核心总汇, store_id=S1_S00001, "
+                "product_name=防尘套, product_id=S1_P00003, quantity=40)",
             ]
         ),
     )
-    spec = TaskSpec.compile("想入一双新鞋了，给我推荐哈")
+    spec = TaskSpec.compile("给我推荐一个航标核心")
     card = build_decision_card(spec, [])
     assert [candidate.candidate_id for candidate in ledger.shortlist(card)] == [
         "S1_P00002"
     ]
 
 
-def test_coffee_category_uses_name_and_tags_not_caffeine_attribute():
+def test_unannotated_candidate_fields_rank_but_do_not_become_hard_constraints():
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
         "\n".join(
             [
-                "StoreProduct(store_name=幸运咖, store_id=S1_S00001, "
-                "product_name=低咖啡因抹茶拿铁（低咖啡因）, product_id=S1_P00001, "
-                "attributes=低咖啡因, 热, 中杯, quantity=30, "
-                "tags=['饮品', '抹茶', '拿铁', '低咖啡因'])",
-                "StoreProduct(store_name=幸运咖, store_id=S1_S00001, "
-                "product_name=低因拿铁, product_id=S1_P00002, "
-                "attributes=低咖啡因, 热, 中杯, quantity=20, "
-                "tags=['饮品', '咖啡', '拿铁', '低咖啡因'])",
+                "StoreProduct(store_id=S1_S00001, product_name=极光棱镜, "
+                "product_id=S1_P00001, resonance: 低频, quantity=30)",
+                "StoreProduct(store_id=S1_S00001, product_name=极光棱镜, "
+                "product_id=S1_P00002, resonance: 高频, quantity=20)",
             ]
         ),
     )
-    card = DecisionCard(
-        must=["咖啡", "低咖啡因"],
-        constraints=[
-            Constraint("category", "咖啡"),
-            Constraint("caffeine", "低咖啡因"),
-        ],
-    )
+    card = DecisionCard(task_intent=["请选低频的极光棱镜"])
+    grounded = ledger.ground_task_constraints(card)
+    assert grounded == []
     assert [candidate.candidate_id for candidate in ledger.shortlist(card)] == [
-        "S1_P00002"
+        "S1_P00001",
+        "S1_P00002",
     ]
+
+
+def test_unannotated_service_rows_do_not_form_cross_candidate_conjunction():
+    ledger = CandidateLedger()
+    ledger.observe(
+        "instore_product_search",
+        "\n".join(
+            [
+                "ShopProduct(shop_id=S2_S00001, product_id=S2_P00001, "
+                "product_name=经典造型券, service_type=理发, quantity=8)",
+                "ShopProduct(shop_id=S2_S00001, product_id=S2_P00002, "
+                "product_name=夏日套餐, service_type=护理, quantity=6)",
+            ]
+        ),
+    )
+    card = DecisionCard(task_intent=["帮我买一个理发店套餐"])
+    assert ledger.ground_task_constraints(card) == []
+
+    registry = ToolRegistry()
+    registry.meta = {
+        "create_instore_product_order": ToolMeta(
+            "create_instore_product_order",
+            ToolRole.CREATE,
+            {"shop_id", "product_id"},
+            {"shop_id": "store", "product_id": "product"},
+        )
+    }
+    # The framework may rank the two observed rows, but it must not deadlock
+    # SELECT -> CREATE by requiring values taken from different rows.
+    assert registry.execution_ready(ledger, card)
 
 
 def test_retail_signals_preserve_cart_item_and_operational_preferences():
@@ -1023,7 +1045,7 @@ def test_food_preferences_do_not_cross_facets_but_safety_constraints_do():
     assert "花生" in card.avoid
 
 
-def test_beverage_category_prevents_coffee_specs_from_polluting_milk_tea():
+def test_category_tagged_facts_wait_for_candidate_grounding():
     facts = [
         PreferenceFact(
             "coffee-temp",
@@ -1053,6 +1075,7 @@ def test_beverage_category_prevents_coffee_specs_from_polluting_milk_tea():
     card = build_decision_card(TaskSpec.compile("帮我点一杯奶茶"), facts)
     assert "热饮" in card.prefer
     assert "冰饮" not in card.prefer
+    assert {"热饮", "冰饮"}.issubset(card.preference_pool)
 
 
 def test_newer_topping_avoidance_suppresses_old_likes_but_not_new_exception():
@@ -1095,8 +1118,9 @@ def test_newer_topping_avoidance_suppresses_old_likes_but_not_new_exception():
         ),
     ]
     card = build_decision_card(TaskSpec.compile("帮我点杯奶茶"), facts)
-    assert "招牌芋圆奶茶（冰）" not in card.prefer
+    assert "招牌芋圆奶茶（冰）" in card.prefer
     assert "布蕾" in card.prefer
+    assert {"招牌芋圆奶茶（冰）", "布蕾"}.issubset(card.preference_pool)
 
 
 def test_search_normalization_preserves_open_world_semantics():
@@ -1154,7 +1178,7 @@ def test_food_avoidance_keeps_its_source_category():
     assert fact.category == "奶茶"
 
 
-def test_milk_tea_topping_avoidance_does_not_pollute_coffee_search():
+def test_category_tagged_avoidance_waits_for_candidate_grounding():
     fact = PreferenceFact(
         fact_id="no-topping",
         scope="delivery",
@@ -1172,68 +1196,58 @@ def test_milk_tea_topping_avoidance_does_not_pollute_coffee_search():
         TaskSpec.compile("帮我点杯喝的送到公司"), [fact]
     )
     assert "小料" not in coffee.avoid
-    assert "小料" in broad_drink.avoid
+    assert "小料" not in broad_drink.avoid
 
 
-def test_broth_preference_matches_semantic_hotpot_variant_before_price():
+def test_open_world_field_preference_ranks_exact_observed_value_before_price():
     ledger = CandidateLedger()
     ledger.observe(
         "instore_product_search_recommend",
         "\n".join(
             [
                 "ShopProduct(shop_id=S1_I00001, product_id=S1_P00001, "
-                "name=菌汤火锅4人套餐（含茠蒿）, price=168, quantity=20)",
+                "name=星云套件, core: 晶核, price=168, quantity=20)",
                 "ShopProduct(shop_id=S1_I00002, product_id=S1_P00002, "
-                "name=酸菜鱼汤锅套餐（含茠蒿）, price=118, quantity=20)",
+                "name=星云套件, core: 雾核, price=118, quantity=20)",
             ]
         ),
     )
-    card = DecisionCard(prefer=["菌汤锅底", "茠蒿"])
+    card = DecisionCard(prefer=["晶核"])
     assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00001"
 
 
-def test_broad_topping_avoidance_allows_no_topping_and_preferred_exception():
+def test_schema_field_exclusion_is_hard_and_preferences_cannot_bypass_it():
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
         "\n".join(
             [
-                "StoreProduct(store_id=S1_S00001, product_name=四季奶茶(热), "
-                "product_id=S1_P00001, attributes=温度: 热, 小料: 无, "
-                "quantity=20, tags=['奶茶', '热饮'])",
-                "StoreProduct(store_id=S1_S00002, product_name=布蕾奶茶(热), "
-                "product_id=S1_P00002, attributes=温度: 热, 小料: 布蕾, "
-                "quantity=20, tags=['奶茶', '热饮', '布蕾'])",
-                "StoreProduct(store_id=S1_S00003, product_name=珍珠奶茶(热), "
-                "product_id=S1_P00003, attributes=温度: 热, 小料: 珍珠, "
-                "quantity=20, tags=['奶茶', '热饮', '珍珠'])",
-                "StoreProduct(store_id=S1_S00004, product_name=布蕾奶茶(冰), "
-                "product_id=S1_P00004, attributes=温度: 冰, 小料: 布蕾, "
-                "quantity=20, price=1, tags=['奶茶', '冷饮', '布蕾'])",
+                "StoreProduct(store_id=S1_S00001, product_name=星云片, "
+                "product_id=S1_P00001, payload: 无, quantity=20)",
+                "StoreProduct(store_id=S1_S00002, product_name=星云片, "
+                "product_id=S1_P00002, payload: 红砂, quantity=20)",
             ]
         ),
     )
     card = DecisionCard(
-        avoid=["小料"],
-        prefer=["黑糖布蕾奶茶（热/三分糖）"],
+        avoid=["红砂"],
+        prefer=["红砂"],
         constraints=[
             Constraint(
-                "topping",
-                "小料",
+                "payload",
+                "红砂",
                 operator=ConstraintOperator.EXCLUDES,
                 source="memory",
             )
         ],
     )
     ranked = [candidate.candidate_id for candidate in ledger.shortlist(card)]
-    assert ranked[:2] == ["S1_P00002", "S1_P00001"]
-    assert "S1_P00003" not in ranked
-    assert "S1_P00004" not in ranked
+    assert ranked == ["S1_P00001"]
     assert not ledger.validate_write(
         "create_delivery_order",
         {
-            "store_id": "S1_S00002",
-            "product_ids": ["S1_P00002"],
+            "store_id": "S1_S00001",
+            "product_ids": ["S1_P00001"],
             "product_cnts": [1],
         },
         card,
@@ -1303,33 +1317,23 @@ def test_execution_ready_requires_a_compliant_shortlist():
     assert not registry.execution_ready(ledger, card)
 
 
-def test_retail_semantic_preferences_rank_brand_muted_fast_candidate():
+def test_open_world_preferences_rank_candidate_with_most_observed_fields():
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
         "\n".join(
             [
-                "StoreProduct(store_id=S1_S00001, product_name=杂牌男鞋棕色, "
-                "product_id=S1_P00001, attributes=配送时长: 20分钟, "
-                "quantity=50, price=69, tags=['男鞋'])",
-                "StoreProduct(store_id=S1_S00002, product_name=Nike男子跑鞋灰白色, "
-                "product_id=S1_P00002, attributes=配送时长: 25分钟, "
-                "quantity=10, price=449, tags=['Nike', '跑鞋', '男鞋'])",
-                "StoreProduct(store_id=S1_S00003, product_name=Nike男子跑鞋荧光绿, "
-                "product_id=S1_P00003, attributes=配送时长: 35分钟, "
-                "quantity=10, price=399, tags=['Nike', '跑鞋', '男鞋'])",
-                "StoreProduct(store_id=S1_S00004, product_name=Nike男子板鞋皇家蓝白红, "
-                "product_id=S1_P00004, attributes=配送时长: 25分钟, "
-                "颜色: 皇家蓝白红, quantity=10, price=299, tags=['Nike', '板鞋', '男鞋'])",
+                "StoreProduct(store_id=S1_S00001, product_name=雾海模组, "
+                "product_id=S1_P00001, tone: 灰白, latency: 25, quantity=10)",
+                "StoreProduct(store_id=S1_S00002, product_name=雾海模组, "
+                "product_id=S1_P00002, tone: 荧绿, latency: 35, quantity=10)",
             ]
         ),
     )
     card = DecisionCard(
-        must=["鞋"],
-        prefer=["Nike男跑步鞋HJ9198-003", "低饱和色系", "配送30分钟内"],
-        constraints=[Constraint("category", "鞋")],
+        prefer=["灰白", "latency: 25"],
     )
-    assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00002"
+    assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00001"
 
 
 def test_recommendation_correction_reopens_done_runtime():
@@ -1340,7 +1344,7 @@ def test_recommendation_correction_reopens_done_runtime():
     assert runtime.revision_requested
 
 
-def test_hierarchical_room_satisfies_hotel_category_filter():
+def test_hierarchical_child_is_selected_without_parent_category_rule():
     ledger = CandidateLedger()
     ledger.observe(
         "get_ota_hotel_info",
@@ -1352,9 +1356,7 @@ def test_hierarchical_room_satisfies_hotel_category_filter():
             ]
         ),
     )
-    card = DecisionCard(
-        must=["酒店"], constraints=[Constraint("category", "酒店")]
-    )
+    card = DecisionCard(task_intent=["请选简约大床房"])
     assert [candidate.candidate_id for candidate in ledger.shortlist(card)] == [
         "S1_P00001"
     ]
@@ -1817,7 +1819,18 @@ def test_lessons_are_user_local_and_facet_scoped():
 def test_task_spec_does_not_define_hidden_evaluation_fields():
     spec = TaskSpec.compile("就糯糯青山吧，少糖多冰，送到公司")
     assert "糯糯青山" in [constraint.value for constraint in spec.must]
-    assert "少糖" in [constraint.value for constraint in spec.must]
+    assert "少糖" not in [constraint.value for constraint in spec.must]
+    ledger = CandidateLedger()
+    ledger.observe(
+        "search",
+        "StoreProduct(store_id=S1_S00001, product_id=S1_P00001, "
+        "product_name=糯糯青山, sweetness: 少糖, ice: 多冰, quantity=3)",
+    )
+    card = build_decision_card(spec, [])
+    grounded = ledger.ground_task_constraints(card)
+    # Legacy, unannotated result fields remain ranking evidence. They must not
+    # silently become evaluator-like hidden requirements at runtime.
+    assert grounded == []
     assert not hasattr(spec, "rubric")
     assert not hasattr(spec, "reward")
     assert not hasattr(spec, "target_product_ids")
@@ -1901,6 +1914,67 @@ def test_address_parser_rejects_discourse_tail_and_resolves_profile_aliases():
     assert address.value == "home"
 
 
+def test_preflight_binds_profile_alias_over_model_guessed_address():
+    class Tool:
+        name = "create_delivery_order"
+
+    class Debug:
+        def emit(self, *args, **kwargs):
+            pass
+
+    home = "北京市海淀区中关村大街1号"
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我买个新物品送到家")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.READY_TO_CREATE
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        "create_delivery_order": ToolMeta(
+            "create_delivery_order", ToolRole.CREATE, {"address"}, {}
+        )
+    }
+    agent.tool_errors = ToolErrorLedger()
+    agent.ledger = CandidateLedger()
+    agent.decision_card = DecisionCard(
+        constraints=[
+            Constraint(
+                "address",
+                "home",
+                ConstraintTarget.ARGUMENT,
+                ConstraintOperator.RESOLVES_PROFILE,
+                argument_name="address",
+            )
+        ]
+    )
+    agent.user_profile = {"home": home}
+    agent.question_gate = QuestionGate()
+    agent.enable_candidate_validation = True
+    agent.debug = Debug()
+    agent._record_lesson = lambda *args: None
+    call = ToolCall(
+        id="bind-home",
+        name="create_delivery_order",
+        arguments={"address": "模型猜测的地址"},
+    )
+    problems = agent._preflight(
+        AssistantMessage(role="assistant", tool_calls=[call]), [Tool()]
+    )
+    assert not any("address" in problem for problem in problems)
+    assert call.arguments["address"] == home
+
+
+def test_profile_address_prefers_street_address_over_resident_city():
+    from agent.decision import resolve_profile_address
+
+    profile = {
+        "常住地": "河南省郑州市",
+        "常住住址": "郑州市金水区国基路某小区2栋302",
+        "工作地址": "郑州市某医院护士站",
+    }
+    assert resolve_profile_address(profile, "home") == profile["常住住址"]
+    assert resolve_profile_address(profile, "company") == profile["工作地址"]
+
+
 def test_completed_recommendation_reopens_when_user_authorizes_selected_candidate():
     runtime = TaskRuntime.begin(TaskSpec.compile("推荐两家酒店"))
     runtime.observe_candidates(2, execution_ready=True)
@@ -1969,22 +2043,35 @@ def test_task_spec_owns_runtime_question_contract():
     assert agent.memory.committed == [question]
 
 
-def test_ambiguous_caffeine_intent_requires_time_clarification():
-    spec = TaskSpec.compile("26号开会，提前给我点个咖啡提神")
-    card = build_decision_card(spec, [])
-    assert "caffeine" in spec.unknown_slots
-    assert not any(value in card.prefer for value in ("高咖啡因", "低咖啡因"))
+def test_tool_schema_declares_unseen_question_dimension():
+    class Params:
+        @classmethod
+        def model_json_schema(cls):
+            return {
+                "required": ["chosen_sigil", "resonance"],
+                "properties": {
+                    "chosen_sigil": {"x-adapt-entity": "relic"},
+                    "resonance": {
+                        "type": "string",
+                        "x-adapt-question": True,
+                        "x-adapt-question-text": "请告诉我要晨鸣还是夜鸣。",
+                    },
+                },
+            }
 
+    class Tool:
+        name = "seal_the_choice"
+        info = {"adapt_role": "create"}
+        params = Params
 
-def test_caffeine_answer_is_resolved_before_choice_delegation():
-    runtime = TaskRuntime.begin(
-        TaskSpec.compile("26号开会，提前给我点个咖啡提神")
-    )
-    assert runtime.next_question_dimension() == "caffeine"
-    runtime.commit_question("caffeine")
-    runtime.observe_user("下午吧，你看着办")
-    assert runtime.resolved_slots["caffeine"] == "低咖啡因"
-    assert runtime.authorization.choice_delegated
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("请帮我下单一枚遗物")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.rebuild([Tool()])
+    contract = agent._information_gap_contract()
+    assert any(gap.dimension == "resonance" for gap in contract.gaps)
+    assert any("晨鸣还是夜鸣" in gap.question for gap in contract.gaps)
 
 
 def test_current_clarification_becomes_hard_candidate_constraint():
@@ -2327,7 +2414,7 @@ def test_room_id_rejects_hotel_id_even_when_both_are_observed():
     assert any("room ID" in error for error in errors)
 
 
-def test_hotel_category_is_satisfied_by_typed_create_tool():
+def test_parent_child_write_needs_no_category_constraint():
     ledger = CandidateLedger()
     ledger.observe(
         "hotel_search_recommand",
@@ -2337,11 +2424,32 @@ def test_hotel_category_is_satisfied_by_typed_create_tool():
         "get_ota_hotel_info",
         "HotelProduct(room_type=简约大床房, date=2026-02-19, quantity=1, room_id=S1_P00001)",
     )
-    card = DecisionCard(constraints=[Constraint("category", "酒店")])
+    card = DecisionCard()
     assert not ledger.validate_write(
         "create_hotel_order",
         {"hotel_id": "S1_H00001", "room_id": "S1_P00001", "user_id": "U1"},
         card,
+    )
+
+
+def test_schema_parent_validation_does_not_reverse_legacy_store_relation():
+    ledger = CandidateLedger()
+    ledger.observe(
+        "get_store",
+        "StoreProduct(store_id=S1_S00001, product_id=S1_P00001, "
+        "product_name=星云片, quantity=2)",
+    )
+    meta = ToolMeta(
+        "commit_pair",
+        ToolRole.CREATE,
+        {"store_ref", "item_ref"},
+        {"store_ref": "store", "item_ref": "product"},
+    )
+    assert not ledger.validate_write(
+        "commit_pair",
+        {"store_ref": "S1_S00001", "item_ref": "S1_P00001"},
+        DecisionCard(),
+        tool_meta=meta,
     )
 
 
@@ -2526,22 +2634,22 @@ def test_payment_does_not_reapply_create_address_constraints():
     )
 
 
-def test_category_feature_ranks_compliant_milk_tea_over_generic_tea():
+def test_task_identity_ranks_unseen_entity_without_category_feature_table():
     ledger = CandidateLedger()
     ledger.observe(
         "delivery_product_search_recommand",
         "\n".join(
             [
-                "StoreProduct(store_id=S1_S00001, product_name=红枣姜茶, product_id=S1_P00001, attributes=热饮, 无小料, quantity=3, price=10)",
-                "StoreProduct(store_id=S1_S00002, product_name=经典原味奶茶, product_id=S1_P00002, attributes=热饮, 无小料, quantity=3, price=10)",
+                "StoreProduct(store_id=S1_S00001, product_name=红枣晶核, product_id=S1_P00001, quantity=3, price=10)",
+                "StoreProduct(store_id=S1_S00002, product_name=极光棱镜, product_id=S1_P00002, quantity=3, price=10)",
             ]
         ),
     )
-    card = DecisionCard(prefer=["老红糖珍珠奶茶（热）不加小料"], avoid=["小料"])
+    card = DecisionCard(task_intent=["请给我极光棱镜"])
     assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00002"
 
 
-def test_specific_hotpot_preferences_are_not_collapsed_to_category():
+def test_multiple_open_world_preferences_remain_distinct_evidence_atoms():
     ledger = CandidateLedger()
     ledger.observe(
         "instore_product_search_recommend",
@@ -2553,10 +2661,8 @@ def test_specific_hotpot_preferences_are_not_collapsed_to_category():
         ),
     )
     spec = TaskSpec.compile("今晚聚餐想吃个汤锅，帮我下单个套餐")
-    assert any(c.kind == "category" and c.value == "汤锅" for c in spec.must)
     card = DecisionCard(
         prefer=["麻辣火锅", "菌汤锅底", "茼蒿", "冰汤圆"],
-        constraints=spec.must,
     )
     assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00002"
 
@@ -2777,6 +2883,7 @@ def test_general_game_facts_do_not_pollute_hotel_decision_card():
     card = build_decision_card(TaskSpec.compile("帮我订明晚重庆的酒店"), facts)
     assert "喜欢玩无畏契约" not in card.prefer
     assert "汉庭酒店(遂宁店)" in card.prefer
+    assert "汉庭酒店(遂宁店)" in card.preference_pool
 
 
 def test_ranker_matches_brand_root_across_city_variants():
@@ -2816,7 +2923,8 @@ def test_explicit_facet_preference_ranks_before_brand_history():
         ),
     ]
     card = build_decision_card(TaskSpec.compile("帮我点杯喝的送到公司"), facts)
-    assert card.prefer[0] == "奶茶不加小料/原味"
+    assert "奶茶不加小料/原味" in card.preference_pool
+    assert "某奶茶店" in card.preference_pool
 
 
 def test_negated_attribute_does_not_trigger_avoid_constraint():
@@ -2863,6 +2971,7 @@ def test_current_category_constraint_does_not_directly_name_all_ota_facts():
     card = build_decision_card(TaskSpec.compile("帮我订明晚重庆的酒店"), facts)
     assert "古羌城门票" not in card.prefer
     assert "汉庭酒店" in card.prefer
+    assert {"古羌城门票", "汉庭酒店"}.issubset(card.preference_pool)
 
 
 def test_open_world_task_identity_filters_unseen_product_categories():
@@ -2932,3 +3041,243 @@ def test_candidate_selection_is_not_replayed_as_candidate_observation():
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
     assert sum(event["event"] == "candidates" for event in runtime.events) == 1
     assert sum(event["event"] == "selection" for event in runtime.events) == 1
+
+
+def test_schema_driven_candidate_flow_uses_no_vitabench_names_or_id_shapes():
+    class SearchParams:
+        @classmethod
+        def model_json_schema(cls):
+            return {"properties": {"incantation": {"type": "string"}}}
+
+    class SearchReturns:
+        @classmethod
+        def model_json_schema(cls):
+            return {
+                "type": "object",
+                "properties": {
+                    "nebula": {
+                        "type": "object",
+                        "properties": {
+                            "echoes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "x-adapt-entity": "relic",
+                                    "properties": {
+                                        "sigil": {
+                                            "type": "string",
+                                            "x-adapt-role": "id",
+                                        },
+                                        "caption": {
+                                            "type": "string",
+                                            "x-adapt-role": "name",
+                                        },
+                                        "reserve": {
+                                            "type": "integer",
+                                            "x-adapt-role": "inventory",
+                                        },
+                                        "cost": {
+                                            "type": "number",
+                                            "x-adapt-role": "price",
+                                        },
+                                        "origin_ref": {
+                                            "type": "string",
+                                            "x-adapt-role": "parent_id",
+                                        },
+                                        "traits": {
+                                            "type": "object",
+                                            "x-adapt-role": "attribute",
+                                        },
+                                    },
+                                },
+                            }
+                        },
+                    }
+                },
+            }
+
+    class CommitParams:
+        @classmethod
+        def model_json_schema(cls):
+            return {
+                "required": ["chosen_sigil", "actor_token"],
+                "properties": {
+                    "chosen_sigil": {
+                        "type": "string",
+                        "x-adapt-entity": "relic",
+                    },
+                    "actor_token": {
+                        "type": "string",
+                        "x-adapt-role": "user_id",
+                    },
+                },
+            }
+
+    class EmptyReturns:
+        @classmethod
+        def model_json_schema(cls):
+            return {"type": "string"}
+
+    class Tool:
+        def __init__(self, name, role, params, returns):
+            self.name = name
+            self.info = {"adapt_role": role, "adapt_domain": "synthetic"}
+            self.params = params
+            self.returns = returns
+
+    search = Tool("survey_constellation", "search", SearchParams, SearchReturns)
+    commit = Tool("seal_the_choice", "create", CommitParams, EmptyReturns)
+    registry = ToolRegistry()
+    registry.rebuild([search, commit])
+    ledger = CandidateLedger()
+    ledger.observe(
+        search.name,
+        {
+            "nebula": {
+                "echoes": [
+                    {
+                        "sigil": "sig::empty",
+                        "caption": "Aurora Prism Basic",
+                        "reserve": 0,
+                        "cost": 3,
+                        "origin_ref": "forge::north",
+                        "traits": {"hue": "violet", "material": "glass"},
+                    },
+                    {
+                        "sigil": "sig::ready",
+                        "caption": "Aurora Prism Expedition",
+                        "reserve": 4,
+                        "cost": 8,
+                        "origin_ref": "forge::north",
+                        "traits": {"hue": "violet", "material": "quartz"},
+                    },
+                    {
+                        "sigil": "sig::other",
+                        "caption": "Lunar Compass",
+                        "reserve": 9,
+                        "cost": 1,
+                        "origin_ref": "forge::south",
+                        "traits": {"hue": "silver", "material": "steel"},
+                    },
+                ]
+            }
+        },
+        registry.result_schema(search.name),
+    )
+    card = DecisionCard(task_intent=["Acquire an Aurora Prism"], prefer=["violet"])
+    assert [candidate.candidate_id for candidate in ledger.shortlist(card)] == [
+        "sig::ready"
+    ]
+    assert registry.execution_ready(ledger, card)
+    meta = registry.meta[commit.name]
+    assert not ledger.validate_write(
+        commit.name,
+        {"chosen_sigil": "sig::ready", "actor_token": "actor::7"},
+        card,
+        tool_meta=meta,
+    )
+    assert ledger.validate_write(
+        commit.name,
+        {"chosen_sigil": "invented::id", "actor_token": "actor::7"},
+        card,
+        tool_meta=meta,
+    ) == ["chosen_sigil=invented::id was not returned by a tool in this subtask"]
+
+
+def test_schema_driven_flow_accepts_root_array_and_plural_opaque_ids():
+    class SearchParams:
+        @classmethod
+        def model_json_schema(cls):
+            return {"properties": {"rune": {"type": "string"}}}
+
+    class SearchReturns:
+        @classmethod
+        def model_json_schema(cls):
+            return {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "x-adapt-entity": "glyph",
+                    "properties": {
+                        "mark": {"x-adapt-role": "id"},
+                        "title": {
+                            "x-adapt-role": "name",
+                            "x-adapt-constraint": True,
+                        },
+                        "stockpulse": {"x-adapt-role": "inventory"},
+                        "tone": {"x-adapt-role": "attribute"},
+                        "cadence": {
+                            "x-adapt-role": "attribute",
+                            "x-adapt-constraint": True,
+                        },
+                    },
+                },
+            }
+
+    class CommitParams:
+        @classmethod
+        def model_json_schema(cls):
+            return {
+                "required": ["selected_marks", "keeper"],
+                "properties": {
+                    "selected_marks": {
+                        "type": "array",
+                        "x-adapt-entity": "glyph",
+                    },
+                    "keeper": {"x-adapt-role": "user_id"},
+                },
+            }
+
+    class Tool:
+        def __init__(self, name, role, params, returns):
+            self.name = name
+            self.info = {"adapt_role": role}
+            self.params = params
+            self.returns = returns
+
+    search = Tool("listen_for_glyphs", "search", SearchParams, SearchReturns)
+    commit = Tool("bind_many_marks", "create", CommitParams, SearchReturns)
+    registry = ToolRegistry()
+    registry.rebuild([search, commit])
+    ledger = CandidateLedger()
+    ledger.observe(
+        search.name,
+        [
+            {
+                "mark": "mark://velorian",
+                "title": "Velorian Thrum",
+                "stockpulse": 2,
+                "tone": "amber",
+                "cadence": "triple",
+            },
+            {
+                "mark": "mark://dusk",
+                "title": "Dusk Lattice",
+                "stockpulse": 7,
+                "tone": "indigo",
+                "cadence": "single",
+            },
+        ],
+        registry.result_schema(search.name),
+    )
+    card = DecisionCard(
+        task_intent=["Bind the Velorian Thrum with triple cadence"]
+    )
+    grounded = ledger.ground_task_constraints(card)
+    assert {constraint.value for constraint in grounded} >= {
+        "Velorian Thrum",
+        "triple",
+    }
+    assert [candidate.candidate_id for candidate in ledger.shortlist(card)] == [
+        "mark://velorian"
+    ]
+    meta = registry.meta[commit.name]
+    assert not ledger.validate_write(
+        commit.name,
+        {
+            "selected_marks": ["mark://velorian"],
+            "keeper": "keeper://9",
+        },
+        card,
+        tool_meta=meta,
+    )

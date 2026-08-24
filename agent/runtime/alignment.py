@@ -118,6 +118,11 @@ class CandidateAttributeMap:
         if not target:
             return False
         for attribute in self.attributes:
+            if (
+                atom.attribute_key not in {"legacy_text", "open"}
+                and attribute.key != atom.attribute_key
+            ):
+                continue
             observed = _normalize(attribute.value)
             if observed == target or (
                 len(target) >= 2 and observed.startswith(target)

@@ -24,9 +24,12 @@ from vita.utils.llm_utils import generate
 from agent.decision import (
     CandidateLedger,
     Constraint,
+    ConstraintOperator,
+    ConstraintTarget,
     DecisionCard,
     TaskSpec,
     is_search_tool,
+    resolve_profile_address,
 )
 from agent.framework.context import compact_messages
 from agent.intent import DesiredOutcome, selected_ordinal
@@ -490,7 +493,11 @@ class ADAPTAgent(PersonalizationAgent):
         )
         for item in messages:
             if isinstance(item, ToolMessage):
-                self.ledger.observe(item.name, item.content)
+                self.ledger.observe(
+                    item.name,
+                    item.content,
+                    self.tool_registry.result_schema(item.name),
+                )
                 attempt = self.tool_errors.observe_result(
                     item.id, item.name, item.content or "", item.error
                 )
@@ -520,7 +527,15 @@ class ADAPTAgent(PersonalizationAgent):
                             if candidate.entity_type not in {"order", "unknown"}
                         ],
                     )
+                    schema_constraints = self.ledger.ground_task_constraints(
+                        self.decision_card
+                    )
                     self.debug.emit("candidate_memory_retrieval", **grounding_stats)
+                    self.debug.emit(
+                        "candidate_schema_constraints",
+                        count=len(schema_constraints),
+                        values=[constraint.value for constraint in schema_constraints],
+                    )
                     self.runtime.observe_candidates(
                         len(self.ledger.candidates),
                         execution_ready=self.tool_registry.execution_ready(
@@ -634,10 +649,12 @@ class ADAPTAgent(PersonalizationAgent):
                     f"tool {call.name} is not allowed in phase {self.runtime.phase.value}"
                 )
                 continue
+            role = self.tool_registry.role(call.name)
+            if role in {ToolRole.CREATE, ToolRole.MODIFY}:
+                self._normalize_profile_arguments(call)
             problems.extend(
                 self.tool_registry.validate_required(call.name, call.arguments)
             )
-            role = self.tool_registry.role(call.name)
             problems.extend(self._operation_journal().validate(role.value))
             recovery = self.tool_errors.recover(
                 call.name, call.arguments, role
@@ -691,12 +708,14 @@ class ADAPTAgent(PersonalizationAgent):
                         "After two identical searches, decide from the Candidate Ledger or ask one focused question.",
                     )
             if self.enable_candidate_validation:
+                tool_meta = self.tool_registry.meta.get(call.name)
                 problems.extend(
                     self.ledger.validate_write(
                         call.name,
                         call.arguments,
                         self.decision_card,
                         self.user_profile,
+                        tool_meta,
                     )
                 )
                 if role == ToolRole.CREATE:
@@ -705,10 +724,13 @@ class ADAPTAgent(PersonalizationAgent):
                             call.arguments,
                             self.decision_card,
                             self.runtime.selected_candidate_id,
+                            tool_meta.id_arguments if tool_meta else None,
                         )
                     )
                     coverage_gap = self.ledger.preference_coverage_gap(
-                        call.arguments, self.decision_card
+                        call.arguments,
+                        self.decision_card,
+                        tool_meta.id_arguments if tool_meta else None,
                     )
                     if coverage_gap:
                         self._record_lesson(
@@ -752,6 +774,36 @@ class ADAPTAgent(PersonalizationAgent):
                     "text claims or promises execution but contains no WRITE tool call"
                 )
         return list(dict.fromkeys(problems))
+
+    def _normalize_profile_arguments(self, call: ToolCall) -> None:
+        """Bind account aliases to exact WRITE arguments deterministically."""
+        address_keys = ("address", "delivery_address", "location")
+        for constraint in self.decision_card.constraints:
+            if (
+                constraint.target != ConstraintTarget.ARGUMENT
+                or constraint.operator != ConstraintOperator.RESOLVES_PROFILE
+            ):
+                continue
+            expected = resolve_profile_address(
+                self.user_profile, constraint.value
+            )
+            if not expected:
+                continue
+            key = next(
+                (name for name in address_keys if name in call.arguments),
+                constraint.argument_name or "address",
+            )
+            previous = call.arguments.get(key)
+            if previous == expected:
+                continue
+            call.arguments[key] = expected
+            self.debug.emit(
+                "profile_argument_bound",
+                tool=call.name,
+                argument=key,
+                alias=constraint.value,
+                replaced=bool(previous),
+            )
 
     def _normalize_search_call(self, call: ToolCall) -> None:
         """Normalize only schema shape; never rewrite task semantics."""
@@ -989,6 +1041,16 @@ class ADAPTAgent(PersonalizationAgent):
             default_gap(dimension, "task_spec")
             for dimension in self.runtime.critical_gaps()
         ]
+        if self.task_spec.action == "commit":
+            registry = getattr(self, "tool_registry", None)
+            for meta in (registry.meta.values() if registry else ()):
+                if meta.role != ToolRole.CREATE:
+                    continue
+                gaps.extend(
+                    InformationGap(argument, question, "tool_schema")
+                    for argument, question in meta.question_arguments.items()
+                    if argument in meta.required_arguments
+                )
         unique: dict[str, InformationGap] = {}
         for gap in gaps:
             unique.setdefault(gap.dimension, gap)

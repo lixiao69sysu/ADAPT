@@ -27,6 +27,27 @@ class ToolMeta:
     required_arguments: set[str] = field(default_factory=set)
     id_arguments: dict[str, str] = field(default_factory=dict)
     state_effect: str = ""
+    observation_schema: "ObservationSchema | None" = None
+    question_arguments: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ObservationSchema:
+    """Role annotations for one candidate object in a tool result.
+
+    Field names are deliberately opaque. The result JSON Schema declares
+    their roles through ``x-adapt-role`` and the candidate node declares its
+    entity type through ``x-adapt-entity``.
+    """
+
+    entity_type: str
+    id_field: str
+    name_field: str = ""
+    inventory_field: str = ""
+    price_field: str = ""
+    parent_fields: tuple[str, ...] = ()
+    attribute_fields: tuple[str, ...] = ()
+    constraint_fields: tuple[str, ...] = ()
 
 
 class ToolRegistry:
@@ -40,7 +61,11 @@ class ToolRegistry:
 
     def _inspect(self, tool: Any) -> ToolMeta:
         name = tool.name
-        if name.startswith("pay_"):
+        info = getattr(tool, "info", {}) or {}
+        declared_role = str(info.get("adapt_role", "")).casefold()
+        if declared_role in {role.value for role in ToolRole}:
+            role = ToolRole(declared_role)
+        elif name.startswith("pay_"):
             role = ToolRole.PAY
         elif name.startswith("create_") or name in {
             "instore_book",
@@ -63,20 +88,47 @@ class ToolRegistry:
             role = ToolRole.READ
         required: set[str] = set()
         id_arguments: dict[str, str] = {}
+        question_arguments: dict[str, str] = {}
         try:
             schema = tool.params.model_json_schema()
             required = set(schema.get("required", []))
-            for key in schema.get("properties", {}):
-                if key.endswith(("_id", "_ids")):
+            for key, property_schema in schema.get("properties", {}).items():
+                declared_entity = str(property_schema.get("x-adapt-entity", ""))
+                declared_argument_role = str(
+                    property_schema.get("x-adapt-role", "")
+                )
+                if declared_entity:
+                    id_arguments[key] = declared_entity
+                elif declared_argument_role == "user_id":
+                    id_arguments[key] = "user"
+                elif key.endswith(("_id", "_ids")):
                     id_arguments[key] = key.removesuffix("_ids").removesuffix("_id")
+                if property_schema.get("x-adapt-question"):
+                    question_arguments[key] = str(
+                        property_schema.get("x-adapt-question-text")
+                        or f"请补充{key}。"
+                    )
         except (AttributeError, TypeError, ValueError):
             pass
+        observation_schema = _observation_schema(tool)
         effect = (
             "unpaid_order"
             if role == ToolRole.CREATE
             else ("paid_order" if role == ToolRole.PAY else "")
         )
-        return ToolMeta(name, role, required, id_arguments, effect)
+        return ToolMeta(
+            name,
+            role,
+            required,
+            id_arguments,
+            effect,
+            observation_schema,
+            question_arguments,
+        )
+
+    def result_schema(self, name: str) -> ObservationSchema | None:
+        meta = self.meta.get(name)
+        return meta.observation_schema if meta else None
 
     def role(self, name: str) -> ToolRole:
         return self.meta.get(name, ToolMeta(name, ToolRole.READ)).role
@@ -89,6 +141,13 @@ class ToolRegistry:
         runtime their category names.
         """
         names = {name.casefold() for name in self.meta}
+        declared = {
+            str((getattr(tool, "info", {}) or {}).get("adapt_domain", ""))
+            for tool in self.tools
+        }
+        declared.discard("")
+        if len(declared) == 1:
+            return next(iter(declared))
         if any("instore" in name for name in names):
             return "instore"
         if any(
@@ -129,7 +188,7 @@ class ToolRegistry:
             required_id_types = {
                 semantic_types.get(kind, kind)
                 for argument, kind in meta.id_arguments.items()
-                if argument in meta.required_arguments and argument != "user_id"
+                if argument in meta.required_arguments and kind != "user"
             }
             if required_id_types and required_id_types.issubset(observed_types):
                 if "hotel" in meta.name:
@@ -211,3 +270,48 @@ class ToolRegistry:
             or arguments.get(key) == ""
             or arguments.get(key) == []
         ]
+
+
+def _observation_schema(tool: Any) -> ObservationSchema | None:
+    try:
+        schema = tool.returns.model_json_schema()
+    except (AttributeError, TypeError, ValueError):
+        return None
+    candidate_schema = _find_candidate_schema(schema)
+    if candidate_schema is None:
+        return None
+    entity_type = str(candidate_schema.get("x-adapt-entity", "")).strip()
+    roles: dict[str, list[str]] = {}
+    constraint_fields: list[str] = []
+    for field_name, field_schema in candidate_schema.get("properties", {}).items():
+        role = str(field_schema.get("x-adapt-role", "")).strip()
+        if role:
+            roles.setdefault(role, []).append(field_name)
+        if field_schema.get("x-adapt-constraint"):
+            constraint_fields.append(field_name)
+    if not entity_type or not roles.get("id"):
+        return None
+    return ObservationSchema(
+        entity_type=entity_type,
+        id_field=roles["id"][0],
+        name_field=(roles.get("name") or [""])[0],
+        inventory_field=(roles.get("inventory") or [""])[0],
+        price_field=(roles.get("price") or [""])[0],
+        parent_fields=tuple(roles.get("parent_id", [])),
+        attribute_fields=tuple(roles.get("attribute", [])),
+        constraint_fields=tuple(constraint_fields),
+    )
+
+
+def _find_candidate_schema(node: Any) -> dict[str, Any] | None:
+    if not isinstance(node, dict):
+        return None
+    if node.get("x-adapt-entity"):
+        return node
+    for child in node.values():
+        values = child if isinstance(child, list) else [child]
+        for value in values:
+            found = _find_candidate_schema(value)
+            if found is not None:
+                return found
+    return None

@@ -503,6 +503,31 @@
 
 ---
 
+## E-031：候选决策依赖封闭品类词表，未见 schema 无法复用执行不变量
+
+- **日期**：2026-08-24
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-INVARIANT`。字段角色、候选身份、父子关系和硬约束均由工具 schema 声明；实现和测试不包含 VitaBench 用户、商品、商家或目标 ID。
+- **难点**：TaskSpec、CandidateRanker 和 WRITE preflight 曾分别维护商品品类、规格、小料、口味和服务词表。同一约束在未见实体或字段改名后会消失，而候选的近似字段又可能被错误提升为全局硬约束。
+- **已实现方案**：`ToolMeta` 从工具输入/输出 schema 建立 entity、ID、name、inventory、price、parent、attribute 和 question roles；只有显式 `x-adapt-constraint` 字段能成为 WRITE 硬约束。CandidateLedger 按 schema 解析任意嵌套记录、任意 ID 字段和父子关系；TaskSpec 不再枚举商品类别/规格；排序只消费当前候选诱导的可观察属性；WRITE 校验只接受本子任务账本中的 ID，并按 schema 类型和父子关系校验。OperationJournal、授权、库存、重复搜索和支付状态等硬不变量保留。
+- **关键反例**：未声明为硬字段的候选属性只能参与排序，不能把不同候选的两个值提升成不可满足的合取；父实体 ID 不能冒充叶候选；选中的子实体必须属于同时提交的父实体；显式 schema 硬字段仍会拒绝错误值。
+- **跨结构验证**：虚构 `nebula.echoes[] -> relic` schema 使用不透明字段和单 ID；虚构根数组 `glyph` schema 使用另一组不透明字段、复数 ID 和显式硬字段。两套结构均验证观察、排序、WRITE、非候选 ID、错误父子关系和 schema hard constraint，且不依赖领域词汇。
+- **验证**：完整 `agent/tests` 为 `219 passed`，`python -m compileall -q agent` 通过，`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。静态改动移除了候选决策层的品类、规格和配方表；memory extraction 中保留的 facet marker 仅用于历史召回元数据，不再直接决定候选或 WRITE。
+- **适用边界**：schema 没声明的语义同义关系仍不能确定性推导；schema-driven 解决结构迁移，不等同于开放世界语义分类。真实模型 smoke 的这类缺口见 E-032。
+- **能力抽象**：preference-to-candidate grounding / candidate-to-action execution / long-horizon consistency。
+
+## E-032：开放世界结构迁移通过，但需求文本到候选语义仍可能失配
+
+- **日期**：2026-08-24
+- **状态**：OPEN
+- **通用性判定**：`UNRESOLVED`。一个完整开发用户 smoke 已复现多个能力类失败，但尚不足以选择安全的静态修改；本条只记录，不增加品类或用户规则。
+- **证据**：`data/simulations/adapt_schema_runtime_smoke_U010122.json` 与 `data/traces/adapt_schema_runtime_smoke_U010122.jsonl`。1 个用户、10 个子任务、106 条对话消息；6 次 `create_delivery_order` 成功，环境工具错误为 0，10 个子任务 reward 均为 0。运行只使用正常 task、user、environment 和 evaluator 接口，未读取 rubric、target/distraction 或 target product。
+- **已分离的通用失败类**：推荐任务在用户接受候选后重复输出 shortlist，缺少 recommendation completion transition；6 个 CREATE 均进入 unpaid 后询问支付，未形成端到端完成闭环；火车和酒店父子候选展开消耗有限 step budget；条件到店任务在工具族间路由错误；酒店模型连续选择 24 日房型时，`23号` 写前校验正确拒绝三次；“买衣服”最终选择运动鞋，说明 schema 正确并不保证需求词面/语义与候选一致。
+- **排除的误诊**：`23号` 与 ISO `YYYY-MM-23` 的等价校验已有虚构回归并可直接通过；该 trace 的拒绝是选错候选日期，不是日期格式 bug，不能通过放宽校验修复。
+- **当前结论**：本轮证明新架构能跨结构解析并稳定执行多次 CREATE，也证明 0 分的主导瓶颈已从“候选字段/ID 解析”迁移到 completion、authorization、hierarchical exploration 和 semantic grounding。不能把 6 次 CREATE 描述为指标提升，也不能用单用户 0 分否定 schema 不变量测试。
+- **下一步**：为“需求到候选”构造不含真实品类的语义正反例，比较受约束 policy selector 与纯词面 anchor；必须同时测试短词、同义表达、替代需求和错误高分候选。只有跨至少两个虚构工具形态成立，才接入 runtime。支付授权继续按 E-023 独立评估，不因 benchmark STOP 放宽安全边界。
+- **能力抽象**：preference-to-candidate grounding / candidate-to-action execution / proactiveness calibration。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。
