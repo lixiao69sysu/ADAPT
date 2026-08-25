@@ -50,6 +50,7 @@ from agent.runtime import (
     RuntimePhase,
     RuntimePolicyAdapter,
     RuntimePolicyStore,
+    SchemaQuestionPlanner,
     TaskRuntime,
     ToolErrorLedger,
     ToolEffect,
@@ -159,11 +160,24 @@ class ADAPTAgent(PersonalizationAgent):
 
     def _candidate_decision(self, registry: ToolRegistry | None = None):
         active_registry = registry or self.tool_registry
+        fixed_arguments: dict[str, dict[str, object]] = {}
+        for name, contract in active_registry.contracts.items():
+            if contract.role != "create":
+                continue
+            resolved = {
+                argument.name: self.runtime.resolved_slots[argument.name]
+                for argument in contract.arguments
+                if argument.name in self.runtime.resolved_slots
+            }
+            if resolved:
+                fixed_arguments[name] = resolved
         return active_registry.candidate_decision(
             self.ledger,
             self.decision_card,
             runtime=self.runtime,
             instruction_epoch=getattr(self, "_instruction_epoch", 0),
+            fixed_arguments=fixed_arguments,
+            profile=getattr(self, "user_profile", {}),
         )
 
     def set_current_instruction(self, instruction: str):
@@ -589,7 +603,13 @@ class ADAPTAgent(PersonalizationAgent):
                     asked=self.runtime.asked_dimensions,
                 )
                 if gap is not None:
-                    self.runtime.commit_question(gap.dimension)
+                    self.runtime.commit_question(
+                        gap.argument_name or gap.dimension,
+                        question_id=gap.question_id,
+                        tool_family=gap.tool_family,
+                        expected_type=gap.expected_type,
+                        persist_as_preference=gap.persist_as_preference,
+                    )
                     self.memory.commit_question(message.content or gap.question)
                     self.debug.emit(
                         "question_committed",
@@ -829,6 +849,10 @@ class ADAPTAgent(PersonalizationAgent):
             elif isinstance(item, UserMessage):
                 text = item.content or ""
                 pending_dimension = self.runtime.pending_question_dimension
+                pending_question_id = self.runtime.pending_question_id
+                pending_persist_as_preference = (
+                    self.runtime.pending_question_persist_as_preference
+                )
                 was_ready_to_pay = self.runtime.phase == RuntimePhase.READY_TO_PAY
                 was_done = self.runtime.phase == RuntimePhase.DONE
                 self.runtime.observe_user(text)
@@ -867,6 +891,10 @@ class ADAPTAgent(PersonalizationAgent):
                 if (
                     self.memory.proactive.pending_question
                     and resolved_answer != "__delegated__"
+                    and (
+                        not pending_question_id
+                        or pending_persist_as_preference
+                    )
                 ):
                     self.memory.record_user_answer(
                         resolved_answer, dimension=pending_dimension
@@ -1309,13 +1337,12 @@ class ADAPTAgent(PersonalizationAgent):
         ]
         if self.task_spec.action == "commit":
             registry = getattr(self, "tool_registry", None)
-            for meta in (registry.meta.values() if registry else ()):
-                if meta.role != ToolRole.CREATE:
-                    continue
+            if registry is not None:
                 gaps.extend(
-                    InformationGap(argument, question, "tool_schema")
-                    for argument, question in meta.question_arguments.items()
-                    if argument in meta.required_arguments
+                    question.as_gap()
+                    for question in SchemaQuestionPlanner.questions(
+                        registry.contracts
+                    )
                 )
         unique: dict[str, InformationGap] = {}
         for gap in gaps:

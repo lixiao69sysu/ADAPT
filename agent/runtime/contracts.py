@@ -23,6 +23,16 @@ class IdVariable:
 
 
 @dataclass(frozen=True)
+class ArgumentContract:
+    name: str
+    required: bool
+    json_type: str = ""
+    source_hint: str = ""
+    question: str = ""
+    persist_as_preference: bool = False
+
+
+@dataclass(frozen=True)
 class ToolContract:
     """Schema-derived execution contract for one visible tool."""
 
@@ -33,6 +43,7 @@ class ToolContract:
     question_arguments: tuple[tuple[str, str], ...] = ()
     observation_entity: str = ""
     state_effect: str = ""
+    arguments: tuple[ArgumentContract, ...] = ()
 
     @property
     def required_id_variables(self) -> tuple[IdVariable, ...]:
@@ -103,5 +114,23 @@ class ToolContractCompiler:
                     getattr(observation, "entity_type", "") or ""
                 ),
                 state_effect=str(getattr(meta, "state_effect", "") or ""),
+                arguments=tuple(
+                    ArgumentContract(
+                        name=argument,
+                        required=argument in required,
+                        json_type=str(schema.get("type", "") or ""),
+                        source_hint=str(schema.get("x-adapt-source", "") or ""),
+                        question=str(
+                            schema.get("x-adapt-question-text", "")
+                            or getattr(meta, "question_arguments", {}).get(argument, "")
+                        ),
+                        persist_as_preference=bool(
+                            schema.get("x-adapt-persist-preference", False)
+                        ),
+                    )
+                    for argument, schema in sorted(
+                        getattr(meta, "argument_schemas", {}).items()
+                    )
+                ),
             )
         return contracts

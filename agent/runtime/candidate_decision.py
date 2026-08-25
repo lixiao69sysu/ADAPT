@@ -59,11 +59,13 @@ class CandidateDecisionEngine:
         runtime: Any | None = None,
         instruction_epoch: int = 0,
         fixed_arguments: dict[str, dict[str, Any]] | None = None,
+        profile: dict[str, Any] | None = None,
     ) -> CandidateDecision:
         graph = CandidateBindingGraph.from_ledger(
             ledger, epoch=instruction_epoch
         )
         fixed_by_tool = fixed_arguments or {}
+        profile_values = profile or {}
         raw_bindings: list[CandidateBinding] = []
         missing: set[str] = set()
         all_candidates = list(ledger.structural_leaf_candidates())
@@ -75,40 +77,68 @@ class CandidateDecisionEngine:
             candidate.candidate_id: index
             for index, candidate in enumerate(ranked_candidates)
         }
-        preference_scores = ranker.preference_scores(all_candidates, card)
+        score_components = ranker.score_candidates(all_candidates, card)
 
         for name, contract in sorted(self.registry.contracts.items()):
             if contract.role != "create":
                 continue
-            fixed = fixed_by_tool.get(name, {})
-            for argument in contract.required_arguments:
-                if argument in contract.id_arguments or argument in fixed:
+            fixed = dict(fixed_by_tool.get(name, {}))
+            from agent.runtime.information import (
+                InformationSource,
+                SchemaQuestionPlanner,
+            )
+
+            for argument in contract.arguments:
+                source = SchemaQuestionPlanner.classify(contract, argument)
+                if argument.name in fixed:
                     continue
-                if argument in dict(contract.question_arguments):
-                    missing.add(argument)
+                if source == InformationSource.PROFILE_RESOLVABLE:
+                    user_value = profile_values.get("user_id")
+                    if user_value not in (None, ""):
+                        fixed[argument.name] = user_value
+                elif source == InformationSource.USER_REQUIRED:
+                    missing.add(argument.name)
             meta = self.registry.meta.get(name)
             for bound in graph.enumerate_bindings(
                 contract, fixed_arguments=fixed
             ):
                 arguments = bound.as_dict()
                 failures = tuple(
-                    ledger.validate_write(
+                    failure
+                    for failure in ledger.validate_write(
                         name,
                         arguments,
                         card,
+                        profile=profile_values,
                         tool_meta=meta,
+                    )
+                    # Candidate admissibility is not final call validation.
+                    # Non-ID action values may be bound when the proposal is
+                    # prepared; _preflight still rejects an emitted WRITE
+                    # when any required value is actually absent.
+                    if not any(
+                        failure == f"missing required argument: {argument.name}"
+                        and argument.name not in contract.id_arguments
+                        for argument in contract.arguments
                     )
                 )
                 leaf_rank = min(
                     (rank_index.get(candidate_id, 10**6) for candidate_id in bound.leaf_ids),
                     default=10**6,
                 )
-                preference = max(
+                component = max(
                     (
-                        preference_scores.get(candidate_id, 0.0)
+                        score_components[candidate_id]
                         for candidate_id in bound.leaf_ids
+                        if candidate_id in score_components
                     ),
-                    default=0.0,
+                    key=lambda score: (
+                        score.task_relevance_band,
+                        score.task_relevance,
+                        score.session_correction,
+                        score.historical_preference,
+                    ),
+                    default=None,
                 )
                 raw_bindings.append(
                     CandidateBinding(
@@ -117,8 +147,23 @@ class CandidateDecisionEngine:
                         leaf_ids=bound.leaf_ids,
                         parent_ids=bound.parent_ids,
                         hard_failures=failures,
-                        task_score=float(-leaf_rank),
-                        preference_score=float(preference),
+                        task_score=(
+                            float(
+                                component.task_relevance_band * 1000
+                                + component.task_relevance
+                                - leaf_rank * 1e-6
+                            )
+                            if component is not None
+                            else float(-leaf_rank)
+                        ),
+                        preference_score=(
+                            float(
+                                component.session_correction * 100
+                                + component.historical_preference
+                            )
+                            if component is not None
+                            else 0.0
+                        ),
                         provenance=bound.provenance,
                     )
                 )

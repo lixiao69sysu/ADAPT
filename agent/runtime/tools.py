@@ -33,6 +33,7 @@ class ToolMeta:
     state_effect: str = ""
     observation_schema: "ObservationSchema | None" = None
     question_arguments: dict[str, str] = field(default_factory=dict)
+    argument_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -75,10 +76,12 @@ class ToolRegistry:
         id_arguments: dict[str, str] = {}
         question_arguments: dict[str, str] = {}
         argument_text: list[str] = []
+        argument_schemas: dict[str, dict[str, Any]] = {}
         try:
             schema = tool.params.model_json_schema()
             required = set(schema.get("required", []))
             for key, property_schema in schema.get("properties", {}).items():
+                argument_schemas[key] = dict(property_schema)
                 declared_entity = str(property_schema.get("x-adapt-entity", ""))
                 declared_argument_role = str(property_schema.get("x-adapt-role", ""))
                 if declared_entity:
@@ -140,6 +143,7 @@ class ToolRegistry:
             effect,
             observation_schema,
             question_arguments,
+            argument_schemas,
         )
 
     def result_schema(self, name: str) -> ObservationSchema | None:
@@ -203,6 +207,7 @@ class ToolRegistry:
         runtime=None,
         instruction_epoch: int = 0,
         fixed_arguments: dict[str, dict[str, Any]] | None = None,
+        profile: dict[str, Any] | None = None,
     ):
         from agent.decision import DecisionCard
         from agent.runtime.candidate_decision import CandidateDecisionEngine
@@ -218,6 +223,7 @@ class ToolRegistry:
             runtime=runtime,
             instruction_epoch=instruction_epoch,
             fixed_arguments=fixed_arguments,
+            profile=profile,
         )
 
     def candidate_entity_types(self, ledger: CandidateLedger) -> set[str]:

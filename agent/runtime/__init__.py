@@ -8,7 +8,12 @@ from agent.runtime.candidate_decision import (
     CandidateDecisionEngine,
     EnrichmentRequest,
 )
-from agent.runtime.contracts import IdVariable, ToolContract, ToolContractCompiler
+from agent.runtime.contracts import (
+    ArgumentContract,
+    IdVariable,
+    ToolContract,
+    ToolContractCompiler,
+)
 from agent.runtime.evolution import (
     CapabilityTarget,
     CompiledRuntimePolicy,
@@ -20,6 +25,9 @@ from agent.runtime.question_gate import QuestionDecision, QuestionGate
 from agent.runtime.information import (
     InformationGap,
     InformationGapContract,
+    InformationSource,
+    PendingQuestion,
+    SchemaQuestionPlanner,
     default_gap,
 )
 from agent.runtime.operations import OperationJournal, OperationRecord
@@ -39,6 +47,7 @@ from agent.runtime.tools import ToolRegistry, ToolRole
 __all__ = [
     "AuthorizationState",
     "ActionTransaction",
+    "ArgumentContract",
     "BindingNode",
     "BoundArguments",
     "CandidateBindingGraph",
@@ -58,15 +67,18 @@ __all__ = [
     "InformationGap",
     "EnrichmentRequest",
     "InformationGapContract",
+    "InformationSource",
     "IdVariable",
     "default_gap",
     "OperationJournal",
+    "PendingQuestion",
     "OperationRecord",
     "ParameterRecovery",
     "RuntimePhase",
     "RuntimePolicyAdapter",
     "RuntimePolicyRule",
     "RuntimePolicyStore",
+    "SchemaQuestionPlanner",
     "TaskRuntime",
     "ToolRegistry",
     "ToolContract",

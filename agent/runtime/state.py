@@ -84,6 +84,10 @@ class TaskRuntime:
     resolved_slots: dict[str, str] = field(default_factory=dict)
     asked_dimensions: set[str] = field(default_factory=set)
     pending_question_dimension: str = ""
+    pending_question_id: str = ""
+    pending_question_tool_family: str = ""
+    pending_question_expected_type: str = ""
+    pending_question_persist_as_preference: bool = False
     selected_candidate_id: str = ""
     selection_made: bool = False
     validation_failures: int = 0
@@ -155,6 +159,10 @@ class TaskRuntime:
             self._record_slot_answer(self.pending_question_dimension, content)
             self.asked_dimensions.add(self.pending_question_dimension)
             self.pending_question_dimension = ""
+            self.pending_question_id = ""
+            self.pending_question_tool_family = ""
+            self.pending_question_expected_type = ""
+            self.pending_question_persist_as_preference = False
         can_revise = self.phase == RuntimePhase.READY_TO_PAY or (
             self.phase == RuntimePhase.DONE and not self.write_succeeded
         )
@@ -193,6 +201,22 @@ class TaskRuntime:
         )
 
     def _record_slot_answer(self, dimension: str, text: str) -> None:
+        if self.pending_question_id:
+            value = text.strip()[:160]
+            if self.pending_question_expected_type in {"integer", "number"}:
+                match = re.search(r"-?\d+(?:\.\d+)?", text)
+                if match:
+                    value = match.group(0)
+            if any(marker in text for marker in _DELEGATION_MARKERS):
+                value = "__delegated__"
+            self.resolved_slots[dimension] = value
+            self.record(
+                "question_answer_bound",
+                question_id=self.pending_question_id,
+                tool_family=self.pending_question_tool_family,
+                argument=dimension,
+            )
+            return
         if dimension == "size":
             match = _SIZE_RE.search(text)
             if match:
@@ -251,8 +275,20 @@ class TaskRuntime:
                 return dimension
         return ""
 
-    def commit_question(self, dimension: str) -> None:
+    def commit_question(
+        self,
+        dimension: str,
+        *,
+        question_id: str = "",
+        tool_family: str = "",
+        expected_type: str = "",
+        persist_as_preference: bool = False,
+    ) -> None:
         self.pending_question_dimension = dimension
+        self.pending_question_id = question_id
+        self.pending_question_tool_family = tool_family
+        self.pending_question_expected_type = expected_type
+        self.pending_question_persist_as_preference = persist_as_preference
         self.asked_dimensions.add(dimension)
         self.phase = RuntimePhase.NEED_INFO
         self.record("question", dimension=dimension)

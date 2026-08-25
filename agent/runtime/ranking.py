@@ -3,9 +3,21 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from agent.runtime.alignment import EvidenceAlignment
+from agent.runtime.grounding import TaskRelevanceMatrix
+
+
+@dataclass(frozen=True)
+class CandidateScore:
+    task_relevance_band: int
+    task_relevance: float
+    session_correction: float
+    historical_preference: float
+    availability: int
+    stable_key: int
 
 
 class CandidateRanker:
@@ -18,9 +30,85 @@ class CandidateRanker:
             if hasattr(card, "alignment_source_records")
             else getattr(card, "prefer", [])
         )
-        return EvidenceAlignment(
-            candidates, sources, _preference_matches
+        return EvidenceAlignment(candidates, sources, _preference_matches)
+
+    @classmethod
+    def has_reliable_task_grounding(
+        cls, candidates: list[Any], card: Any
+    ) -> bool:
+        """Whether live candidates ground an entity requested in this task."""
+        if not candidates:
+            return False
+        instruction = " ".join(getattr(card, "task_intent", ()) or ())
+        matrix = TaskRelevanceMatrix(instruction, candidates)
+        return matrix.reliable_grounding or matrix.single_structural_family
+
+    @classmethod
+    def score_candidates(
+        cls, candidates: list[Any], card: Any
+    ) -> dict[str, CandidateScore]:
+        instruction = " ".join(getattr(card, "task_intent", ()) or ())
+        relevance = TaskRelevanceMatrix(instruction, candidates)
+        sources = (
+            card.alignment_source_records()
+            if hasattr(card, "alignment_source_records")
+            else getattr(card, "prefer", [])
         )
+        session_sources = [
+            source
+            for source in sources
+            if isinstance(source, (tuple, list))
+            and len(source) > 4
+            and any(
+                marker in str(source[4])
+                for marker in ("current_user_answer", "user_correction")
+            )
+        ]
+        session_alignment = EvidenceAlignment(
+            candidates, session_sources, _preference_matches
+        )
+        historical_sources = [
+            source
+            for source in sources
+            if not (
+                isinstance(source, (tuple, list))
+                and len(source) > 4
+                and any(
+                    marker in str(source[4])
+                    for marker in (
+                        "current_instruction",
+                        "current_user_answer",
+                        "user_correction",
+                    )
+                )
+            )
+        ]
+        historical_alignment = EvidenceAlignment(
+            candidates, historical_sources, _preference_matches
+        )
+        allow_historical = (
+            relevance.reliable_grounding or relevance.single_structural_family
+        )
+        scores: dict[str, CandidateScore] = {}
+        for index, candidate in enumerate(candidates):
+            row = relevance.row(candidate)
+            historical = (
+                historical_alignment.score(candidate)
+                if allow_historical or row.band == 2
+                else 0.0
+            )
+            scores[str(candidate.candidate_id)] = CandidateScore(
+                task_relevance_band=row.band,
+                task_relevance=row.score,
+                session_correction=session_alignment.score(candidate),
+                historical_preference=historical,
+                availability=(1 if candidate.inventory is None or candidate.inventory > 0 else 0),
+                # Preserve the environment's observed order as the final
+                # value-agnostic tie break. Concrete ID spelling must not
+                # decide between otherwise equivalent candidates.
+                stable_key=len(candidates) - index,
+            )
+        return scores
 
     @classmethod
     def preference_match_count(
@@ -60,30 +148,16 @@ class CandidateRanker:
         }
 
     def rank(self, candidates: list[Any], card: Any, limit: int = 5) -> list[Any]:
-        alignment = self.preference_alignment(candidates, card)
+        score_by_id = self.score_candidates(candidates, card)
         constraints = [
             constraint
             for constraint in getattr(card, "constraints", [])
             if getattr(getattr(constraint, "target", None), "value", "candidate")
             == "candidate"
         ]
-        scored: list[tuple[float, int, float, Any]] = []
-        has_groundable_identity = any(
-            getattr(constraint, "kind", "") == "entity"
-            and constraint.value
-            and any(
-                _hard_constraint_matches(constraint.value, candidate.raw, candidate)
-                for candidate in candidates
-            )
-            for constraint in constraints
-        )
-        task_identity = (
-            None if has_groundable_identity else alignment.task_identity_atom()
-        )
+        scored: list[tuple[Any, ...]] = []
         for candidate in candidates:
             raw = candidate.raw or ""
-            if not alignment.satisfies_task_identity(candidate, task_identity):
-                continue
             if _strong_preference_conflict(raw, getattr(card, "prefer", [])):
                 continue
             required = [
@@ -110,33 +184,20 @@ class CandidateRanker:
             )
             if excluded or candidate.inventory == 0:
                 continue
-            hard_matches = sum(
-                1
-                for constraint in constraints
-                if getattr(getattr(constraint, "operator", None), "value", "")
-                != "excludes"
-                and constraint.value
-                and _hard_constraint_matches(constraint.value, raw, candidate)
-            )
-            preference_matches = alignment.score(candidate)
-            exact_preference_matches = sum(
-                1
-                for value in getattr(card, "prefer", [])
-                if value and value in raw
-            )
-            # Exact evidence breaks a tie while candidate-induced semantic
-            # matches still dominate presentation fields such as price.
-            score = (
-                hard_matches * 5.0
-                + preference_matches
-                + exact_preference_matches * 0.25
-            )
-            if candidate.inventory is not None and candidate.inventory > 0:
-                score += 0.5
+            score = score_by_id[str(candidate.candidate_id)]
             scored.append(
-                (score, candidate.observed_turn, -(candidate.price or 0), candidate)
+                (
+                    score.task_relevance_band,
+                    score.task_relevance,
+                    score.session_correction,
+                    score.historical_preference,
+                    score.availability,
+                    -(candidate.price or 0),
+                    score.stable_key,
+                    candidate,
+                )
             )
-        scored.sort(key=lambda item: item[:3], reverse=True)
+        scored.sort(key=lambda item: item[:-1], reverse=True)
         return [item[-1] for item in scored[:limit]]
 
 

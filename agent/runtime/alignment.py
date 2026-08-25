@@ -127,7 +127,7 @@ class CandidateAttributeMap:
             if observed == target or (
                 len(target) >= 2 and observed.startswith(target)
             ) or (
-                len(target) >= 3 and target in observed
+                len(target) >= 2 and target in observed
             ):
                 return True
         return False
@@ -251,7 +251,7 @@ class EvidenceAlignment:
             # does not introduce a domain synonym table.
             if not matched_any and len(normalized) >= 2:
                 prefix_matches = [
-                    value for value in ordered_values if value.startswith(normalized)
+                    value for value in ordered_values if normalized in value
                 ]
                 for match in prefix_matches:
                     key, _source, _observed_value = vocabulary[match]
