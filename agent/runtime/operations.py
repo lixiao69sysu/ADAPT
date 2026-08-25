@@ -18,10 +18,11 @@ class OperationRecord:
     tool_name: str
     signature: str
     succeeded: bool = False
+    failed: bool = False
 
 
 class OperationJournal:
-    """Guarantee at most one successful CREATE in one user-intent epoch.
+    """Guarantee at-most-once effects in one user-intent epoch.
 
     Failed proposals remain retryable with corrected arguments.  A new epoch
     must be opened explicitly by a later user transaction/revision; ordinary
@@ -51,12 +52,30 @@ class OperationJournal:
             for record in self._records
         )
 
-    def validate(self, role: str) -> list[str]:
-        if role == "create" and self.successful("create"):
+    def validate(
+        self,
+        role: str,
+        tool_name: str = "",
+        arguments: dict[str, Any] | None = None,
+    ) -> list[str]:
+        irreversible = {"create", "pay", "cancel", "modify"}
+        if role in irreversible and self.successful(role):
             return [
-                "CREATE already succeeded for the current user-intent epoch; "
-                "do not create a duplicate order"
+                f"{role.upper()} already succeeded for the current user-intent epoch; "
+                "do not repeat the irreversible effect"
             ]
+        if role in irreversible and tool_name and arguments is not None:
+            signature = _signature(tool_name, arguments)
+            if any(
+                record.epoch == self.epoch
+                and record.role == role
+                and record.signature == signature
+                and record.failed
+                for record in self._records
+            ):
+                return [
+                    f"identical failed {role.upper()} call must be corrected before retry"
+                ]
         return []
 
     def register(
@@ -92,7 +111,18 @@ class OperationJournal:
                 ),
                 None,
             )
-        if record is None or error:
+        if record is None:
+            return
+        if error:
+            updated = OperationRecord(
+                record.epoch,
+                role or record.role,
+                record.tool_name,
+                record.signature,
+                succeeded=False,
+                failed=True,
+            )
+            self._records[self._records.index(record)] = updated
             return
         updated = OperationRecord(
             record.epoch,
@@ -100,6 +130,7 @@ class OperationJournal:
             record.tool_name,
             record.signature,
             succeeded=True,
+            failed=False,
         )
         self._records[self._records.index(record)] = updated
 

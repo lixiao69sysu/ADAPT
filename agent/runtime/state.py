@@ -319,27 +319,45 @@ class TaskRuntime:
     def observe_tool_result(
         self, tool_name: str, content: str, error: bool = False, role: str = ""
     ) -> None:
-        text = content or ""
-        if error:
-            self.last_tool_error = text[:240]
-            self.record("tool_error", tool=tool_name, content=text[:200])
+        from agent.runtime.outcomes import ToolOutcomeNormalizer
+
+        outcome = ToolOutcomeNormalizer.normalize(
+            tool_name=tool_name,
+            tool_role=role,
+            content=content,
+            error=error,
+        )
+        self.observe_tool_outcome(tool_name, outcome, raw_error=str(content or ""))
+
+    def observe_tool_outcome(self, tool_name: str, outcome, *, raw_error: str = "") -> None:
+        from agent.runtime.outcomes import ToolEffect
+
+        if not outcome.ok:
+            self.last_tool_error = raw_error[:240]
+            self.record("tool_error", tool=tool_name, content=raw_error[:200])
             return
-        if role == "create" or tool_name.startswith("create_") or tool_name in {
-            "instore_book",
-            "instore_reservation",
-        }:
+        if outcome.effect in {ToolEffect.CREATED, ToolEffect.CREATED_PENDING_PAYMENT}:
             self.revision_requested = False
             self.write_succeeded = True
             self.phase = (
-                RuntimePhase.READY_TO_PAY if ("unpaid" in text) else RuntimePhase.DONE
+                RuntimePhase.READY_TO_PAY
+                if outcome.effect == ToolEffect.CREATED_PENDING_PAYMENT
+                else RuntimePhase.DONE
             )
             self.payment_question_sent = False
-        elif (role == "pay" or tool_name.startswith("pay_")) and (
-            "successful" in text.lower() or "成功" in text
-        ):
+        elif outcome.effect in {
+            ToolEffect.PAID,
+            ToolEffect.CANCELLED,
+            ToolEffect.MODIFIED,
+        }:
             self.write_succeeded = True
             self.phase = RuntimePhase.DONE
-        self.record("tool_result", tool=tool_name, phase=self.phase.value)
+        self.record(
+            "tool_result",
+            tool=tool_name,
+            effect=outcome.effect.value,
+            phase=self.phase.value,
+        )
 
     def mark_proposal(self, role: str) -> None:
         if role == "create":

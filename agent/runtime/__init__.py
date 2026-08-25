@@ -23,14 +23,22 @@ from agent.runtime.information import (
     default_gap,
 )
 from agent.runtime.operations import OperationJournal, OperationRecord
+from agent.runtime.outcomes import (
+    CorrectionEvidence,
+    ToolEffect,
+    ToolOutcome,
+    ToolOutcomeNormalizer,
+)
 from agent.runtime.lineage import CallLineageLedger, CallLineageRecord
 from agent.runtime.responses import ResponseJournal
+from agent.runtime.transactions import ActionTransaction, ReplanContext
 from agent.runtime.state import AuthorizationState, RuntimePhase, TaskRuntime
 from agent.runtime.tool_errors import ParameterRecovery, ToolErrorLedger
 from agent.runtime.tools import ToolRegistry, ToolRole
 
 __all__ = [
     "AuthorizationState",
+    "ActionTransaction",
     "BindingNode",
     "BoundArguments",
     "CandidateBindingGraph",
@@ -42,9 +50,11 @@ __all__ = [
     "DebugEventStore",
     "CapabilityTarget",
     "CompiledRuntimePolicy",
+    "CorrectionEvidence",
     "QuestionDecision",
     "QuestionGate",
     "ResponseJournal",
+    "ReplanContext",
     "InformationGap",
     "EnrichmentRequest",
     "InformationGapContract",
@@ -61,6 +71,9 @@ __all__ = [
     "ToolRegistry",
     "ToolContract",
     "ToolContractCompiler",
+    "ToolEffect",
+    "ToolOutcome",
+    "ToolOutcomeNormalizer",
     "ToolErrorLedger",
     "ToolRole",
 ]

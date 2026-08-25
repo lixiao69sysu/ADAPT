@@ -22,6 +22,7 @@ from agent.memory.fact_store import FactStore
 from agent.memory.facts import PreferenceFact, fact_from_signal
 from agent.memory.signals import Signal, SignalParser
 from agent.runtime import (
+    ActionTransaction,
     DebugEventStore,
     InformationGap,
     OperationJournal,
@@ -291,6 +292,16 @@ def test_framework_recommendation_persists_the_rendered_candidate_order():
     message = agent._framework_recommendation()
 
     assert message is not None
+    assert agent.responses.latest_snapshot(
+        agent.operations.epoch, "recommendation"
+    ) is None
+    state = LLMAgentState(system_messages=[], messages=[])
+    agent._emit_framework_message(
+        state,
+        message,
+        "recommendation",
+        candidate_ids=("Q-2", "Q-1"),
+    )
     snapshot = agent.responses.latest_snapshot(
         agent.operations.epoch, "recommendation"
     )
@@ -1522,8 +1533,9 @@ def test_search_normalization_preserves_open_world_semantics():
         name="delivery_product_search_recommand",
         arguments={"keywords": ["老红糖珍珠奶茶", "热", "不加小料", "热"]},
     )
-    agent._normalize_search_call(call)
-    assert call.arguments["keywords"] == ["老红糖珍珠奶茶", "热", "不加小料"]
+    prepared = agent._normalize_search_call(call)
+    assert call.arguments["keywords"] == ["老红糖珍珠奶茶", "热", "不加小料", "热"]
+    assert prepared.arguments["keywords"] == ["老红糖珍珠奶茶", "热", "不加小料"]
 
 
 def test_no_topping_order_note_suppresses_catalog_topping_signal():
@@ -2026,15 +2038,14 @@ def test_agent_preflight_applies_proven_address_recovery_before_write():
         name="create_delivery_order",
         arguments={"address": full_address},
     )
-    problems = agent._preflight(
-        AssistantMessage(role="assistant", tool_calls=[call]), [Tool()]
-    )
+    prepared = ActionTransaction.prepare(
+        AssistantMessage(role="assistant", tool_calls=[call]),
+        agent._prepare_tool_call,
+    ).prepared
+    problems = agent._preflight(prepared, [Tool()])
     assert not problems
-    assert call.arguments["address"] == resolved_prefix
-    assert any(
-        event["event"] == "tool_parameter_recovered"
-        for event in agent.debug.events
-    )
+    assert call.arguments["address"] == full_address
+    assert prepared.tool_calls[0].arguments["address"] == resolved_prefix
 
 
 def test_framework_recovered_write_freezes_unaffected_create_arguments():
@@ -2123,7 +2134,7 @@ def test_framework_recovered_write_freezes_unaffected_create_arguments():
     assert agent._framework_recovered_write() is None
 
 
-def test_agent_blocks_third_write_after_observing_two_real_failures():
+def test_agent_blocks_identical_write_after_first_real_failure():
     class Tool:
         name = "create_delivery_order"
 
@@ -2153,34 +2164,33 @@ def test_agent_blocks_third_write_after_observing_two_real_failures():
         "product_ids": ["S1_P00001"],
     }
 
-    for index in range(2):
-        call = ToolCall(
-            id=f"failed-create-{index}",
-            name="create_delivery_order",
-            arguments=dict(arguments),
+    first = ToolCall(
+        id="failed-create-0",
+        name="create_delivery_order",
+        arguments=dict(arguments),
+    )
+    assistant = AssistantMessage(role="assistant", tool_calls=[first])
+    assert not agent._preflight(assistant, [Tool()])
+    agent._observe_assistant(assistant)
+    agent._observe_input(
+        ToolMessage(
+            id=first.id,
+            name=first.name,
+            role="tool",
+            content="Longitude and latitude not found for address",
+            error=True,
         )
-        assistant = AssistantMessage(role="assistant", tool_calls=[call])
-        assert not agent._preflight(assistant, [Tool()])
-        agent._observe_assistant(assistant)
-        agent._observe_input(
-            ToolMessage(
-                id=call.id,
-                name=call.name,
-                role="tool",
-                content="Longitude and latitude not found for address",
-                error=True,
-            )
-        )
+    )
 
-    third = ToolCall(
-        id="failed-create-2",
+    repeated = ToolCall(
+        id="failed-create-1",
         name="create_delivery_order",
         arguments=dict(arguments),
     )
     problems = agent._preflight(
-        AssistantMessage(role="assistant", tool_calls=[third]), [Tool()]
+        AssistantMessage(role="assistant", tool_calls=[repeated]), [Tool()]
     )
-    assert any("already failed 2 times" in problem for problem in problems)
+    assert any("must be corrected" in problem for problem in problems)
 
 
 def test_unpaid_order_is_tracked_until_payment():
@@ -2340,11 +2350,14 @@ def test_preflight_binds_profile_alias_over_model_guessed_address():
         name="create_delivery_order",
         arguments={"address": "模型猜测的地址"},
     )
-    problems = agent._preflight(
-        AssistantMessage(role="assistant", tool_calls=[call]), [Tool()]
-    )
+    prepared = ActionTransaction.prepare(
+        AssistantMessage(role="assistant", tool_calls=[call]),
+        agent._prepare_tool_call,
+    ).prepared
+    problems = agent._preflight(prepared, [Tool()])
     assert not any("address" in problem for problem in problems)
-    assert call.arguments["address"] == home
+    assert call.arguments["address"] == "模型猜测的地址"
+    assert prepared.tool_calls[0].arguments["address"] == home
 
 
 def test_profile_address_prefers_street_address_over_resident_city():
@@ -2423,6 +2436,10 @@ def test_task_spec_owns_runtime_question_contract():
     question = agent._framework_question()
 
     assert question == "请告诉我需要大床房还是双床房。"
+    assert agent.runtime.pending_question_dimension == ""
+    assert agent.memory.committed == []
+    state = LLMAgentState(system_messages=[], messages=[])
+    agent._emit_framework_message(state, AssistantMessage(role="assistant", content=question), "information_question")
     assert agent.runtime.pending_question_dimension == "room_type"
     assert agent.memory.committed == [question]
 
@@ -3169,6 +3186,12 @@ def test_framework_asks_payment_once_before_exposing_pay():
     agent = object.__new__(ADAPTAgent)
     agent.runtime = runtime
     assert "支付" in agent._framework_payment_question()
+    assert "支付" in agent._framework_payment_question()
+    state = LLMAgentState(system_messages=[], messages=[])
+    question = AssistantMessage(
+        role="assistant", content=agent._framework_payment_question()
+    )
+    agent._emit_framework_message(state, question, "payment_question")
     assert not agent._framework_payment_question()
     runtime.observe_user("可以，帮我付了")
     assert runtime.authorization.pay_authorized

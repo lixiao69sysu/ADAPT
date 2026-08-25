@@ -143,3 +143,6 @@ class CallLineageLedger:
 
     def records(self) -> tuple[CallLineageRecord, ...]:
         return tuple(self._records.values())
+
+    def get(self, call_id: str | None) -> CallLineageRecord | None:
+        return self._records.get(str(call_id)) if call_id is not None else None
