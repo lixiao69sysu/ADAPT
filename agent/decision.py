@@ -598,6 +598,8 @@ class CandidateLedger:
         self.search_family_counts: dict[str, int] = {}
         self.enrichment_read_counts: dict[str, int] = {}
         self.pending_payment_ids: set[str] = set()
+        self.state_ids: dict[str, set[str]] = {}
+        self.candidate_version = 0
         self.max_searches_per_family = max_searches_per_family
         self.require_max_preference_coverage = False
         self._turn = 0
@@ -608,6 +610,8 @@ class CandidateLedger:
         self.search_family_counts.clear()
         self.enrichment_read_counts.clear()
         self.pending_payment_ids.clear()
+        self.state_ids.clear()
+        self.candidate_version = 0
         self.require_max_preference_coverage = False
         self._turn = 0
 
@@ -619,6 +623,10 @@ class CandidateLedger:
         )
         if not text:
             return
+        before = {
+            key: (value.name, value.raw, tuple(value.parent_ids))
+            for key, value in self.candidates.items()
+        }
         self._turn += 1
         structured = content
         if isinstance(content, str) and content.lstrip().startswith(("{", "[")):
@@ -670,9 +678,23 @@ class CandidateLedger:
             price = _to_float(fields.get("price"))
             inventory = _to_int(fields.get("quantity"))
             for candidate_id in ids:
-                parent_ids = [item for item in ids if item != candidate_id]
+                # Legacy VitaBench text rows flatten a parent and its leaf ID
+                # onto one line. Preserve the existing ID-shape compatibility
+                # only at ingestion, but make the relation directional so the
+                # generic topology selector does not see a parent/child cycle.
+                parent_ids = []
                 if _entity_type(candidate_id) == "product":
-                    parent_ids = _dedup([*parent_ids, *context_parent_ids])
+                    parent_ids = _dedup(
+                        [
+                            *(
+                                item
+                                for item in ids
+                                if item != candidate_id
+                                and _entity_type(item) != "product"
+                            ),
+                            *context_parent_ids,
+                        ]
+                    )
                 enriched_raw = chunk
                 if parent_ids and _entity_type(candidate_id) == "product":
                     enriched_raw += ", parent_ids=" + "|".join(parent_ids)
@@ -702,6 +724,54 @@ class CandidateLedger:
                 self.pending_payment_ids.difference_update(returned_ids)
             else:
                 self.pending_payment_ids.clear()
+        after = {
+            key: (value.name, value.raw, tuple(value.parent_ids))
+            for key, value in self.candidates.items()
+        }
+        if after != before:
+            self.candidate_version += 1
+
+    def observe_state(self, tool_name: str, content: Any) -> None:
+        """Record workflow state without admitting it to the candidate pool."""
+        text = content if isinstance(content, str) else json.dumps(
+            content, ensure_ascii=False
+        )
+        if not text:
+            return
+        for field, value in re.findall(
+            r"['\"]?\b([A-Za-z][A-Za-z0-9_]*_id)['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_.:-]+)",
+            text,
+        ):
+            kind = field.casefold().removesuffix("_id")
+            if not any(
+                marker in kind
+                for marker in (
+                    "order", "booking", "reservation", "appointment",
+                    "transaction", "payment",
+                )
+            ):
+                continue
+            self.state_ids.setdefault(kind, set()).add(value)
+        lowered = text.casefold()
+        if "status:unpaid" in lowered or "status=unpaid" in lowered:
+            order_ids = self.state_ids.get("order", set())
+            order_ids.update(item for item in _ID_RE.findall(text) if item.startswith("O"))
+            self.pending_payment_ids.update(order_ids)
+        if "payment successful" in lowered or "支付成功" in text:
+            self.pending_payment_ids.clear()
+        if "cancel" in tool_name.casefold() and not any(
+            marker in lowered for marker in ("fail", "error", "失败")
+        ):
+            returned = set(_ID_RE.findall(text))
+            self.pending_payment_ids.difference_update(returned)
+            if not returned:
+                self.pending_payment_ids.clear()
+
+    def has_state_id(self, kind: str) -> bool:
+        normalized = kind.casefold().removesuffix("_id")
+        if normalized == "order" and self.pending_payment_ids:
+            return True
+        return bool(self.state_ids.get(normalized))
 
     def _observe_structured(
         self, tool_name: str, payload: Any, schema: Any
@@ -776,6 +846,15 @@ class CandidateLedger:
         self.search_family_counts[family] = self.search_family_counts.get(family, 0) + 1
         return self.search_counts[signature]
 
+    def preview_search(self, tool_name: str, arguments: dict[str, Any]) -> tuple[int, int]:
+        """Return post-commit signature/family counts without mutating state."""
+        signature = self.signature(tool_name, arguments)
+        family = self.search_family(tool_name)
+        return (
+            self.search_counts.get(signature, 0) + 1,
+            self.search_family_counts.get(family, 0) + 1,
+        )
+
     def family_search_count(self, tool_name: str) -> int:
         return self.search_family_counts.get(self.search_family(tool_name), 0)
 
@@ -788,10 +867,48 @@ class CandidateLedger:
         )
         return self.enrichment_read_counts[signature]
 
+    def enrichment_read_count(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> int:
+        signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False)}"
+        return self.enrichment_read_counts.get(signature, 0)
+
     def search_allowed(self, tool_name: str) -> bool:
         # Arguments are not known while building the tool list. Keep the search
         # tool available and enforce the normalized signature in preflight.
-        return True
+        return self.family_search_count(tool_name) < self.max_searches_per_family
+
+    def policy_tool_family(self) -> str:
+        """Return a data-free family signature for the observed tool path."""
+        families = sorted(self.search_family_counts)
+        if not families:
+            families = sorted(
+                {
+                    self.search_family(candidate.tool_name)
+                    for candidate in self.candidates.values()
+                    if candidate.entity_type not in {"order", "unknown"}
+                }
+            )
+        return "+".join(families)
+
+    def policy_entity_signature(self) -> str:
+        """Describe candidate types and parent topology without entity values."""
+        parts: set[str] = set()
+        for candidate in self.candidates.values():
+            if candidate.entity_type in {"order", "unknown"}:
+                continue
+            parent_types = sorted(
+                {
+                    self.candidates[parent_id].entity_type
+                    if parent_id in self.candidates
+                    else _entity_type(parent_id)
+                    for parent_id in candidate.parent_ids
+                    if _entity_type(parent_id) not in {"order", "unknown"}
+                }
+            ) if candidate.entity_type == "product" else []
+            suffix = f"({','.join(parent_types)})" if parent_types else ""
+            parts.add(f"{candidate.entity_type}{suffix}")
+        return "+".join(sorted(parts))
 
     def selected_candidates(
         self,
@@ -824,45 +941,127 @@ class CandidateLedger:
         only for provenance and type.
         """
         selected = self.selected_candidates(arguments, id_arguments)
-        for entity_type in (
-            "product",
-            "hotel",
-            "attraction",
-            "flight",
-            "train",
-            "shop",
-            "store",
-        ):
-            typed = [candidate for candidate in selected if candidate.entity_type == entity_type]
-            if typed:
-                return typed
-        children = [candidate for candidate in selected if candidate.parent_ids]
-        if children:
-            return children
-        return selected
-
-    def shortlist(self, card: DecisionCard, limit: int = 5) -> list[Candidate]:
-        candidates = [
-            c
-            for c in self.candidates.values()
-            if c.entity_type not in {"order", "unknown"}
+        if not selected:
+            return []
+        selected_ids = {candidate.candidate_id for candidate in selected}
+        referenced_parents = {
+            parent_id
+            for candidate in selected
+            for parent_id in candidate.parent_ids
+            if parent_id in selected_ids
+        }
+        leaves = [
+            candidate
+            for candidate in selected
+            if candidate.candidate_id not in referenced_parents
         ]
-        for entity_type in (
-            "product",
-            "hotel",
-            "attraction",
-            "flight",
-            "train",
-            "shop",
-        ):
-            typed = [
+        return leaves or selected
+
+    def structural_leaf_candidates(self) -> list[Candidate]:
+        """Return selectable nodes from observed parent/child topology."""
+        candidates = [
+            candidate
+            for candidate in self.candidates.values()
+            if candidate.entity_type not in {"order", "unknown"}
+        ]
+        referenced_parent_ids = {
+            parent_id
+            for candidate in candidates
+            for parent_id in candidate.parent_ids
+            if parent_id in self.candidates
+        }
+        leaves = [
+            candidate
+            for candidate in candidates
+            if candidate.candidate_id not in referenced_parent_ids
+        ]
+        return leaves or candidates
+
+    def structural_leaf_types(self) -> set[str]:
+        """Return selectable entity types from observed parent/child topology."""
+        return {
+            candidate.entity_type
+            for candidate in self.structural_leaf_candidates()
+        }
+
+    def resolve_action_entity_types(
+        self,
+        id_arguments: dict[str, str] | None,
+        required_arguments: set[str] | None = None,
+    ) -> set[str]:
+        """Map CREATE input types to observed selectable types without a vocabulary.
+
+        Annotated schemas match directly. For legacy tools whose argument type
+        and returned candidate type differ, a single unresolved required type
+        may bind to the single observed leaf type. Parent/child topology, not a
+        room/product or ticket/product alias table, supplies that fallback.
+        """
+        leaf_types = self.structural_leaf_types()
+        if not id_arguments:
+            return leaf_types
+        required = (
+            required_arguments
+            if required_arguments is not None
+            else set(id_arguments)
+        )
+        expected = {
+            kind
+            for argument, kind in id_arguments.items()
+            if argument in required and kind != "user"
+        }
+        if not expected:
+            return leaf_types
+        observed_types = {
+            candidate.entity_type
+            for candidate in self.candidates.values()
+            if candidate.entity_type not in {"order", "unknown"}
+        }
+        exact = expected & observed_types
+        unresolved = expected - observed_types
+        resolved = set(exact)
+        topology_child_types = {
+            candidate.entity_type
+            for candidate in self.candidates.values()
+            if any(parent_id in self.candidates for parent_id in candidate.parent_ids)
+        }
+        fallback_types = (topology_child_types - exact) or (leaf_types - exact)
+        mapped_types: set[str] = set()
+        if len(unresolved) == 1 and len(fallback_types) == 1:
+            mapped_types.update(fallback_types)
+            resolved.update(mapped_types)
+            unresolved.clear()
+        if unresolved:
+            return set()
+        nested_types = {
+            candidate.entity_type
+            for candidate in self.candidates.values()
+            if candidate.entity_type in resolved
+            and any(
+                parent_id in self.candidates
+                and self.candidates[parent_id].entity_type in resolved
+                for parent_id in candidate.parent_ids
+            )
+        }
+        if nested_types:
+            return nested_types
+        if mapped_types:
+            return mapped_types
+        selectable = resolved & leaf_types
+        return selectable or resolved
+
+    def shortlist(
+        self,
+        card: DecisionCard,
+        limit: int = 5,
+        entity_types: set[str] | None = None,
+    ) -> list[Candidate]:
+        candidates = self.structural_leaf_candidates()
+        if entity_types is not None:
+            candidates = [
                 candidate
                 for candidate in candidates
-                if candidate.entity_type == entity_type
+                if candidate.entity_type in entity_types
             ]
-            if typed:
-                candidates = typed
-                break
         from agent.runtime.ranking import CandidateRanker
 
         return CandidateRanker().rank(candidates, card, limit)
@@ -986,12 +1185,11 @@ class CandidateLedger:
         selected_candidate_id: str = "",
         id_arguments: dict[str, str] | None = None,
     ) -> list[str]:
-        """Keep WRITE inside the compliant shortlist without taking over choice.
+        """Keep WRITE bound to an explicit selection without taking over choice.
 
-        Ranking is normally a retrieval aid, not an oracle. The policy model
-        may choose any compliant shortlisted candidate when evidence ties. An
-        explicit user selection always locks execution; otherwise a unique,
-        strictly preference-evidence-leading candidate is locked as well.
+        Ranking is a retrieval aid, not an admissibility oracle. Provenance and
+        hard constraints are enforced by ``validate_write``; this method only
+        enforces an explicit user selection.
         """
         chosen = self.constraint_candidates(arguments, id_arguments)
         if not chosen:
@@ -1004,32 +1202,24 @@ class CandidateLedger:
                 f"selected {chosen_id}, but the user explicitly selected "
                 f"{selected_candidate_id} ({expected_name}); use that exact ID"
             ]
-        if selected_candidate_id:
-            return []
-        evidence_leader = self.unique_evidence_leader(card)
-        if evidence_leader and chosen_id != evidence_leader.candidate_id:
-            return [
-                f"selected {chosen_id}, but current observable preference evidence "
-                f"uniquely leads to {evidence_leader.candidate_id} "
-                f"({evidence_leader.name}); use that exact ID"
-            ]
-        compliant_ids = {
-            candidate.candidate_id for candidate in self.shortlist(card, limit=8)
-        }
-        if compliant_ids and chosen_id not in compliant_ids:
-            return [
-                f"selected {chosen_id}, but it is outside the rendered compliant "
-                "Candidate shortlist; choose one of the visible shortlisted IDs"
-            ]
         return []
 
     def render(
-        self, card: DecisionCard | None = None, limit: int = 8, max_chars: int = 4200
+        self,
+        card: DecisionCard | None = None,
+        limit: int = 8,
+        max_chars: int = 4200,
+        entity_types: set[str] | None = None,
     ) -> str:
-        selected = self.shortlist(card or DecisionCard(), limit)
+        selected = self.shortlist(
+            card or DecisionCard(), limit, entity_types=entity_types
+        )
         if not selected:
             return ""
-        lines = ["## Candidate shortlist (only these observed IDs may be selected)"]
+        lines = [
+            "## Ranked candidate view "
+            "(all IDs are observed; preferences affect order only)"
+        ]
         from agent.runtime.ranking import CandidateRanker
 
         alignment = CandidateRanker.preference_alignment(selected, card or DecisionCard())
@@ -1044,30 +1234,6 @@ class CandidateLedger:
                 f"{index}. {candidate.candidate_id} [{candidate.entity_type}] "
                 f"{candidate.name}{evidence}: {candidate.raw[:420]}"
             )
-        if selected and selected[0].entity_type == "product":
-            expanded_parents = {
-                parent_id
-                for candidate in self.candidates.values()
-                if candidate.entity_type == "product"
-                for parent_id in candidate.parent_ids
-            }
-            parent_candidates = [
-                candidate
-                for candidate in self.candidates.values()
-                if candidate.entity_type
-                in {"hotel", "attraction", "flight", "train"}
-                and candidate.candidate_id not in expanded_parents
-            ]
-            if parent_candidates:
-                from agent.runtime.ranking import CandidateRanker
-
-                unexpanded = CandidateRanker().rank(parent_candidates, card or DecisionCard(), 8)
-                lines.append("## Unexpanded parent candidates (READ details before CREATE)")
-                for candidate in unexpanded:
-                    lines.append(
-                        f"- {candidate.candidate_id} [{candidate.entity_type}] "
-                        f"{candidate.name}: {candidate.raw[:320]}"
-                    )
         if self.pending_payment_ids:
             lines.append(
                 "PENDING_PAYMENT: " + ", ".join(sorted(self.pending_payment_ids))
@@ -1100,19 +1266,20 @@ class CandidateLedger:
                 continue
             for item in value if isinstance(value, list) else [value]:
                 item_text = str(item)
-                if (
-                    item_text not in self.candidates
-                    and item_text not in self.pending_payment_ids
-                ):
-                    errors.append(
-                        f"{key}={item_text} was not returned by a tool in this subtask"
-                    )
-                candidate = self.candidates.get(item_text)
                 expected_type = (
                     id_arguments.get(key, "")
                     if id_arguments is not None
                     else key.removesuffix("_ids").removesuffix("_id")
                 )
+                if (
+                    item_text not in self.candidates
+                    and item_text not in self.pending_payment_ids
+                    and item_text not in self.state_ids.get(expected_type, set())
+                ):
+                    errors.append(
+                        f"{key}={item_text} was not returned by a tool in this subtask"
+                    )
+                candidate = self.candidates.get(item_text)
                 compatible = {
                     "shop": {"shop"},
                     "store": {"store"},

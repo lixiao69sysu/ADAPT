@@ -1,6 +1,8 @@
 """Deterministic execution controller used only by ADAPTAgent."""
 
 from agent.runtime.debug import DebugEventStore
+from agent.runtime.bindings import BindingNode, BoundArguments, CandidateBindingGraph
+from agent.runtime.contracts import IdVariable, ToolContract, ToolContractCompiler
 from agent.runtime.evolution import (
     CapabilityTarget,
     CompiledRuntimePolicy,
@@ -15,19 +17,28 @@ from agent.runtime.information import (
     default_gap,
 )
 from agent.runtime.operations import OperationJournal, OperationRecord
+from agent.runtime.lineage import CallLineageLedger, CallLineageRecord
+from agent.runtime.responses import ResponseJournal
 from agent.runtime.state import AuthorizationState, RuntimePhase, TaskRuntime
 from agent.runtime.tool_errors import ParameterRecovery, ToolErrorLedger
 from agent.runtime.tools import ToolRegistry, ToolRole
 
 __all__ = [
     "AuthorizationState",
+    "BindingNode",
+    "BoundArguments",
+    "CandidateBindingGraph",
+    "CallLineageLedger",
+    "CallLineageRecord",
     "DebugEventStore",
     "CapabilityTarget",
     "CompiledRuntimePolicy",
     "QuestionDecision",
     "QuestionGate",
+    "ResponseJournal",
     "InformationGap",
     "InformationGapContract",
+    "IdVariable",
     "default_gap",
     "OperationJournal",
     "OperationRecord",
@@ -38,6 +49,8 @@ __all__ = [
     "RuntimePolicyStore",
     "TaskRuntime",
     "ToolRegistry",
+    "ToolContract",
+    "ToolContractCompiler",
     "ToolErrorLedger",
     "ToolRole",
 ]
