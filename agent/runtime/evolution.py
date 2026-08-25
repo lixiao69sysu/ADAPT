@@ -28,7 +28,15 @@ class PolicyEffect(str, Enum):
         "forbid_redundant_candidate_question"
     )
     FORBID_QUESTION_WITH_TOOL = "forbid_question_with_tool"
-    REQUIRE_MAX_PREFERENCE_COVERAGE = "require_max_preference_coverage"
+    LIMIT_IDENTICAL_TOOL_FAILURE = "limit_identical_tool_failure"
+
+
+class TrajectoryEvidenceSource(str, Enum):
+    """Closed, agent-visible evidence vocabulary for hard policy learning."""
+
+    USER_CORRECTION = "user_correction"
+    TOOL_ERROR = "tool_error"
+    EXPLICIT_STATE_FAILURE = "explicit_state_failure"
 
 
 @dataclass(frozen=True)
@@ -38,6 +46,7 @@ class _RuleTemplate:
     proposed_change: str
     effect: PolicyEffect
     evidence_threshold: int
+    evidence_source: TrajectoryEvidenceSource
 
 
 _RULE_TEMPLATES = {
@@ -47,6 +56,7 @@ _RULE_TEMPLATES = {
         "reduce the same search-family budget for later related subtasks",
         PolicyEffect.LIMIT_REPEATED_SEARCH,
         2,
+        TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
     ),
     "missed_write": _RuleTemplate(
         CapabilityTarget.CANDIDATE_TO_ACTION_EXECUTION,
@@ -54,36 +64,27 @@ _RULE_TEMPLATES = {
         "transition deterministically from compliant candidate to create",
         PolicyEffect.FORCE_CREATE_AFTER_COMPLIANT_CANDIDATE,
         1,
+        TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
     ),
-    "unpaid_order": _RuleTemplate(
+    "unresolved_operation": _RuleTemplate(
         CapabilityTarget.CANDIDATE_TO_ACTION_EXECUTION,
-        "created order remains unpaid without resolving authorization",
-        "require an explicit payment completion check after create",
+        "an authorized irreversible operation remains in an unresolved state",
+        "require an explicit completion check after an irreversible action",
         PolicyEffect.REQUIRE_PAYMENT_COMPLETION,
         1,
+        TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
     ),
-    "candidate_choice_reask": _RuleTemplate(
-        CapabilityTarget.MISSING_INFORMATION_DETECTION,
-        "authorized task asks the candidate-selection question again",
-        "forbid candidate reconfirmation after an executable candidate exists",
-        PolicyEffect.FORBID_REDUNDANT_CANDIDATE_QUESTION,
-        1,
-    ),
-    "mixed_question_tool": _RuleTemplate(
+    "tool_error": _RuleTemplate(
         CapabilityTarget.CANDIDATE_TO_ACTION_EXECUTION,
-        "assistant combines a user question with a tool proposal",
-        "require a single question or a single action, never both",
-        PolicyEffect.FORBID_QUESTION_WITH_TOOL,
+        "an emitted tool call returns an environment error",
+        "reject the same failed argument signature after one observed failure",
+        PolicyEffect.LIMIT_IDENTICAL_TOOL_FAILURE,
         1,
-    ),
-    "preference_undercoverage": _RuleTemplate(
-        CapabilityTarget.PREFERENCE_TO_CANDIDATE_GROUNDING,
-        "proposed candidate covers fewer observable preference atoms than available alternatives",
-        "restrict later related writes to the maximum observable preference-coverage set",
-        PolicyEffect.REQUIRE_MAX_PREFERENCE_COVERAGE,
-        1,
+        TrajectoryEvidenceSource.TOOL_ERROR,
     ),
 }
+
+_HARD_POLICY_FAILURES = frozenset(_RULE_TEMPLATES)
 
 _ALLOWED_DOMAINS = {"delivery", "instore", "ota", "general"}
 _ALLOWED_FACETS = {
@@ -103,7 +104,10 @@ class RuntimePolicyRule:
     capability_target: str
     domain: str
     facet: str
+    tool_family: str
+    entity_signature: str
     failure_class: str
+    evidence_source: str
     failure_cluster: str
     proposed_change: str
     effect: str
@@ -111,27 +115,36 @@ class RuntimePolicyRule:
     confidence: float
     learned_at_subtask: int
     active_from_subtask: int
+    observed_event_epoch: int
+    hard: bool = True
     forbidden_specificity: tuple[str, ...] = (
         "user_id",
         "product_id",
+        "merchant_id",
         "task_id",
         "target marker",
         "rubric text",
     )
 
     @property
-    def key(self) -> tuple[str, str, str]:
-        return self.domain, self.facet, self.failure_class
+    def key(self) -> tuple[str, str, str, str, str]:
+        return (
+            self.domain,
+            self.facet,
+            self.tool_family,
+            self.entity_signature,
+            self.failure_class,
+        )
 
 
 @dataclass(frozen=True)
 class CompiledRuntimePolicy:
     max_searches_per_family: int = 2
+    max_identical_tool_failures: int = 2
     force_decision_after_candidates: bool = False
     require_payment_completion_check: bool = False
     forbid_redundant_candidate_question: bool = False
     forbid_question_with_tool: bool = False
-    require_max_preference_coverage: bool = False
     active_capabilities: tuple[str, ...] = ()
 
 
@@ -141,7 +154,7 @@ class RuntimePolicyStore:
     def __init__(self, user_id: str | None = None) -> None:
         self.user_id = user_id or ""
         self.subtask_index = 0
-        self._rules: dict[tuple[str, str, str], RuntimePolicyRule] = {}
+        self._rules: dict[tuple[str, str, str, str, str], RuntimePolicyRule] = {}
 
     def begin_subtask(self, user_id: str | None = None) -> None:
         bound_user = user_id or ""
@@ -149,14 +162,34 @@ class RuntimePolicyStore:
             self.reset(bound_user)
         self.subtask_index += 1
 
-    def observe(self, domain: str, facet: str, failure_class: str) -> RuntimePolicyRule | None:
+    def observe(
+        self,
+        domain: str,
+        facet: str,
+        failure_class: str,
+        *,
+        evidence_source: TrajectoryEvidenceSource | str,
+        tool_family: str = "",
+        entity_signature: str = "",
+        observed_event_epoch: int = 0,
+    ) -> RuntimePolicyRule | None:
         """Learn only from a typed failure; arbitrary trace payload is not accepted."""
+        if failure_class not in _HARD_POLICY_FAILURES:
+            return None
         template = _RULE_TEMPLATES.get(failure_class)
         if template is None:
+            return None
+        try:
+            source = TrajectoryEvidenceSource(evidence_source)
+        except (TypeError, ValueError):
+            return None
+        if source != template.evidence_source:
             return None
         key = (
             _bounded_scope(domain, _ALLOWED_DOMAINS),
             _bounded_scope(facet, _ALLOWED_FACETS),
+            (tool_family or "").strip().casefold(),
+            (entity_signature or "").strip().casefold(),
             failure_class,
         )
         previous = self._rules.get(key)
@@ -172,7 +205,10 @@ class RuntimePolicyStore:
             capability_target=template.capability_target.value,
             domain=key[0],
             facet=key[1],
+            tool_family=key[2],
+            entity_signature=key[3],
             failure_class=failure_class,
+            evidence_source=source.value,
             failure_cluster=template.failure_cluster,
             proposed_change=template.proposed_change,
             effect=template.effect.value,
@@ -180,16 +216,28 @@ class RuntimePolicyStore:
             confidence=confidence,
             learned_at_subtask=learned_at,
             active_from_subtask=active_from,
+            observed_event_epoch=max(0, int(observed_event_epoch)),
         )
         self._rules[key] = rule
         return rule
 
-    def policy(self, domain: str, facet: str) -> CompiledRuntimePolicy:
+    def policy(
+        self,
+        domain: str,
+        facet: str,
+        *,
+        tool_family: str = "",
+        entity_signature: str = "",
+    ) -> CompiledRuntimePolicy:
+        family = (tool_family or "").strip().casefold()
+        structure = (entity_signature or "").strip().casefold()
         active = [
             rule
             for rule in self._rules.values()
             if rule.domain in {domain, "general"}
             and rule.facet in {facet, "general"}
+            and rule.tool_family == family
+            and rule.entity_signature == structure
             and self.subtask_index >= rule.active_from_subtask
             and rule.evidence_count
             >= _RULE_TEMPLATES[rule.failure_class].evidence_threshold
@@ -200,6 +248,11 @@ class RuntimePolicyStore:
             max_searches_per_family=(
                 1
                 if PolicyEffect.LIMIT_REPEATED_SEARCH.value in effects
+                else 2
+            ),
+            max_identical_tool_failures=(
+                1
+                if PolicyEffect.LIMIT_IDENTICAL_TOOL_FAILURE.value in effects
                 else 2
             ),
             force_decision_after_candidates=(
@@ -215,9 +268,6 @@ class RuntimePolicyStore:
             ),
             forbid_question_with_tool=(
                 PolicyEffect.FORBID_QUESTION_WITH_TOOL.value in effects
-            ),
-            require_max_preference_coverage=(
-                PolicyEffect.REQUIRE_MAX_PREFERENCE_COVERAGE.value in effects
             ),
             active_capabilities=capabilities,
         )
@@ -235,7 +285,7 @@ class RuntimePolicyAdapter:
     """Apply a compiled policy to deterministic runtime controls."""
 
     @staticmethod
-    def apply(policy: CompiledRuntimePolicy, runtime, ledger) -> None:
+    def apply(policy: CompiledRuntimePolicy, runtime, ledger, tool_errors=None) -> None:
         ledger.max_searches_per_family = policy.max_searches_per_family
         runtime.force_decision_after_candidates = (
             policy.force_decision_after_candidates
@@ -247,6 +297,8 @@ class RuntimePolicyAdapter:
             policy.forbid_redundant_candidate_question
         )
         runtime.forbid_question_with_tool = policy.forbid_question_with_tool
-        ledger.require_max_preference_coverage = (
-            policy.require_max_preference_coverage
-        )
+        # Preference coverage remains a ranking signal. Runtime lessons never
+        # promote the framework's own ranking judgment into a WRITE constraint.
+        ledger.require_max_preference_coverage = False
+        if tool_errors is not None:
+            tool_errors.max_identical_failures = policy.max_identical_tool_failures

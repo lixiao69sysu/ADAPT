@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from agent.decision import CandidateLedger, DecisionCard, TaskSpec
 from agent.memory.adapt_memory import ADAPTMemory
-from agent.runtime import QuestionGate, RuntimePhase, RuntimePolicyStore, TaskRuntime
+from agent.runtime import (
+    QuestionGate,
+    RuntimePhase,
+    RuntimePolicyStore,
+    TaskRuntime,
+    TrajectoryEvidenceSource,
+)
 
 def test_soup_delegation_transitions_to_create_without_reasking():
     runtime = TaskRuntime.begin(TaskSpec.compile("想喝汤了，你帮我点个送到家里"))
@@ -55,9 +61,16 @@ def test_ranker_excludes_zero_inventory_and_keeps_top_five():
 def test_execution_lesson_changes_runtime_policy_not_only_prompt():
     policies = RuntimePolicyStore("synthetic-user")
     policies.begin_subtask("synthetic-user")
-    policies.observe("delivery", "retail", "missed_write")
-    policies.observe("delivery", "retail", "repeat_search")
-    policies.observe("delivery", "retail", "repeat_search")
+    source = TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE
+    policies.observe(
+        "delivery", "retail", "missed_write", evidence_source=source
+    )
+    policies.observe(
+        "delivery", "retail", "repeat_search", evidence_source=source
+    )
+    policies.observe(
+        "delivery", "retail", "repeat_search", evidence_source=source
+    )
     policies.begin_subtask("synthetic-user")
     policy = policies.policy("delivery", "retail")
     assert policy.force_decision_after_candidates

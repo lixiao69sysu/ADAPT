@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent.adapt_agent import ADAPTAgent
@@ -2203,6 +2204,38 @@ def test_unpaid_order_is_tracked_until_payment():
     assert "OT123abc" in ledger.pending_payment_ids
     ledger.observe("pay_delivery_order", "Payment successful")
     assert not ledger.pending_payment_ids
+
+
+def test_finalize_learns_repeat_search_only_from_committed_search_counts():
+    agent = object.__new__(ADAPTAgent)
+    agent.runtime = TaskRuntime.begin(TaskSpec.compile("activate a fictional glyph"))
+    agent.ledger = CandidateLedger()
+    agent.ledger.search_counts["survey:{\"query\":\"aurora\"}"] = 2
+    agent.tool_registry = ToolRegistry()
+    agent.decision_card = DecisionCard()
+    agent._candidate_decision = lambda registry=None: SimpleNamespace(admissible=())
+    agent._candidate_shortlist = lambda limit=1, registry=None: []
+    observed = []
+    agent._record_lesson = (
+        lambda failure, trigger, correction: observed.append((failure, trigger))
+    )
+
+    agent._finalize_visible_trajectory()
+    assert observed == []
+
+    agent.ledger.candidates = {
+        "glyph::aurora": Candidate(
+            "glyph::aurora", "glyph", "Aurora Glyph", "", "survey"
+        )
+    }
+    agent._finalize_visible_trajectory()
+
+    assert observed == [
+        (
+            "repeat_search",
+            "the same normalized search signature was emitted more than once",
+        )
+    ]
 
 
 def test_lessons_are_user_local_and_facet_scoped():

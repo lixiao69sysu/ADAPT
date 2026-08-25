@@ -20,6 +20,7 @@ from agent.runtime.evolution import (
     RuntimePolicyAdapter,
     RuntimePolicyRule,
     RuntimePolicyStore,
+    TrajectoryEvidenceSource,
 )
 from agent.runtime.question_gate import QuestionDecision, QuestionGate
 from agent.runtime.information import (
@@ -78,6 +79,7 @@ __all__ = [
     "RuntimePolicyAdapter",
     "RuntimePolicyRule",
     "RuntimePolicyStore",
+    "TrajectoryEvidenceSource",
     "SchemaQuestionPlanner",
     "TaskRuntime",
     "ToolRegistry",

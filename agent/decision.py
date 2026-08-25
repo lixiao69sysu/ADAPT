@@ -897,16 +897,15 @@ class CandidateLedger:
         for candidate in self.candidates.values():
             if candidate.entity_type in {"order", "unknown"}:
                 continue
-            parent_types = sorted(
-                {
-                    self.candidates[parent_id].entity_type
-                    if parent_id in self.candidates
-                    else _entity_type(parent_id)
-                    for parent_id in candidate.parent_ids
-                    if _entity_type(parent_id) not in {"order", "unknown"}
-                }
-            ) if candidate.entity_type == "product" else []
-            suffix = f"({','.join(parent_types)})" if parent_types else ""
+            parent_types: set[str] = set()
+            for parent_id in candidate.parent_ids:
+                parent = self.candidates.get(parent_id)
+                parent_type = (
+                    parent.entity_type if parent is not None else _entity_type(parent_id)
+                )
+                if parent_type not in {"order", "unknown"}:
+                    parent_types.add(parent_type)
+            suffix = f"({','.join(sorted(parent_types))})" if parent_types else ""
             parts.add(f"{candidate.entity_type}{suffix}")
         return "+".join(sorted(parts))
 

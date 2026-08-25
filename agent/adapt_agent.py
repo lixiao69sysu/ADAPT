@@ -52,6 +52,7 @@ from agent.runtime import (
     RuntimePolicyStore,
     SchemaQuestionPlanner,
     TaskRuntime,
+    TrajectoryEvidenceSource,
     ToolErrorLedger,
     ToolEffect,
     ToolOutcomeNormalizer,
@@ -224,7 +225,9 @@ class ADAPTAgent(PersonalizationAgent):
             entity_signature=self.ledger.policy_entity_signature(),
         )
         if self.enable_lessons:
-            RuntimePolicyAdapter.apply(runtime_policy, self.runtime, self.ledger)
+            RuntimePolicyAdapter.apply(
+                runtime_policy, self.runtime, self.ledger, self.tool_errors
+            )
         self.debug.emit(
             "runtime_policy_applied",
             instruction=instruction,
@@ -316,7 +319,9 @@ class ADAPTAgent(PersonalizationAgent):
             entity_signature=self.ledger.policy_entity_signature(),
         )
         if self.enable_lessons:
-            RuntimePolicyAdapter.apply(runtime_policy, self.runtime, self.ledger)
+            RuntimePolicyAdapter.apply(
+                runtime_policy, self.runtime, self.ledger, self.tool_errors
+            )
         if self._active_context is not None:
             self._active_context.tool_registry = self.tool_registry
             self._active_context.tool_epoch = self._tool_epoch
@@ -1423,13 +1428,22 @@ class ADAPTAgent(PersonalizationAgent):
             self.ledger.pending_payment_ids
         ):
             self._record_lesson(
-                "unpaid_order",
-                ",".join(sorted(self.ledger.pending_payment_ids)),
+                "unresolved_operation",
+                "authorized operation ended with an unresolved workflow state",
                 "After CREATE returns an unpaid order, explicitly obtain payment authorization and complete or decline payment.",
             )
+        if self.ledger.candidates and any(
+            count > 1 for count in self.ledger.search_counts.values()
+        ):
+            self._record_lesson(
+                "repeat_search",
+                "the same normalized search signature was emitted more than once",
+                "Use observed candidates after a repeated search instead of issuing the same search again.",
+            )
+        decision = self._candidate_decision(registry)
         has_executable_candidate = bool(
             self._candidate_shortlist(limit=1, registry=registry)
-        ) and registry.execution_ready(self.ledger, self.decision_card)
+        ) and bool(decision.admissible)
         if (
             self.runtime.authorization.create_authorized
             and has_executable_candidate
@@ -1456,15 +1470,32 @@ class ADAPTAgent(PersonalizationAgent):
             trigger,
             correction,
         )
-        rule = self.runtime_policies.observe(
-            self.task_spec.domain,
-            self.task_spec.facet,
-            failure_class,
-            tool_family=self.ledger.policy_tool_family(),
-            entity_signature=self.ledger.policy_entity_signature(),
+        evidence_sources = {
+            "tool_error": TrajectoryEvidenceSource.TOOL_ERROR,
+            "user_correction": TrajectoryEvidenceSource.USER_CORRECTION,
+            "repeat_search": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
+            "missed_write": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
+            "unresolved_operation": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
+        }
+        evidence_source = evidence_sources.get(failure_class)
+        rule = (
+            self.runtime_policies.observe(
+                self.task_spec.domain,
+                self.task_spec.facet,
+                failure_class,
+                evidence_source=evidence_source,
+                tool_family=self.ledger.policy_tool_family(),
+                entity_signature=self.ledger.policy_entity_signature(),
+                observed_event_epoch=self._operation_journal().epoch,
+            )
+            if evidence_source is not None
+            else None
         )
         self.debug.emit(
-            "lesson_recorded", failure_class=failure_class, correction=correction
+            "lesson_recorded",
+            failure_class=failure_class,
+            evidence_source=(evidence_source.value if evidence_source else "soft_only"),
+            correction=correction,
         )
         if rule is not None:
             self.debug.emit(
@@ -1473,6 +1504,7 @@ class ADAPTAgent(PersonalizationAgent):
                 domain=rule.domain,
                 facet=rule.facet,
                 failure_class=rule.failure_class,
+                evidence_source=rule.evidence_source,
                 failure_cluster=rule.failure_cluster,
                 proposed_change=rule.proposed_change,
                 evidence_count=rule.evidence_count,
@@ -1495,7 +1527,9 @@ class ADAPTAgent(PersonalizationAgent):
             tool_family=tool_family,
             entity_signature=entity_signature,
         )
-        RuntimePolicyAdapter.apply(policy, self.runtime, self.ledger)
+        RuntimePolicyAdapter.apply(
+            policy, self.runtime, self.ledger, self.tool_errors
+        )
         from agent.runtime.ranking import CandidateRanker
 
         self.debug.emit(

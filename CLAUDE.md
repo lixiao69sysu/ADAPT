@@ -111,10 +111,11 @@ same-scope dimensions may supersede an older value.
 ## Self-evolution boundary
 
 Execution lessons are scoped to one user instance and may use only observable
-trajectory evidence: user correction, tool error, validator rejection, repeated
-search, incomplete payment, or a text-only execution claim. Lessons are not
-preferences and must not cross users. Evaluator reward is never a learning
-signal during a benchmark run.
+trajectory evidence: user correction, a real environment tool error, a search
+that was actually emitted more than once, or an explicit unresolved/missed
+operation state. Framework ranking, validator opinion and rejected proposals
+cannot create hard lessons. Lessons are not preferences and must not cross
+users. Evaluator reward is never a learning signal during a benchmark run.
 
 Runtime self-evolution means frozen-code online procedural learning, not an
 external Coding Agent editing ADAPT source. `RuntimePolicyStore` accepts only a
@@ -124,6 +125,14 @@ for the same user. Rules must declare `capability_target`, `failure_cluster`,
 `proposed_change`, evidence count, confidence and forbidden specificity. They
 may change deterministic action controls through `RuntimePolicyAdapter`; they
 must never contain user/task/product IDs. Switching user resets all rules.
+
+Only user corrections, tool errors and deterministic state failures may create
+hard runtime policies. A framework ranking comparison such as preference
+undercoverage is diagnostic only and must never become a hard WRITE rule.
+Policy transfer requires the same observable tool family and candidate
+entity/parent structure in addition to domain/facet scope. Historical
+preferences may rank candidates only after the current instruction reliably
+grounds the candidate family.
 
 ## Engineering evolution record
 
