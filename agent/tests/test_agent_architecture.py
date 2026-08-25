@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from agent.adapt_agent import ADAPTAgent
 from agent.decision import (
+    Candidate,
     CandidateLedger,
     Constraint,
     ConstraintOperator,
@@ -25,6 +26,7 @@ from agent.runtime import (
     InformationGap,
     OperationJournal,
     QuestionGate,
+    ResponseJournal,
     RuntimePhase,
     TaskRuntime,
     ToolErrorLedger,
@@ -46,6 +48,366 @@ def test_read_is_pure_across_framework_repeats():
     outputs = [memory.read(query) for _ in range(3)]
     assert outputs[0] == outputs[1] == outputs[2]
     assert memory.proactive.asked_this_subtask == before
+
+
+def test_pristine_delivery_state_tools_are_not_candidate_searches():
+    """Real VitaBench tools have no x-adapt annotations."""
+    from agent.vitabench_bootstrap import enable_vitabench_utf8
+
+    enable_vitabench_utf8()
+    from vita.domains.delivery.data_model import DeliveryDB
+    from vita.domains.delivery.tools import DeliveryTools
+
+    db = DeliveryDB(user_id="U-test", stores={}, orders={})
+    registry = ToolRegistry()
+    registry.rebuild(list(DeliveryTools(db).get_tools().values()))
+
+    assert registry.role("delivery_product_search_recommand") == ToolRole.SEARCH
+    assert registry.role("get_delivery_product_info") == ToolRole.ENRICH
+    assert registry.role("search_delivery_orders") == ToolRole.STATE_READ
+    assert registry.role("get_delivery_order_status") == ToolRole.STATE_READ
+    assert registry.role("get_delivery_order_detail") == ToolRole.STATE_READ
+    runtime = TaskRuntime.begin(TaskSpec.compile("帮我点一份外卖"))
+    allowed = {tool.name for tool in registry.allowed_tools(runtime, CandidateLedger())}
+    assert "delivery_product_search_recommand" in allowed
+    assert "search_delivery_orders" not in allowed
+    assert "get_delivery_order_status" not in allowed
+
+
+def test_state_observation_never_pollutes_candidate_ledger():
+    ledger = CandidateLedger()
+    ledger.observe_state(
+        "get_delivery_order_detail",
+        "order_id: O900, product_id: P123, status:unpaid",
+    )
+    assert not ledger.candidates
+    assert ledger.has_state_id("order")
+    assert not ledger.has_state_id("product")
+    assert "O900" in ledger.pending_payment_ids
+
+
+def test_preflight_is_transactional_until_assistant_is_committed():
+    class Tool:
+        name = "search_quasar_nodes"
+
+    class Debug:
+        def emit(self, *args, **kwargs):
+            pass
+
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我推荐一个节点")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        Tool.name: ToolMeta(Tool.name, ToolRole.SEARCH, set(), {})
+    }
+    agent.tool_errors = ToolErrorLedger()
+    agent.ledger = CandidateLedger()
+    agent.decision_card = DecisionCard()
+    agent.user_profile = {}
+    agent.question_gate = QuestionGate()
+    agent.enable_candidate_validation = False
+    agent.debug = Debug()
+    call = ToolCall(id="q1", name=Tool.name, arguments={"keywords": ["blue"]})
+    assistant = AssistantMessage(role="assistant", tool_calls=[call])
+
+    phase = agent.runtime.phase
+    assert not agent._preflight(assistant, [Tool()])
+    assert not agent._preflight(assistant, [Tool()])
+    assert agent.runtime.phase == phase
+    assert agent.ledger.search_counts == {}
+    assert agent.ledger.search_family_counts == {}
+
+    agent._observe_assistant(assistant)
+    assert agent.ledger.family_search_count(Tool.name) == 1
+
+
+def test_tool_epoch_update_does_not_rebind_active_subtask():
+    class Params:
+        @staticmethod
+        def model_json_schema():
+            return {"type": "object", "properties": {}}
+
+    class Tool:
+        name = "search_ota_hotel"
+        params = Params()
+        returns = None
+        info = {}
+
+    agent = ADAPTAgent(
+        tools=[],
+        domain_policy="time={time}",
+        memory=ADAPTMemory(language="chinese"),
+        user_profile={"user_id": "epoch-test"},
+        time="2026-08-25 12:00:00",
+        language="chinese",
+        enable_lessons=False,
+    )
+    agent.set_current_instruction("帮我推荐一份晚餐")
+    assert agent.task_spec.domain == "delivery"
+    agent._observe_input(UserMessage(role="user", content="我想吃清淡的"))
+
+    agent.update_tools([Tool()])
+    assert agent.task_spec.domain == "delivery"
+    assert agent._pending_tool_registry is not None
+
+    agent.set_current_instruction("帮我推荐一个住处")
+    assert agent.task_spec.domain == "ota"
+    assert agent._pending_tool_registry is None
+
+
+def test_fictional_schema_drives_enrichment_without_facet_vocabulary():
+    class Params:
+        @staticmethod
+        def model_json_schema():
+            return {
+                "type": "object",
+                "required": ["quasar_id"],
+                "properties": {
+                    "quasar_id": {
+                        "type": "string",
+                        "x-adapt-entity": "quasar",
+                    }
+                },
+            }
+
+    class Tool:
+        name = "inspect_quasar_info"
+        params = Params()
+        returns = None
+        info = {}
+
+    registry = ToolRegistry()
+    registry.rebuild([Tool()])
+    assert registry.role(Tool.name) == ToolRole.ENRICH
+
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我绑定一个完全虚构对象")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.SELECT
+    agent.runtime.authorization.create_authorized = True
+    agent.runtime.execution_ready = False
+    agent.tool_registry = registry
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates["Q-17"] = __import__(
+        "agent.decision", fromlist=["Candidate"]
+    ).Candidate("Q-17", "quasar", "Azure Quasar", "", "search_quasars")
+    agent.decision_card = DecisionCard()
+    agent.user_profile = {}
+
+    message = agent._framework_enrichment()
+    assert message is not None
+    assert message.tool_calls[0].name == "inspect_quasar_info"
+    assert message.tool_calls[0].arguments == {"quasar_id": "Q-17"}
+
+
+def test_response_journal_is_scoped_by_epoch_and_candidate_snapshot():
+    journal = ResponseJournal()
+    journal.commit(1, 3, "recommendation", candidate_ids=("Q-2", "Q-1"))
+    assert journal.has(1, 3, "recommendation")
+    assert journal.snapshot(1, 3, "recommendation") == ("Q-2", "Q-1")
+    assert journal.latest_snapshot(1, "recommendation") == (
+        3,
+        ("Q-2", "Q-1"),
+    )
+    assert not journal.has(1, 4, "recommendation")
+    assert not journal.has(2, 3, "recommendation")
+    journal.reset()
+    assert not journal.has(1, 3, "recommendation")
+    assert journal.latest_snapshot(1, "recommendation") is None
+
+
+def test_schema_selects_unseen_candidate_type_without_entity_priority():
+    ledger = CandidateLedger()
+    ledger.candidates = {
+        "legacy-product": Candidate(
+            "legacy-product", "product", "Legacy Product", "", "search"
+        ),
+        "legacy-hotel": Candidate(
+            "legacy-hotel", "hotel", "Legacy Hotel", "", "search"
+        ),
+        "quasar-7": Candidate(
+            "quasar-7", "quasar", "Azure Quasar", "", "search"
+        ),
+    }
+    registry = ToolRegistry()
+    registry.meta = {
+        "bind_quasar": ToolMeta(
+            "bind_quasar",
+            ToolRole.CREATE,
+            {"quasar_id"},
+            {"quasar_id": "quasar"},
+        )
+    }
+
+    shortlist = registry.shortlist(ledger, DecisionCard(), limit=5)
+    assert [candidate.candidate_id for candidate in shortlist] == ["quasar-7"]
+
+
+def test_schema_shortlist_uses_leaf_nodes_when_parent_and_child_share_a_type():
+    ledger = CandidateLedger()
+    ledger.candidates = {
+        "node-parent": Candidate(
+            "node-parent", "node", "Parent", "", "search"
+        ),
+        "node-child": Candidate(
+            "node-child",
+            "node",
+            "Child",
+            "",
+            "search",
+            parent_ids=["node-parent"],
+        ),
+    }
+    registry = ToolRegistry()
+    registry.meta = {
+        "activate_node": ToolMeta(
+            "activate_node",
+            ToolRole.CREATE,
+            {"node_id"},
+            {"node_id": "node"},
+        )
+    }
+
+    shortlist = registry.shortlist(ledger, DecisionCard(), limit=5)
+    assert [candidate.candidate_id for candidate in shortlist] == ["node-child"]
+
+
+def test_framework_recommendation_persists_the_rendered_candidate_order():
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我推荐一个星体")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.SELECT
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates = {
+        "Q-2": Candidate("Q-2", "quasar", "Second Quasar", "", "search"),
+        "Q-1": Candidate("Q-1", "quasar", "First Quasar", "", "search"),
+    }
+    agent.decision_card = DecisionCard()
+    agent.tool_registry = ToolRegistry()
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+
+    message = agent._framework_recommendation()
+
+    assert message is not None
+    snapshot = agent.responses.latest_snapshot(
+        agent.operations.epoch, "recommendation"
+    )
+    assert snapshot is not None
+    assert snapshot[1] == ("Q-2", "Q-1")
+    assert message.content.index("Second Quasar") < message.content.index("First Quasar")
+
+
+def test_explicit_ordinal_after_visible_recommendation_authorizes_create():
+    class Debug:
+        def emit(self, *args, **kwargs):
+            pass
+
+    class Proactive:
+        pending_question = ""
+
+    class Memory:
+        proactive = Proactive()
+
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我推荐一份晚餐")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.DONE
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates["P-1"] = Candidate(
+        "P-1", "product", "First option", "", "search_options"
+    )
+    agent.decision_card = DecisionCard()
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        "create_order": ToolMeta(
+            "create_order",
+            ToolRole.CREATE,
+            {"product_id"},
+            {"product_id": "product"},
+        )
+    }
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+    agent.debug = Debug()
+    agent.memory = Memory()
+    agent.enable_lessons = False
+    agent.responses.commit(
+        agent.operations.epoch,
+        agent.ledger.candidate_version,
+        "recommendation",
+        candidate_ids=("P-1",),
+    )
+
+    agent._observe_input(UserMessage(role="user", content="行，就第一个吧。"))
+
+    assert agent.runtime.authorization.create_authorized
+    assert agent.runtime.selected_candidate_id == "P-1"
+    assert agent.runtime.phase == RuntimePhase.READY_TO_CREATE
+    assert agent.operations.epoch == 2
+
+
+def test_ordinal_without_visible_recommendation_does_not_grant_authorization():
+    agent = object.__new__(ADAPTAgent)
+    agent.runtime = TaskRuntime.begin(TaskSpec.compile("帮我推荐一份晚餐"))
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates["P-1"] = Candidate(
+        "P-1", "product", "First option", "", "search_options"
+    )
+    agent.decision_card = DecisionCard()
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        "create_order": ToolMeta(
+            "create_order", ToolRole.CREATE, {"product_id"}, {"product_id": "product"}
+        )
+    }
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+
+    agent._resolve_user_selection("第一个")
+    assert not agent.runtime.authorization.create_authorized
+
+
+def test_ordinal_binds_the_rendered_snapshot_not_a_recomputed_ranking():
+    agent = object.__new__(ADAPTAgent)
+    agent.runtime = TaskRuntime.begin(TaskSpec.compile("帮我推荐一个选项"))
+    agent.runtime.phase = RuntimePhase.DONE
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates = {
+        "P-1": Candidate("P-1", "product", "Preferred", "blue", "search"),
+        "P-2": Candidate("P-2", "product", "Displayed first", "red", "search"),
+    }
+    agent.decision_card = DecisionCard(prefer=["blue"])
+    assert agent.ledger.shortlist(agent.decision_card)[0].candidate_id == "P-1"
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        "create_order": ToolMeta(
+            "create_order", ToolRole.CREATE, {"product_id"}, {"product_id": "product"}
+        )
+    }
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+    agent.responses.commit(
+        agent.operations.epoch,
+        agent.ledger.candidate_version,
+        "recommendation",
+        candidate_ids=("P-2", "P-1"),
+    )
+
+    agent._resolve_user_selection("就选第一个")
+    assert agent.runtime.selected_candidate_id == "P-2"
+    assert agent.runtime.authorization.create_authorized
+
+
+def test_agent_stop_protocol_is_not_rejected_by_preflight():
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我推荐一个选项")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.question_gate = QuestionGate()
+    assert not agent._preflight(
+        AssistantMessage(role="assistant", content="###STOP###"), []
+    )
 
 
 def test_question_budget_changes_only_on_commit_and_answer_is_recorded():
@@ -201,7 +563,7 @@ def test_write_can_choose_within_shortlist_but_respects_explicit_selection():
     assert any("explicitly selected" in error for error in errors)
 
 
-def test_unique_preference_evidence_leader_is_locked_for_write():
+def test_unique_preference_evidence_leader_ranks_but_does_not_lock_write():
     ledger = CandidateLedger()
     ledger.observe(
         "instore_product_search_recommend",
@@ -222,9 +584,31 @@ def test_unique_preference_evidence_leader_is_locked_for_write():
     errors = ledger.validate_ranked_choice(
         {"shop_id": "S1_I00001", "product_id": "S1_P00081"}, card
     )
-    assert any("uniquely leads to S1_P10101" in error for error in errors)
+    assert not errors
     assert not ledger.validate_ranked_choice(
         {"shop_id": "S1_I00002", "product_id": "S1_P10101"}, card
+    )
+
+
+def test_soft_ranking_never_makes_a_grounded_candidate_inadmissible():
+    ledger = CandidateLedger()
+    for index in range(9):
+        candidate_id = f"P-{index}"
+        ledger.candidates[candidate_id] = Candidate(
+            candidate_id,
+            "quasar",
+            f"Quasar {index}",
+            "preferred" if index < 8 else "fallback",
+            "search_quasars",
+        )
+    card = DecisionCard(prefer=["preferred"])
+    assert "P-8" not in {
+        candidate.candidate_id for candidate in ledger.shortlist(card, limit=8)
+    }
+    assert not ledger.validate_ranked_choice(
+        {"quasar_id": "P-8"},
+        card,
+        id_arguments={"quasar_id": "quasar"},
     )
 
 
@@ -692,7 +1076,7 @@ def test_candidate_render_exposes_dynamic_preference_evidence():
     assert "preference_evidence=['三模']" in rendered
 
 
-def test_learned_strict_coverage_guard_rejects_only_lower_evidence_choice():
+def test_preference_undercoverage_remains_soft_ranking_evidence():
     class Tool:
         name = "create_delivery_order"
 
@@ -747,13 +1131,13 @@ def test_learned_strict_coverage_guard_rejects_only_lower_evidence_choice():
     assert not agent._preflight(
         AssistantMessage(role="assistant", tool_calls=[lower]), [Tool()]
     )
-    assert observed == ["preference_undercoverage"]
+    assert observed == []
 
     agent.ledger.require_max_preference_coverage = True
     problems = agent._preflight(
         AssistantMessage(role="assistant", tool_calls=[lower]), [Tool()]
     )
-    assert any("maximum observable preference-coverage set" in p for p in problems)
+    assert not any("maximum observable preference-coverage set" in p for p in problems)
 
     best = ToolCall(
         id="best-evidence",
@@ -1444,9 +1828,9 @@ def test_agent_blocks_third_search_family_even_when_keywords_change():
             name=Tool.name,
             arguments={"keywords": list(keywords)},
         )
-        assert not agent._preflight(
-            AssistantMessage(role="assistant", tool_calls=[call]), [Tool()]
-        )
+        assistant = AssistantMessage(role="assistant", tool_calls=[call])
+        assert not agent._preflight(assistant, [Tool()])
+        agent._observe_assistant(assistant)
 
     third = ToolCall(
         id="search-2",
@@ -2196,7 +2580,7 @@ def test_ready_to_create_generation_context_drops_search_anchor():
     assert len(focused) == 2
 
 
-def test_ready_to_create_context_names_unique_evidence_leader():
+def test_ready_to_create_context_does_not_lock_soft_preference_leader():
     class Tool:
         name = "create_instore_order"
 
@@ -2225,9 +2609,9 @@ def test_ready_to_create_context_names_unique_evidence_leader():
         message.content or ""
         for message in agent._generation_messages(state, [Tool()], 0)
     )
-    assert "unique preference-evidence leader" in rendered
-    assert "ID=S1_P10101" in rendered
-    assert "exact name=麻辣火锅聚餐4人套餐" in rendered
+    assert "unique preference-evidence leader" not in rendered
+    assert "Framework-selected candidate" not in rendered
+    assert "best compliant Candidate Ledger IDs" in rendered
 
 
 def test_direct_commit_cannot_ask_candidate_choice_before_hierarchy_is_ready():
@@ -2326,7 +2710,7 @@ def test_hotel_parent_candidate_requires_room_before_create_phase():
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 
-def test_hotel_execution_waits_for_bounded_parent_coverage():
+def test_execution_readiness_does_not_encode_category_coverage_policy():
     class Params:
         @classmethod
         def model_json_schema(cls):
@@ -2347,20 +2731,20 @@ def test_hotel_execution_waits_for_bounded_parent_coverage():
             "hotel_search_recommand",
             f"Hotel(hotel_id=S1_H0000{index}, hotel_name=汉庭{index})",
         )
-    for index in range(5):
-        ledger.observe(
-            "get_ota_hotel_info",
-            f"Hotel(hotel_id=S1_H0000{index}, products=HotelProduct(room_id=S1_P0000{index}, room_type=大床房, quantity=1))",
-        )
-    assert not registry.execution_ready(ledger)
     ledger.observe(
         "get_ota_hotel_info",
-        "Hotel(hotel_id=S1_H00005, products=HotelProduct(room_id=S1_P00005, room_type=大床房, quantity=1))",
+        "Hotel(hotel_id=S1_H00000, products=HotelProduct(room_id=S1_P00000, room_type=大床房, quantity=1))",
     )
+    # Required IDs are now ready after one valid parent-child observation.
+    # Expanding more parents is a ranking choice, never a hard WRITE gate.
     assert registry.execution_ready(ledger)
-    rendered = ledger.render(DecisionCard(prefer=["汉庭"]))
-    assert "Unexpanded parent candidates" in rendered
-    assert "S1_H00006" in rendered
+    rendered = ledger.render(
+        DecisionCard(prefer=["汉庭"]),
+        entity_types=registry.candidate_entity_types(ledger),
+    )
+    assert "Ranked candidate view" in rendered
+    assert "S1_P00000" in rendered
+    assert "S1_H00001" not in rendered
 
 
 def test_agent_batches_hierarchical_hotel_enrichment_without_llm():
@@ -2647,6 +3031,58 @@ def test_task_identity_ranks_unseen_entity_without_category_feature_table():
     )
     card = DecisionCard(task_intent=["请给我极光棱镜"])
     assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00002"
+
+
+def test_ungrounded_short_task_does_not_let_memory_choose_another_entity_class():
+    ledger = CandidateLedger()
+    ledger.observe(
+        "delivery_product_search_recommand",
+        "StoreProduct(store_id=S1_S00001, product_name=怡泉纯净水, "
+        "product_id=S1_P00001, quantity=5, price=12)\n"
+        "StoreProduct(store_id=S1_S00002, product_name=鲜牛奶, "
+        "product_id=S1_P00002, quantity=5, price=8)",
+    )
+    card = DecisionCard(
+        task_intent=["家里的水喝完了，帮我买点"],
+        preference_pool=["鲜牛奶"],
+        preference_weights={"鲜牛奶": 5.0},
+    )
+    candidates = [
+        candidate
+        for candidate in ledger.candidates.values()
+        if candidate.entity_type == "product"
+    ]
+    shortlist = ledger.shortlist(card)
+    assert [candidate.candidate_id for candidate in shortlist] == ["S1_P00001"]
+
+
+def test_grounded_unseen_task_allows_memory_to_rank_within_entity_family():
+    ledger = CandidateLedger()
+    ledger.observe(
+        "delivery_product_search_recommand",
+        "StoreProduct(store_id=S1_S00001, product_name=星环机械键盘静音版, "
+        "product_id=S1_P00001, quantity=5, price=20)\n"
+        "StoreProduct(store_id=S1_S00002, product_name=星环机械键盘标准版, "
+        "product_id=S1_P00002, quantity=5, price=20)",
+    )
+    card = DecisionCard(
+        task_intent=["帮我买一个机械键盘"],
+        preference_pool=["静音"],
+        preference_weights={"静音": 2.0},
+    )
+    assert ledger.shortlist(card, limit=1)[0].candidate_id == "S1_P00001"
+
+
+def test_candidate_ledger_policy_scope_uses_tool_family_and_parent_topology():
+    ledger = CandidateLedger()
+    ledger.register_search("delivery_product_search_recommand", {"keywords": ["星环"]})
+    ledger.observe(
+        "delivery_product_search_recommand",
+        "StoreProduct(store_id=S1_S00001, product_name=星环器, "
+        "product_id=S1_P00001, quantity=5)",
+    )
+    assert ledger.policy_tool_family() == "product_search"
+    assert ledger.policy_entity_signature() == "product(store)+store"
 
 
 def test_multiple_open_world_preferences_remain_distinct_evidence_atoms():

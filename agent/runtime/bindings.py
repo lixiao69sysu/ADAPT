@@ -94,16 +94,29 @@ class CandidateBindingGraph:
                 node.entity_type == item.entity_type for node in self.nodes.values()
             )
         }
+        exact_expected_types = {
+            item.entity_type
+            for item in all_variables
+            if any(
+                node.entity_type == item.entity_type for node in self.nodes.values()
+            )
+        }
         leaf_types = {
             self.nodes[node_id].entity_type for node_id in self.structural_leaf_ids()
-        }
+        } - exact_expected_types
+        topology_child_types = {
+            node.entity_type
+            for node in self.nodes.values()
+            if any(parent_id in self.nodes for parent_id in node.parent_ids)
+        } - exact_expected_types
+        fallback_types = topology_child_types or leaf_types
         # Conservative legacy fallback: one unresolved schema type may bind to
         # one observed leaf type.  Ambiguity is never guessed.
-        if len(unresolved_types) == 1 and len(leaf_types) == 1:
+        if len(unresolved_types) == 1 and len(fallback_types) == 1:
             return tuple(
                 node_id
                 for node_id in self.structural_leaf_ids()
-                if self.nodes[node_id].entity_type in leaf_types
+                if self.nodes[node_id].entity_type in fallback_types
             )
         return ()
 
@@ -126,7 +139,15 @@ class CandidateBindingGraph:
                 values = values if isinstance(values, list) else [values]
                 choices.append(tuple(str(value) for value in values))
             else:
-                choices.append(self._candidate_ids_for(variable, variables))
+                candidates = self._candidate_ids_for(variable, variables)
+                if contract.role == "create" and len(variables) == 1:
+                    structural_leaves = set(self.structural_leaf_ids())
+                    candidates = tuple(
+                        candidate_id
+                        for candidate_id in candidates
+                        if candidate_id in structural_leaves
+                    )
+                choices.append(candidates)
             bind_variables.append(variable)
         if any(not choice for choice in choices):
             return ()
@@ -202,24 +223,59 @@ class CandidateBindingGraph:
                     failures.append(f"{argument}={candidate_id} has no current candidate provenance")
                 elif candidate_id not in candidates:
                     failures.append(
-                        f"{argument}={candidate_id} is not compatible with schema entity {variable.entity_type}"
+                        f"{argument} expects {variable.entity_type} ID but "
+                        f"{candidate_id} is {self.nodes[candidate_id].entity_type}"
                     )
-        selected_ids = {
-            candidate_id
-            for values in selected_by_argument.values()
-            for candidate_id in values
-            if candidate_id in self.nodes
-        }
         for argument, values in selected_by_argument.items():
+            selected_others = {
+                candidate_id
+                for other_argument, other_values in selected_by_argument.items()
+                if other_argument != argument
+                for candidate_id in other_values
+                if candidate_id in self.nodes
+            }
             for candidate_id in values:
                 node = self.nodes.get(candidate_id)
-                if not node or not node.parent_ids or len(selected_ids) <= 1:
+                if not node or not node.parent_ids or not selected_others:
                     continue
-                selected_others = selected_ids - {candidate_id}
                 observed_selected_parents = set(node.parent_ids) & selected_others
                 selected_children = self.children_by_parent.get(candidate_id, set()) & selected_others
-                if not observed_selected_parents and not selected_children:
+                parent_types = {
+                    self.nodes[parent_id].entity_type
+                    for parent_id in node.parent_ids
+                    if parent_id in self.nodes
+                }
+                relation_expected = bool(
+                    parent_types
+                    & {
+                        self.nodes[other_id].entity_type
+                        for other_id in selected_others
+                    }
+                )
+                if relation_expected and not observed_selected_parents and not selected_children:
+                    parent_argument = next(
+                        (
+                            other_argument
+                            for other_argument, other_values in selected_by_argument.items()
+                            if other_argument != argument
+                            and any(
+                                other_id in self.nodes
+                                and self.nodes[other_id].entity_type in parent_types
+                                for other_id in other_values
+                            )
+                        ),
+                        "selected_parent_id",
+                    )
+                    parent_value = next(
+                        (
+                            other_id
+                            for other_id in selected_by_argument.get(parent_argument, ())
+                            if other_id in self.nodes
+                        ),
+                        "unknown",
+                    )
                     failures.append(
-                        f"{argument}={candidate_id} has no observed edge to the selected IDs"
+                        f"{argument}={candidate_id} was not observed under "
+                        f"{parent_argument}={parent_value}"
                     )
         return tuple(dict.fromkeys(failures))

@@ -1248,7 +1248,8 @@ class CandidateLedger:
         profile: dict[str, Any] | None = None,
         tool_meta: Any = None,
     ) -> list[str]:
-        role = getattr(getattr(tool_meta, "role", None), "value", "")
+        raw_role = getattr(tool_meta, "role", None)
+        role = getattr(raw_role, "value", raw_role or "")
         if not _is_commit_tool(tool_name) and role not in {
             "create",
             "pay",
@@ -1279,30 +1280,44 @@ class CandidateLedger:
                     errors.append(
                         f"{key}={item_text} was not returned by a tool in this subtask"
                     )
-                candidate = self.candidates.get(item_text)
-                compatible = {
-                    "shop": {"shop"},
-                    "store": {"store"},
-                    "product": {"product"},
-                    "hotel": {"hotel"},
-                    "attraction": {"attraction"},
-                    "flight": {"flight"},
-                    "train": {"train"},
-                    "order": {"order"},
-                    "room": {"product"},
-                    "ticket": {"product"},
-                    "seat": {"product"},
-                }
-                if (
-                    candidate
-                    and expected_type
-                    and candidate.entity_type
-                    not in compatible.get(expected_type, {expected_type})
-                ):
-                    errors.append(
-                        f"{key} expects {expected_type} ID but {item_text} is {candidate.entity_type}"
+        if role == "create" or (_is_commit_tool(tool_name) and id_arguments is None):
+            from agent.runtime.bindings import CandidateBindingGraph
+            from agent.runtime.contracts import (
+                IdVariable,
+                ToolContract,
+                ToolContractCompiler,
+            )
+
+            if tool_meta is not None:
+                contract = ToolContractCompiler.compile([tool_meta]).get(tool_name)
+            else:
+                inferred = tuple(
+                    IdVariable(
+                        argument=key,
+                        entity_type=key.removesuffix("_ids").removesuffix("_id"),
+                        required=True,
+                        many=key.endswith("_ids"),
                     )
-        errors.extend(self._validate_parent_relationships(arguments, id_arguments))
+                    for key in arguments
+                    if key != "user_id" and key.endswith(("_id", "_ids"))
+                )
+                contract = ToolContract(
+                    name=tool_name,
+                    role="create",
+                    required_arguments=tuple(item.argument for item in inferred),
+                    id_variables=inferred,
+                )
+            if contract is not None:
+                structural_errors = CandidateBindingGraph.from_ledger(
+                    self
+                ).validate_arguments(contract, arguments)
+                errors.extend(
+                    error
+                    for error in structural_errors
+                    if "has no current candidate provenance" not in error
+                )
+        else:
+            errors.extend(self._validate_parent_relationships(arguments, id_arguments))
         # Payment consumes an already-created order. Product, room, date and
         # address constraints were validated before CREATE and are not fields
         # of PAY tools; reapplying them here produces impossible requirements.
@@ -1347,35 +1362,6 @@ class CandidateLedger:
                 )
         if any(c.inventory == 0 for c in constraint_candidates):
             errors.append("selected candidate has zero inventory")
-        selected_ids = {
-            str(item)
-            for key, value in arguments.items()
-            if (
-                key in id_arguments and id_arguments[key] != "user"
-                if id_arguments is not None
-                else key.endswith(("_id", "_ids")) and key != "user_id"
-            )
-            for item in (value if isinstance(value, list) else [value])
-        }
-        selected = [
-            self.candidates[item] for item in selected_ids if item in self.candidates
-        ]
-        products = [
-            candidate for candidate in selected if candidate.entity_type == "product"
-        ]
-        stores = {
-            candidate.candidate_id
-            for candidate in selected
-            if candidate.entity_type == "store"
-        }
-        for product in products:
-            parent_stores = {
-                item for item in product.parent_ids if _entity_type(item) == "store"
-            }
-            if stores and parent_stores and stores.isdisjoint(parent_stores):
-                errors.append(
-                    f"product {product.candidate_id} does not belong to selected store"
-                )
         return _dedup(errors)
 
     def _validate_parent_relationships(
@@ -1384,46 +1370,6 @@ class CandidateLedger:
         id_arguments: dict[str, str] | None = None,
     ) -> list[str]:
         errors: list[str] = []
-        relationships = (
-            ("room_id", "hotel_id"),
-            ("ticket_id", "attraction_id"),
-            ("product_id", "shop_id"),
-        )
-        for child_key, parent_key in relationships:
-            child_id = arguments.get(child_key)
-            parent_id = arguments.get(parent_key)
-            child = self.candidates.get(str(child_id)) if child_id else None
-            if (
-                child
-                and parent_id
-                and child.parent_ids
-                and str(parent_id) not in child.parent_ids
-            ):
-                errors.append(
-                    f"{child_key}={child_id} was not observed under {parent_key}={parent_id}"
-                )
-        for child_key, possible_parents in (
-            ("seat_id", ("flight_id", "train_id")),
-            ("product_ids", ("store_id", "shop_id")),
-        ):
-            child_values = arguments.get(child_key, [])
-            if not isinstance(child_values, list):
-                child_values = [child_values]
-            parent_id = next(
-                (arguments.get(key) for key in possible_parents if arguments.get(key)),
-                None,
-            )
-            for child_id in child_values:
-                child = self.candidates.get(str(child_id)) if child_id else None
-                if (
-                    child
-                    and parent_id
-                    and child.parent_ids
-                    and str(parent_id) not in child.parent_ids
-                ):
-                    errors.append(
-                        f"{child_key}={child_id} was not observed under parent={parent_id}"
-                    )
         if id_arguments:
             selected_by_argument = {
                 key: [str(item) for item in (value if isinstance(value, list) else [value])]
@@ -1433,20 +1379,33 @@ class CandidateLedger:
             all_selected = {
                 item for values in selected_by_argument.values() for item in values
             }
-            leaf_ids = {
-                candidate.candidate_id
-                for candidate in self.constraint_candidates(arguments, id_arguments)
-            }
             for key, values in selected_by_argument.items():
+                other_selected = {
+                    item
+                    for other_key, other_values in selected_by_argument.items()
+                    if other_key != key
+                    for item in other_values
+                }
                 for candidate_id in values:
-                    if candidate_id not in leaf_ids:
-                        continue
                     candidate = self.candidates.get(candidate_id)
+                    if not candidate or not candidate.parent_ids or not other_selected:
+                        continue
+                    parent_types = {
+                        self.candidates[parent_id].entity_type
+                        for parent_id in candidate.parent_ids
+                        if parent_id in self.candidates
+                    }
+                    relation_expected = bool(
+                        parent_types
+                        & {
+                            self.candidates[item].entity_type
+                            for item in other_selected
+                            if item in self.candidates
+                        }
+                    )
                     if (
-                        candidate
-                        and candidate.parent_ids
-                        and len(all_selected) > 1
-                        and all_selected.isdisjoint(candidate.parent_ids)
+                        relation_expected
+                        and other_selected.isdisjoint(candidate.parent_ids)
                     ):
                         errors.append(
                             f"{key}={candidate_id} was not observed under any selected parent"

@@ -193,48 +193,59 @@ class ToolRegistry:
         a MUST/AVOID constraint. Keep SELECT open for a bounded second search
         until the deterministic shortlist contains a usable candidate.
         """
-        for meta in self.meta.values():
-            if meta.role != ToolRole.CREATE:
-                continue
-            required_id_arguments = {
-                argument: kind
-                for argument, kind in meta.id_arguments.items()
-                if argument in meta.required_arguments and kind != "user"
-            }
-            if not required_id_arguments:
-                continue
-            entity_types = ledger.resolve_action_entity_types(
-                meta.id_arguments, meta.required_arguments
-            )
-            if not entity_types:
-                continue
-            if card is not None and not ledger.shortlist(
-                card, limit=1, entity_types=entity_types
-            ):
-                continue
-            if entity_types:
-                return True
-        return False
+        return bool(self.candidate_decision(ledger, card).admissible)
+
+    def candidate_decision(
+        self,
+        ledger: CandidateLedger,
+        card=None,
+        *,
+        runtime=None,
+        instruction_epoch: int = 0,
+        fixed_arguments: dict[str, dict[str, Any]] | None = None,
+    ):
+        from agent.decision import DecisionCard
+        from agent.runtime.candidate_decision import CandidateDecisionEngine
+
+        # Lightweight tests and adapters may populate ``meta`` directly.
+        # Recompile the immutable shadow view when that happens instead of
+        # allowing two registries to become independent authorities.
+        if set(self.contracts) != set(self.meta):
+            self.contracts = ToolContractCompiler.compile(self.meta.values())
+        return CandidateDecisionEngine(self).decide(
+            ledger,
+            card or DecisionCard(),
+            runtime=runtime,
+            instruction_epoch=instruction_epoch,
+            fixed_arguments=fixed_arguments,
+        )
 
     def candidate_entity_types(self, ledger: CandidateLedger) -> set[str]:
         """Derive selectable candidate types from CREATE schemas and topology."""
-        resolved: set[str] = set()
-        for meta in self.meta.values():
-            if meta.role != ToolRole.CREATE:
-                continue
-            resolved.update(
-                ledger.resolve_action_entity_types(
-                    meta.id_arguments, meta.required_arguments
-                )
-            )
+        decision = self.candidate_decision(ledger)
+        resolved = {
+            ledger.candidates[candidate_id].entity_type
+            for binding in decision.admissible
+            for candidate_id in binding.leaf_ids
+            if candidate_id in ledger.candidates
+        }
         return resolved or ledger.structural_leaf_types()
 
     def shortlist(self, ledger: CandidateLedger, card, limit: int = 5):
-        return ledger.shortlist(
-            card,
-            limit=limit,
-            entity_types=self.candidate_entity_types(ledger),
-        )
+        decision = self.candidate_decision(ledger, card)
+        selected = []
+        seen: set[str] = set()
+        for binding in decision.ordered:
+            for candidate_id in binding.leaf_ids:
+                if candidate_id in seen or candidate_id not in ledger.candidates:
+                    continue
+                seen.add(candidate_id)
+                selected.append(ledger.candidates[candidate_id])
+                if len(selected) >= limit:
+                    return selected
+        if selected:
+            return selected
+        return ledger.shortlist(card, limit=limit)
 
     def enrichment_ready(self, meta: ToolMeta, ledger: CandidateLedger) -> bool:
         required_types = {

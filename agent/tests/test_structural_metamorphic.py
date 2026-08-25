@@ -173,7 +173,7 @@ def test_wrong_parent_pair_is_rejected_without_entity_vocabulary():
     errors = graph.validate_arguments(
         contract, {"orbit_root": "H-2", "orbit_leaf": "S-1"}
     )
-    assert any("observed edge" in error for error in errors)
+    assert any("was not observed under" in error for error in errors)
 
 
 def test_lineage_rejects_unknown_and_stale_ids_across_tool_roles():

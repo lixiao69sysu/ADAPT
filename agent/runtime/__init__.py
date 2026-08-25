@@ -2,6 +2,12 @@
 
 from agent.runtime.debug import DebugEventStore
 from agent.runtime.bindings import BindingNode, BoundArguments, CandidateBindingGraph
+from agent.runtime.candidate_decision import (
+    CandidateBinding,
+    CandidateDecision,
+    CandidateDecisionEngine,
+    EnrichmentRequest,
+)
 from agent.runtime.contracts import IdVariable, ToolContract, ToolContractCompiler
 from agent.runtime.evolution import (
     CapabilityTarget,
@@ -28,6 +34,9 @@ __all__ = [
     "BindingNode",
     "BoundArguments",
     "CandidateBindingGraph",
+    "CandidateBinding",
+    "CandidateDecision",
+    "CandidateDecisionEngine",
     "CallLineageLedger",
     "CallLineageRecord",
     "DebugEventStore",
@@ -37,6 +46,7 @@ __all__ = [
     "QuestionGate",
     "ResponseJournal",
     "InformationGap",
+    "EnrichmentRequest",
     "InformationGapContract",
     "IdVariable",
     "default_gap",

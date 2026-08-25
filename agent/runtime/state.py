@@ -275,6 +275,26 @@ class TaskRuntime:
             phase=self.phase.value,
         )
 
+    def apply_candidate_decision(self, decision) -> None:
+        """Apply the single candidate authority's immutable result."""
+        self.execution_ready = bool(decision.admissible)
+        if self.phase not in {
+            RuntimePhase.WAIT_CREATE_RESULT,
+            RuntimePhase.WAIT_PAY_RESULT,
+            RuntimePhase.DONE,
+            RuntimePhase.UNSATISFIABLE,
+        }:
+            self.phase = decision.next_phase
+        self.record(
+            "candidate_decision",
+            phase=self.phase.value,
+            admissible=len(decision.admissible),
+            selected=(
+                decision.selected.leaf_ids if decision.selected is not None else ()
+            ),
+            selection_basis=decision.selection_basis,
+        )
+
     def select_candidate(self, candidate_id: str, *, execution_ready: bool) -> None:
         """Record a user's concrete choice without replaying SEARCH state.
 
@@ -297,14 +317,14 @@ class TaskRuntime:
         )
 
     def observe_tool_result(
-        self, tool_name: str, content: str, error: bool = False
+        self, tool_name: str, content: str, error: bool = False, role: str = ""
     ) -> None:
         text = content or ""
         if error:
             self.last_tool_error = text[:240]
             self.record("tool_error", tool=tool_name, content=text[:200])
             return
-        if tool_name.startswith("create_") or tool_name in {
+        if role == "create" or tool_name.startswith("create_") or tool_name in {
             "instore_book",
             "instore_reservation",
         }:
@@ -314,7 +334,7 @@ class TaskRuntime:
                 RuntimePhase.READY_TO_PAY if ("unpaid" in text) else RuntimePhase.DONE
             )
             self.payment_question_sent = False
-        elif tool_name.startswith("pay_") and (
+        elif (role == "pay" or tool_name.startswith("pay_")) and (
             "successful" in text.lower() or "成功" in text
         ):
             self.write_succeeded = True
