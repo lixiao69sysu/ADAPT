@@ -716,6 +716,16 @@
 - **后续风险/下一步**：当前语法抽取是保守规则，不声称覆盖所有隐含限定；先跑同版本 8 用户 Avg@1，再依候选归因报告判断是否扩展，禁止为已知书名或粉类添加词表。
 - **能力抽象**：preference-to-candidate grounding / candidate-to-action execution / long-horizon consistency / evaluation harness。
 
+## E-053：Agent 重试只回滚消息而不回滚执行控制状态
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（状态契约和合成回滚门禁已通过，尚待 runtime smoke）
+- **通用性判定**：`GENERAL-INVARIANT`。VitaBench orchestrator 只 deepcopy AgentState，因此任何影响下一动作的 Agent 内部状态都必须纳入该契约。
+- **难点**：ADAPT 将 candidate ledger、runtime phase、授权和操作日志保存在 Agent 实例上；无效 assistant 消息触发 orchestrator 重试时，只有 LLM 消息状态被恢复。
+- **有效方案**：新增 `ADAPTAgentState`，在每次生成前从调用方持有的快照恢复 controller，生成后返回消息与完整 framework 快照。旧 checkpoint 仍可通过兼容路径加载。
+- **验证**：合成测试覆盖快照深拷贝隔离、ledger/runtime/OperationJournal 回滚及同一原状态重试的结果等价；相关 165 项测试通过。
+- **能力抽象**：candidate-to-action execution / long-horizon consistency / evaluation harness。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

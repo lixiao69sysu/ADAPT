@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -42,6 +44,7 @@ from agent.intent import (
 from agent.lessons import ExecutionLessonStore
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.runtime import (
+    ADAPTAgentState,
     ActionTransaction,
     attribute_preflight_failure,
     CandidateAttributionEngine,
@@ -68,6 +71,19 @@ from agent.runtime import (
     UserEvent,
     UserEventKind,
     default_gap,
+)
+
+_STATEFUL_AGENT_ATTRIBUTES = (
+    "task_spec", "decision_card", "ledger", "runtime", "tool_registry",
+    "tool_errors", "operations", "lineage", "responses", "question_gate",
+    "lessons", "runtime_policies", "debug", "_current_instruction",
+    "_current_corrections", "_instruction_epoch", "_tool_epoch",
+    "_active_context", "_pending_tool_registry",
+)
+
+_STATEFUL_MEMORY_ATTRIBUTES = (
+    "proactive", "_current_instruction", "_current_task_spec",
+    "_current_answers", "_current_session_facts", "_pending_answer",
 )
 
 _ADAPT_POLICY = """
@@ -130,6 +146,39 @@ class ADAPTAgent(PersonalizationAgent):
         self._tool_epoch = 0
         self._active_context: SubtaskContext | None = None
         self._pending_tool_registry: ToolRegistry | None = None
+
+    def _capture_framework_state(self) -> dict[str, Any]:
+        """Capture all controller values that can change during generation."""
+        snapshot = {
+            name: deepcopy(getattr(self, name))
+            for name in _STATEFUL_AGENT_ATTRIBUTES
+            if hasattr(self, name)
+        }
+        memory_state = {
+            name: deepcopy(getattr(self.memory, name))
+            for name in _STATEFUL_MEMORY_ATTRIBUTES
+            if hasattr(self.memory, name)
+        }
+        if memory_state:
+            snapshot["__memory_runtime__"] = memory_state
+        return snapshot
+
+    def _restore_framework_state(self, snapshot: dict[str, Any]) -> None:
+        """Restore the caller-owned snapshot before processing a turn."""
+        for name, value in snapshot.items():
+            if name == "__memory_runtime__":
+                for memory_name, memory_value in value.items():
+                    setattr(self.memory, memory_name, deepcopy(memory_value))
+                continue
+            setattr(self, name, deepcopy(value))
+
+    def get_init_state(self, message_history: Optional[list] = None) -> ADAPTAgentState:
+        base_state = super().get_init_state(message_history=message_history)
+        return ADAPTAgentState(
+            system_messages=base_state.system_messages,
+            messages=base_state.messages,
+            framework_state=self._capture_framework_state(),
+        )
 
     def _operation_journal(self) -> OperationJournal:
         """Return the journal, including lightweight unit-test constructions."""
@@ -416,6 +465,27 @@ class ADAPTAgent(PersonalizationAgent):
         )
 
     def generate_next_message(
+        self, message: ValidAgentInputMessage, state: LLMAgentState
+    ) -> tuple[AssistantMessage, ADAPTAgentState]:
+        """Generate from caller-owned state so VitaBench retries fully roll back."""
+        if isinstance(state, ADAPTAgentState):
+            working_state = state.model_copy(deep=True)
+            self._restore_framework_state(working_state.framework_state)
+        else:
+            # Backward compatibility for old checkpoints and minimal test states.
+            working_state = ADAPTAgentState(
+                system_messages=deepcopy(state.system_messages),
+                messages=deepcopy(state.messages),
+                framework_state=self._capture_framework_state(),
+            )
+        assistant, updated = self._generate_next_message_impl(message, working_state)
+        return assistant, ADAPTAgentState(
+            system_messages=updated.system_messages,
+            messages=updated.messages,
+            framework_state=self._capture_framework_state(),
+        )
+
+    def _generate_next_message_impl(
         self, message: ValidAgentInputMessage, state: LLMAgentState
     ) -> tuple[AssistantMessage, LLMAgentState]:
         self._observe_input(message)

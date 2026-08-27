@@ -1,5 +1,6 @@
 """Deterministic execution controller used only by ADAPTAgent."""
 
+from agent.runtime.agent_state import ADAPTAgentState
 from agent.runtime.bindings import BindingNode, BoundArguments, CandidateBindingGraph
 from agent.runtime.attribution import (
     FailureAttribution,
@@ -74,6 +75,7 @@ from agent.runtime.tools import ToolRegistry, ToolRole
 from agent.runtime.transactions import ActionTransaction, ReplanContext
 
 __all__ = [
+    "ADAPTAgentState",
     "AuthorizationState",
     "FailureAttribution",
     "FailureOwner",
