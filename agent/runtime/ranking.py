@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from agent.runtime.alignment import EvidenceAlignment
@@ -16,8 +17,69 @@ class CandidateScore:
     task_relevance: float
     session_correction: float
     historical_preference: float
+    historical_parent_preference: float
+    grounding_reliability: float
     availability: int
     stable_key: int
+
+
+class RankingPolicy(str, Enum):
+    CURRENT = "current"
+    CURRENT_TASK_ONLY = "current_task_only"
+    TASK_FIRST_PREFERENCE_TIEBREAK = "task_first_preference_tiebreak"
+
+
+PRODUCTION_RANKING_POLICY = RankingPolicy.TASK_FIRST_PREFERENCE_TIEBREAK
+
+
+@dataclass(frozen=True)
+class CandidateRankingKey:
+    """Auditable lexicographic key for one shadow or production policy."""
+
+    policy: RankingPolicy
+    values: tuple[float | int, ...]
+
+
+def layered_ranking_key(
+    score: CandidateScore,
+    candidate: Any,
+    policy: RankingPolicy | str = RankingPolicy.CURRENT,
+) -> CandidateRankingKey:
+    policy = RankingPolicy(policy)
+    price = -(getattr(candidate, "price", None) or 0)
+    if policy == RankingPolicy.CURRENT_TASK_ONLY:
+        values = (
+            score.task_relevance_band,
+            score.task_relevance,
+            score.availability,
+            price,
+            score.stable_key,
+        )
+    elif policy == RankingPolicy.TASK_FIRST_PREFERENCE_TIEBREAK:
+        values = (
+            score.task_relevance_band,
+            score.task_relevance,
+            score.availability,
+            score.grounding_reliability,
+            score.session_correction,
+            score.historical_preference,
+            score.historical_parent_preference,
+            price,
+            score.stable_key,
+        )
+    else:
+        # Bit-for-bit ordering compatibility with the previous production key.
+        values = (
+            score.task_relevance_band,
+            score.task_relevance,
+            score.session_correction,
+            score.historical_preference,
+            score.historical_parent_preference,
+            score.availability,
+            price,
+            score.stable_key,
+        )
+    return CandidateRankingKey(policy, values)
 
 
 class CandidateRanker:
@@ -86,22 +148,55 @@ class CandidateRanker:
         historical_alignment = EvidenceAlignment(
             candidates, historical_sources, _preference_matches
         )
+        parent_identity_keys = {"store_name", "shop_name", "merchant_name"}
         allow_historical = (
             relevance.reliable_grounding or relevance.single_structural_family
         )
         scores: dict[str, CandidateScore] = {}
         for index, candidate in enumerate(candidates):
             row = relevance.row(candidate)
-            historical = (
-                historical_alignment.score(candidate)
-                if allow_historical or row.band == 2
-                else 0.0
-            )
-            scores[str(candidate.candidate_id)] = CandidateScore(
+            candidate_id = str(candidate.candidate_id)
+            if getattr(card, "grounded_edge_count", 0):
+                # Explicit edges replace global text re-matching after SEARCH.
+                # The existing task-grounding gate still prevents historical
+                # preferences from choosing an ungrounded candidate family.
+                historical = (
+                    float(getattr(card, "candidate_preference_scores", {}).get(candidate_id, 0.0))
+                    if allow_historical or row.band == 2
+                    else 0.0
+                )
+                historical_parent = (
+                    float(getattr(card, "candidate_parent_preference_scores", {}).get(candidate_id, 0.0))
+                    if allow_historical or row.band == 2
+                    else 0.0
+                )
+            else:
+                historical_matches = (
+                    historical_alignment.matches(candidate)
+                    if allow_historical or row.band == 2
+                    else ()
+                )
+                historical = sum(
+                    atom.weight
+                    for atom in historical_matches
+                    if atom.attribute_key not in parent_identity_keys
+                )
+                historical_parent = sum(
+                    atom.weight
+                    for atom in historical_matches
+                    if atom.attribute_key in parent_identity_keys
+                )
+            scores[candidate_id] = CandidateScore(
                 task_relevance_band=row.band,
                 task_relevance=row.score,
                 session_correction=session_alignment.score(candidate),
                 historical_preference=historical,
+                historical_parent_preference=historical_parent,
+                grounding_reliability=float(
+                    getattr(card, "candidate_grounding_confidence", {}).get(
+                        candidate_id, 0.0
+                    )
+                ),
                 availability=(1 if candidate.inventory is None or candidate.inventory > 0 else 0),
                 # Preserve the environment's observed order as the final
                 # value-agnostic tie break. Concrete ID spelling must not
@@ -147,7 +242,15 @@ class CandidateRanker:
             for candidate in candidates
         }
 
-    def rank(self, candidates: list[Any], card: Any, limit: int = 5) -> list[Any]:
+    def rank(
+        self,
+        candidates: list[Any],
+        card: Any,
+        limit: int = 5,
+        *,
+        policy: RankingPolicy | str = PRODUCTION_RANKING_POLICY,
+    ) -> list[Any]:
+        policy = RankingPolicy(policy)
         score_by_id = self.score_candidates(candidates, card)
         constraints = [
             constraint
@@ -185,18 +288,8 @@ class CandidateRanker:
             if excluded or candidate.inventory == 0:
                 continue
             score = score_by_id[str(candidate.candidate_id)]
-            scored.append(
-                (
-                    score.task_relevance_band,
-                    score.task_relevance,
-                    score.session_correction,
-                    score.historical_preference,
-                    score.availability,
-                    -(candidate.price or 0),
-                    score.stable_key,
-                    candidate,
-                )
-            )
+            key = layered_ranking_key(score, candidate, policy)
+            scored.append((*key.values, candidate))
         scored.sort(key=lambda item: item[:-1], reverse=True)
         return [item[-1] for item in scored[:limit]]
 

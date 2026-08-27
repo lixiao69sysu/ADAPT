@@ -62,9 +62,9 @@ def test_execution_lesson_changes_runtime_policy_not_only_prompt():
     policies = RuntimePolicyStore("synthetic-user")
     policies.begin_subtask("synthetic-user")
     source = TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE
-    policies.observe(
+    assert policies.observe(
         "delivery", "retail", "missed_write", evidence_source=source
-    )
+    ) is None
     policies.observe(
         "delivery", "retail", "repeat_search", evidence_source=source
     )
@@ -73,5 +73,5 @@ def test_execution_lesson_changes_runtime_policy_not_only_prompt():
     )
     policies.begin_subtask("synthetic-user")
     policy = policies.policy("delivery", "retail")
-    assert policy.force_decision_after_candidates
+    assert not policy.force_decision_after_candidates
     assert policy.max_searches_per_family == 1

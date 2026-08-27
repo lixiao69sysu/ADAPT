@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from agent.memory.stream import MemoryEvent, MemoryStream, parse_timestamp
-from agent.memory.signals import Signal, TYPE_IMPORTANCE
+from agent.memory.stream import MemoryStream, parse_timestamp
+from agent.memory.signals import Signal
 
 # Half-lives (in days) per lifetime type.
 HALF_LIFE_DAYS = {
@@ -110,9 +110,6 @@ class LifecycleManager:
                 self.facts.remove(f)
                 evicted += 1
         # Also drop stream events whose signals point to forgotten facts.
-        forgotten = {
-            (f.predicate, f.value) for f in self.facts
-        }  # current alive facts
         alive_events = []
         for ev in stream.all():
             sig = ev.signal
@@ -123,7 +120,6 @@ class LifecycleManager:
             if sig.predicate == "raw_observation":
                 alive_events.append(ev)
                 continue
-            key = (sig.predicate, sig.object)
             if any(self._same(fv, sig.object) for (fp, fv) in [(f.predicate, f.value) for f in self.facts] if fp == sig.predicate):
                 alive_events.append(ev)
             else:

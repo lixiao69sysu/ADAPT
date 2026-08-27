@@ -305,6 +305,9 @@ class ProactiveEngine:
             type="conversation",
             raw=f"主动询问: {question}; 用户回答: {answer}",
             importance=8.0,
+            source_kind="direct_user",
+            persistence="persistent",
+            extraction_confidence=0.95,
         )
         memory.stream.add(sig)
         self.pending_question = None

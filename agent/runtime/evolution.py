@@ -58,14 +58,6 @@ _RULE_TEMPLATES = {
         2,
         TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
     ),
-    "missed_write": _RuleTemplate(
-        CapabilityTarget.CANDIDATE_TO_ACTION_EXECUTION,
-        "authorized task ends despite an executable compliant candidate",
-        "transition deterministically from compliant candidate to create",
-        PolicyEffect.FORCE_CREATE_AFTER_COMPLIANT_CANDIDATE,
-        1,
-        TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
-    ),
     "unresolved_operation": _RuleTemplate(
         CapabilityTarget.CANDIDATE_TO_ACTION_EXECUTION,
         "an authorized irreversible operation remains in an unresolved state",

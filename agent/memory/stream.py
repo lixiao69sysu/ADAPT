@@ -13,11 +13,11 @@ Unlike a plain list, the stream supports:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from agent.memory.signals import Signal, TYPE_IMPORTANCE
+from agent.memory.signals import Signal
 
 
 @dataclass

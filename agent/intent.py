@@ -55,7 +55,29 @@ _SELECTION_TRANSACTION_RE = re.compile(
 _INFORMATION_RE = re.compile(
     r"推荐|帮我看看|帮我看|看看有没有|有哪些|有什么|比较一下|怎么选"
 )
-_NEGATION_BEFORE_RE = re.compile(r"(?:别|不要|不用|无需) *$")
+_NEGATION_BEFORE_RE = re.compile(
+    r"(?:别|不要|不用|无需|不必|不用了)"
+    r"(?:再|直接)?(?:帮我|给我|替我|你帮我)?[^，。！？!?,;\n]{0,4}$"
+)
+
+# A later turn can authorize acting on a recommendation without repeating the
+# transaction verb or an ordinal (for example, "按你的建议办").  This signal
+# is intentionally usable only together with a visible recommendation
+# snapshot; by itself it must never grant transaction authority.
+_RECOMMENDATION_ACCEPTANCE_RE = re.compile(
+    r"(?:^|[，,。！？!?\s])"
+    r"(?:行|好(?:的)?|可以|没问题)?[，,\s]*"
+    r"(?:那就|就)?"
+    r"(?:按(?:照)?|照)"
+    r"(?:你|您)?(?:的)?"
+    r"(?:说的|推荐的?|建议的?|给的首选|列的首选|这个)"
+    r"(?:来|办|做|下单|买|订|预定|预约)?(?:吧|了)?"
+)
+_RECOMMENDATION_ACCEPTANCE_NEGATION_RE = re.compile(
+    r"(?:不|别|不要|不用|先别|暂时不)"
+    r"[^，。！？!?\n]{0,10}"
+    r"(?:按|照|办|做|下单|买|订|预定|预约)"
+)
 
 
 def _transaction_match(text: str) -> re.Match[str] | None:
@@ -65,7 +87,10 @@ def _transaction_match(text: str) -> re.Match[str] | None:
         _SELECTION_TRANSACTION_RE,
     ):
         for match in pattern.finditer(text or ""):
-            prefix = (text or "")[max(0, match.start() - 4) : match.start()]
+            # Check the whole local clause, not only the four characters before
+            # the match. A shorter fallback regex can otherwise re-authorize
+            # the inner `下单` in `不要帮我下单` after the longer match was rejected.
+            prefix = (text or "")[max(0, match.start() - 16) : match.start()]
             if _NEGATION_BEFORE_RE.search(prefix):
                 continue
             return match
@@ -105,3 +130,16 @@ def selected_ordinal(text: str) -> int:
     mapping = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
     token = match.group(1)
     return mapping[token] if token in mapping else int(token)
+
+
+def accepts_visible_recommendation(text: str) -> bool:
+    """Whether the user explicitly accepts the assistant's visible proposal.
+
+    The caller must additionally prove that an ordered recommendation snapshot
+    exists.  Keeping that evidence check outside this lexical helper prevents
+    phrases such as "按你说的办" from authorizing an ungrounded write.
+    """
+    content = (text or "").strip()
+    if not content or _RECOMMENDATION_ACCEPTANCE_NEGATION_RE.search(content):
+        return False
+    return bool(_RECOMMENDATION_ACCEPTANCE_RE.search(content))

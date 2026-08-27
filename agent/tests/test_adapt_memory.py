@@ -8,11 +8,9 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-import pytest
 
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.memory.drift import DriftDetector
-from agent.memory.proactive import ProactiveEngine
 from agent.memory.signals import Signal
 
 
@@ -330,7 +328,6 @@ class TestDimensionExtraction:
             "tags": ["奶茶", "布蕾", "热"],
             "items": [{"product_name": "黑糖布蕾奶茶（热/三分糖）", "price": 16, "quantity": 1}],
         })])
-        out = m.read("帮我再点一杯奶茶送到家")
         assert not any(
             fact.value == "黑糖" and fact.dimension in {"taste", "sweetness", "attribute"}
             for fact in m.facts

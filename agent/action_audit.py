@@ -18,14 +18,54 @@ from agent.decision import TaskSpec
 def audit(path: Path) -> dict:
     begins = []
     visible_failures: Counter[str] = Counter()
+    user_events: Counter[str] = Counter()
+    attribution_owners: Counter[str] = Counter()
+    harness_event_conflicts = 0
+    blocked_action_surfaces = 0
+    create_consistent = 0
+    create_checked = 0
+    last_user_event = ""
+    awaiting_payment_reply = False
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         event = json.loads(line)
         if event.get("event") == "subtask_begin":
             begins.append(event)
+            awaiting_payment_reply = False
+        elif event.get("event") == "payment_question":
+            awaiting_payment_reply = True
+        elif event.get("event") == "user_observation":
+            last_user_event = str(
+                event.get(
+                    "user_event",
+                    "inferred_payment_reply"
+                    if awaiting_payment_reply
+                    else "legacy_untyped",
+                )
+            )
+            awaiting_payment_reply = False
+            user_events[last_user_event] += 1
         elif event.get("event") == "lesson_recorded":
-            visible_failures[str(event.get("failure_class", "unknown"))] += 1
+            failure_class = str(event.get("failure_class", "unknown"))
+            visible_failures[failure_class] += 1
+            if failure_class == "user_correction" and (
+                last_user_event.startswith("payment_")
+                or last_user_event == "inferred_payment_reply"
+            ):
+                harness_event_conflicts += 1
+        elif event.get("event") == "failure_attributed":
+            attribution_owners[str(event.get("owner", "unknown"))] += 1
+        elif event.get("event") == "decision_surface":
+            if (
+                str(event.get("phase", ""))
+                in {"ready_to_create", "ready_to_pay", "ready_to_workflow"}
+                and int(event.get("allowed_tool_count", 0)) == 0
+            ):
+                blocked_action_surfaces += 1
+        elif event.get("event") == "create_consistency":
+            create_checked += 1
+            create_consistent += int(bool(event.get("consistent", False)))
 
     transitions: Counter[str] = Counter()
     routing_changes: Counter[str] = Counter()
@@ -59,11 +99,24 @@ def audit(path: Path) -> dict:
         "routing_changes": dict(sorted(routing_changes.items())),
         "replayed_invalid_address_values": invalid_addresses,
         "observable_failure_events": dict(sorted(visible_failures.items())),
+        "typed_user_events": dict(sorted(user_events.items())),
+        "failure_attribution_owners": dict(sorted(attribution_owners.items())),
+        "harness_event_conflicts": harness_event_conflicts,
+        "blocked_action_surfaces": blocked_action_surfaces,
+        "create_consistency": {
+            "consistent": create_consistent,
+            "checked": create_checked,
+            "rate": (create_consistent / create_checked if create_checked else None),
+        },
         "data_access": {
             "inputs": [
                 "subtask_begin.instruction",
                 "subtask_begin.domain/facet/action",
                 "lesson_recorded.failure_class",
+                "user_observation.user_event",
+                "failure_attributed.owner",
+                "decision_surface.phase/allowed_tool_count",
+                "create_consistency.consistent",
             ],
             "forbidden": [
                 "reward",

@@ -17,6 +17,8 @@ class CandidateBinding:
     leaf_ids: tuple[str, ...]
     parent_ids: tuple[str, ...]
     hard_failures: tuple[str, ...]
+    missing_arguments: tuple[str, ...]
+    action_score: float
     task_score: float
     preference_score: float
     provenance: tuple[str, ...]
@@ -67,7 +69,6 @@ class CandidateDecisionEngine:
         fixed_by_tool = fixed_arguments or {}
         profile_values = profile or {}
         raw_bindings: list[CandidateBinding] = []
-        missing: set[str] = set()
         all_candidates = list(ledger.structural_leaf_candidates())
         ranker = CandidateRanker()
         ranked_candidates = ranker.rank(
@@ -79,10 +80,11 @@ class CandidateDecisionEngine:
         }
         score_components = ranker.score_candidates(all_candidates, card)
 
-        for name, contract in sorted(self.registry.contracts.items()):
+        for name, contract in self.registry.contracts.items():
             if contract.role != "create":
                 continue
             fixed = dict(fixed_by_tool.get(name, {}))
+            tool_missing: set[str] = set()
             from agent.runtime.information import (
                 InformationSource,
                 SchemaQuestionPlanner,
@@ -97,8 +99,14 @@ class CandidateDecisionEngine:
                     if user_value not in (None, ""):
                         fixed[argument.name] = user_value
                 elif source == InformationSource.USER_REQUIRED:
-                    missing.add(argument.name)
+                    tool_missing.add(argument.name)
+            from agent.runtime.grounding import semantic_overlap_score
+
             meta = self.registry.meta.get(name)
+            action_score = semantic_overlap_score(
+                " ".join(getattr(card, "task_intent", ()) or ()),
+                getattr(meta, "semantic_text", "") or name,
+            )
             for bound in graph.enumerate_bindings(
                 contract, fixed_arguments=fixed
             ):
@@ -111,6 +119,7 @@ class CandidateDecisionEngine:
                         card,
                         profile=profile_values,
                         tool_meta=meta,
+                        defer_missing_action_values=True,
                     )
                     # Candidate admissibility is not final call validation.
                     # Non-ID action values may be bound when the proposal is
@@ -137,6 +146,7 @@ class CandidateDecisionEngine:
                         score.task_relevance,
                         score.session_correction,
                         score.historical_preference,
+                        score.historical_parent_preference,
                     ),
                     default=None,
                 )
@@ -147,6 +157,8 @@ class CandidateDecisionEngine:
                         leaf_ids=bound.leaf_ids,
                         parent_ids=bound.parent_ids,
                         hard_failures=failures,
+                        missing_arguments=tuple(sorted(tool_missing)),
+                        action_score=action_score,
                         task_score=(
                             float(
                                 component.task_relevance_band * 1000
@@ -158,8 +170,9 @@ class CandidateDecisionEngine:
                         ),
                         preference_score=(
                             float(
-                                component.session_correction * 100
-                                + component.historical_preference
+                                component.session_correction * 10000
+                                + component.historical_preference * 100
+                                + component.historical_parent_preference
                             )
                             if component is not None
                             else 0.0
@@ -175,9 +188,10 @@ class CandidateDecisionEngine:
             sorted(
                 admissible,
                 key=lambda binding: (
+                    binding.action_score,
+                    not binding.missing_arguments,
                     binding.task_score,
                     binding.preference_score,
-                    binding.create_tool,
                     binding.leaf_ids,
                 ),
                 reverse=True,
@@ -204,7 +218,7 @@ class CandidateDecisionEngine:
         if not ledger.candidates:
             next_phase = RuntimePhase.SEARCH
         elif not ordered:
-            next_phase = RuntimePhase.SELECT if enrichment else RuntimePhase.SELECT
+            next_phase = RuntimePhase.SELECT
         elif runtime is None:
             next_phase = RuntimePhase.SELECT
         else:
@@ -215,7 +229,12 @@ class CandidateDecisionEngine:
                 or runtime.selection_made
                 or runtime.force_decision_after_candidates
             )
-            if authorization.create_authorized and may_decide and not missing:
+            if (
+                authorization.create_authorized
+                and may_decide
+                and selected is not None
+                and not selected.missing_arguments
+            ):
                 next_phase = RuntimePhase.READY_TO_CREATE
             else:
                 next_phase = RuntimePhase.SELECT
@@ -224,12 +243,17 @@ class CandidateDecisionEngine:
             admissible=admissible,
             ordered=ordered,
             selected=selected,
-            missing_arguments=tuple(sorted(missing)),
+            missing_arguments=(
+                selected.missing_arguments if selected is not None else ()
+            ),
             needs_enrichment=enrichment,
             selection_basis=basis,
         )
 
     def _enrichment_requests(self, ledger: Any, card: Any) -> tuple[EnrichmentRequest, ...]:
+        remaining = ledger.enrichment_budget_remaining()
+        if remaining <= 0:
+            return ()
         candidates = list(ledger.candidates.values())
         ranker = CandidateRanker()
         requests: list[EnrichmentRequest] = []
@@ -255,7 +279,7 @@ class CandidateDecisionEngine:
                 requests.append(
                     EnrichmentRequest(name, tuple(sorted(arguments.items())))
                 )
-                if len(requests) >= min(6, len(parents)):
+                if len(requests) >= min(6, remaining, len(parents)):
                     break
             if requests:
                 break

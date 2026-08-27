@@ -13,6 +13,24 @@ _ORIGINAL_OPEN = builtins.open
 _ENABLED = False
 
 
+def configure_adapt_model_config(path: str | os.PathLike[str] | None = None) -> Path:
+    """Select ADAPT's external model overlay before ``vita.config`` imports.
+
+    An explicit ``VITA_MODEL_CONFIG_PATH`` remains authoritative.  Otherwise
+    the external runner must use the repository-root overlay rather than the
+    vendored VitaBench ``models.yaml`` with stale machine-local port mappings.
+    """
+    configured = os.environ.get("VITA_MODEL_CONFIG_PATH")
+    chosen = Path(configured) if configured else (
+        Path(path) if path is not None else Path(__file__).resolve().parents[1] / "models_adapt.yaml"
+    )
+    chosen = chosen.resolve()
+    if not chosen.is_file():
+        raise FileNotFoundError(f"ADAPT model config does not exist: {chosen}")
+    os.environ["VITA_MODEL_CONFIG_PATH"] = str(chosen)
+    return chosen
+
+
 def enable_vitabench_utf8() -> None:
     """Default text config reads under VitaBench to UTF-8.
 

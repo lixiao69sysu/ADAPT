@@ -8,7 +8,8 @@ planner.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 
@@ -29,7 +30,33 @@ class ArgumentContract:
     json_type: str = ""
     source_hint: str = ""
     question: str = ""
+    description: str = ""
     persist_as_preference: bool = False
+    # Preserve the observable JSON-schema fragment so normalization can be
+    # recursive (not just aware of the outer ``array`` wrapper).  A copied
+    # fragment keeps the contract independent from the environment object.
+    json_schema: dict[str, Any] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+
+
+@dataclass(frozen=True)
+class ActionCapability:
+    """What a CREATE schema can express, distinct from candidate evidence.
+
+    ``request`` means the environment accepts a user-visible request field;
+    it is intentionally *not* proof that a candidate intrinsically satisfies
+    that request.  This distinction prevents an echoed order note from being
+    mistaken for fulfillment evidence.
+    """
+
+    mode: str = "intrinsic"  # intrinsic | requested | none
+    request_arguments: tuple[str, ...] = ()
+    list_request_arguments: tuple[str, ...] = ()
+
+    @property
+    def can_transmit_request(self) -> bool:
+        return self.mode == "requested" and bool(self.request_arguments)
 
 
 @dataclass(frozen=True)
@@ -44,6 +71,7 @@ class ToolContract:
     observation_entity: str = ""
     state_effect: str = ""
     arguments: tuple[ArgumentContract, ...] = ()
+    action_capability: ActionCapability = ActionCapability()
 
     @property
     def required_id_variables(self) -> tuple[IdVariable, ...]:
@@ -102,6 +130,26 @@ class ToolContractCompiler:
                 )
             )
             observation = getattr(meta, "observation_schema", None)
+            arguments = tuple(
+                ArgumentContract(
+                    name=argument,
+                    required=argument in required,
+                    json_type=str(schema.get("type", "") or ""),
+                    source_hint=str(schema.get("x-adapt-source", "") or ""),
+                    question=str(
+                        schema.get("x-adapt-question-text", "")
+                        or getattr(meta, "question_arguments", {}).get(argument, "")
+                    ),
+                    description=str(schema.get("description", "") or ""),
+                    persist_as_preference=bool(
+                        schema.get("x-adapt-persist-preference", False)
+                    ),
+                    json_schema=deepcopy(schema),
+                )
+                for argument, schema in sorted(
+                    getattr(meta, "argument_schemas", {}).items()
+                )
+            )
             contracts[meta.name] = ToolContract(
                 name=meta.name,
                 role=role,
@@ -114,23 +162,52 @@ class ToolContractCompiler:
                     getattr(observation, "entity_type", "") or ""
                 ),
                 state_effect=str(getattr(meta, "state_effect", "") or ""),
-                arguments=tuple(
-                    ArgumentContract(
-                        name=argument,
-                        required=argument in required,
-                        json_type=str(schema.get("type", "") or ""),
-                        source_hint=str(schema.get("x-adapt-source", "") or ""),
-                        question=str(
-                            schema.get("x-adapt-question-text", "")
-                            or getattr(meta, "question_arguments", {}).get(argument, "")
-                        ),
-                        persist_as_preference=bool(
-                            schema.get("x-adapt-persist-preference", False)
-                        ),
-                    )
-                    for argument, schema in sorted(
-                        getattr(meta, "argument_schemas", {}).items()
-                    )
+                arguments=arguments,
+                action_capability=ToolContractCompiler._action_capability(
+                    role, arguments
                 ),
             )
         return contracts
+
+    @staticmethod
+    def _action_capability(
+        role: str, arguments: tuple[ArgumentContract, ...]
+    ) -> ActionCapability:
+        if role != "create":
+            return ActionCapability(mode="none")
+        request_arguments: list[str] = []
+        list_arguments: list[str] = []
+        for argument in arguments:
+            # This is schema semantics, not a product/category vocabulary.
+            # Providers commonly expose request fields as note/remark/comment
+            # or describe them as attributes/options/customization.
+            text = " ".join(
+                (
+                    argument.name,
+                    argument.source_hint,
+                    argument.description,
+                    argument.question,
+                )
+            ).casefold()
+            if not any(
+                marker in text
+                for marker in (
+                    "note", "remark", "comment", "memo", "message",
+                    "备注", "留言", "说明", "属性", "规格", "选项",
+                    "attribute", "spec", "option", "custom",
+                )
+            ):
+                continue
+            request_arguments.append(argument.name)
+            if argument.json_type == "array":
+                list_arguments.append(argument.name)
+        if not request_arguments:
+            return ActionCapability(mode="intrinsic")
+        ordered = [
+            name for name in request_arguments if name not in list_arguments
+        ] + list_arguments
+        return ActionCapability(
+            mode="requested",
+            request_arguments=tuple(ordered),
+            list_request_arguments=tuple(list_arguments),
+        )

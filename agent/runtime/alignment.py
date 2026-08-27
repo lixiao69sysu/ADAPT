@@ -118,15 +118,19 @@ class CandidateAttributeMap:
         if not target:
             return False
         for attribute in self.attributes:
+            observed = _normalize(attribute.value)
+            # Exact candidate-observed values are schema-invariant evidence.
+            # One provider may expose a value as a structured field while
+            # another exposes the same value as a tag.  Prefix/substring
+            # matching remains key-scoped because it is less precise.
+            if observed == target:
+                return True
             if (
                 atom.attribute_key not in {"legacy_text", "open"}
                 and attribute.key != atom.attribute_key
             ):
                 continue
-            observed = _normalize(attribute.value)
-            if observed == target or (
-                len(target) >= 2 and observed.startswith(target)
-            ) or (
+            if (len(target) >= 2 and observed.startswith(target)) or (
                 len(target) >= 2 and target in observed
             ):
                 return True

@@ -53,6 +53,10 @@ class FactStore:
                 and existing.scope == fact.scope
                 and existing.facet == fact.facet
                 and existing.dimension == fact.dimension
+                and getattr(existing, "condition_signature", "")
+                == getattr(fact, "condition_signature", "")
+                and getattr(existing, "persistence", "persistent")
+                == getattr(fact, "persistence", "persistent")
                 and (existing.value in fact.value or fact.value in existing.value)
             ):
                 if len(fact.value) < len(existing.value):
@@ -78,6 +82,10 @@ class FactStore:
                 and existing.category == fact.category
                 and existing.polarity == fact.polarity
                 and existing.value == fact.value
+                and getattr(existing, "condition_signature", "")
+                == getattr(fact, "condition_signature", "")
+                and getattr(existing, "persistence", "persistent")
+                == getattr(fact, "persistence", "persistent")
             ):
                 existing.confidence = max(existing.confidence, fact.confidence)
                 existing.observed_at = max(existing.observed_at, fact.observed_at)
@@ -108,6 +116,10 @@ class FactStore:
                     and existing.category == fact.category
                     and existing.polarity == fact.polarity
                     and existing.value != fact.value
+                    and getattr(existing, "condition_signature", "")
+                    == getattr(fact, "condition_signature", "")
+                    and getattr(existing, "persistence", "persistent")
+                    == getattr(fact, "persistence", "persistent")
                 ):
                     existing.status = "superseded"
         self.facts.append(fact)

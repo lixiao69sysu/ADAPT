@@ -58,3 +58,30 @@ def test_metric_comparison_reports_reward_and_error_reduction():
     assert result["subtask_avg_at_1_delta"] == 0.1
     assert result["subtask_pass_at_1_delta"] == 0.1
     assert result["tool_errors_reduction"] == 0.5
+
+
+def test_trace_metrics_compute_true_avg_and_pass_at_four(tmp_path):
+    path = tmp_path / "run4.json"
+    simulations = []
+    for task_id, rewards in {"A": [0.1, 1.0, 0.3, 0.5], "B": [0.2, 0.4, 0.6, 0.8]}.items():
+        for trial, reward in enumerate(rewards):
+            simulations.append({
+                "task_id": task_id,
+                "trial": trial,
+                "reward_info": {
+                    "reward": reward,
+                    "info": {"subtask_rewards": {"s0": reward}},
+                },
+                "messages": [],
+            })
+    path.write_text(
+        json.dumps({"info": {"num_trials": 4}, "simulations": simulations}),
+        encoding="utf-8",
+    )
+    metrics = summarize(path)
+    assert metrics["evaluation_k"] == 4
+    assert metrics["task_avg_at_1"] == 0.4875
+    assert metrics["task_pass_at_1"] == 0.125
+    assert metrics["task_avg_at_k"] == 0.4875
+    assert metrics["task_pass_at_k"] == 0.5
+    assert metrics["subtask_pass_at_k"] == 0.5

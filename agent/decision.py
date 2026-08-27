@@ -35,7 +35,14 @@ _DATE_RANGE_RE = re.compile(
     r"((?:\d{1,2}月)?\d{1,2}(?:日|号))"
 )
 _EXACT_ENTITY_RE = re.compile(
-    r"(?:就选|指定|要的是|就)([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)(?:吧|[,，。!！?？]|$)"
+    r"(?:就选|指定|要的是|就要)([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)(?:吧|[,，。!！?？]|$)"
+)
+_BARE_JUST_ENTITY_RE = re.compile(
+    r"就([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)吧"
+)
+_CORRECTED_ENTITY_RE = re.compile(
+    r"(?:我说的是|应该是|改成|换成|不是[^，。！？]{1,24}[，,]?\s*是)"
+    r"([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)(?:吧|[,，。!！?？]|$)"
 )
 _GENERIC_ENTITY_FRAGMENTS = (
     "吃外卖",
@@ -59,6 +66,9 @@ _ADDRESS_RE = re.compile(r"(?:送到|送去)([^，。；;!！?？]{2,40})")
 _ADDRESS_TRAILING_RE = re.compile(r"(?:就行|即可|就可以|之前|为止|来)$")
 _INVALID_ADDRESS_VALUES = {"就行", "即可", "就可以", "来", "这里", "那里"}
 _PARTY_SIZE_RE = re.compile(r"([一二两三四五六七八九十\d]+)\s*(?:个)?人")
+_QUANTITY_RE = re.compile(
+    r"([一二两三四五六七八九十\d]+)\s*(张|份|位|人|间|杯|件|个|双|瓶)"
+)
 _ROUTE_RE = re.compile(
     r"(?:从)([^，。；;!！?？]{1,24}?)(?:到|去)([^，。；;!！?？]{1,24})"
 )
@@ -136,11 +146,17 @@ class TaskSpec:
 
         must: list[Constraint] = []
         avoid: list[Constraint] = []
-        for match in _EXACT_ENTITY_RE.finditer(text):
+        for match in (
+            *_EXACT_ENTITY_RE.finditer(text),
+            *_BARE_JUST_ENTITY_RE.finditer(text),
+            *_CORRECTED_ENTITY_RE.finditer(text),
+        ):
             value = match.group(1).strip()
             if not any(fragment in value for fragment in _GENERIC_ENTITY_FRAGMENTS):
                 must.append(Constraint("entity", value, evidence_span=match.group(0)))
-        if facet == "restaurant":
+        if facet == "restaurant" or any(
+            marker in text for marker in ("座位", "位置", "订桌", "桌位", "包间")
+        ):
             party_match = _PARTY_SIZE_RE.search(text)
             if party_match:
                 party_size = _normalize_chinese_count(party_match.group(1))
@@ -148,9 +164,27 @@ class TaskSpec:
                     Constraint(
                         "party_size",
                         f"{party_size}人",
+                        ConstraintTarget.ARGUMENT,
+                        ConstraintOperator.EQUALS,
                         evidence_span=party_match.group(0),
+                        argument_name="customer_count",
                     )
                 )
+        quantity_match = _QUANTITY_RE.search(text)
+        if quantity_match and not (
+            facet == "restaurant" and quantity_match.group(2) in {"人", "位"}
+        ):
+            quantity = _normalize_chinese_count(quantity_match.group(1))
+            must.append(
+                Constraint(
+                    "quantity",
+                    quantity,
+                    ConstraintTarget.ARGUMENT,
+                    ConstraintOperator.EQUALS,
+                    evidence_span=quantity_match.group(0),
+                    argument_name="quantity",
+                )
+            )
         date_range = _DATE_RANGE_RE.search(text)
         if date_range:
             start_date, end_date = date_range.groups()
@@ -256,30 +290,31 @@ class TaskSpec:
                 )
             )
 
-        for marker in ("不要", "不吃", "不喜欢", "不能", "避免", "忌口"):
-            start = text.find(marker)
-            if start >= 0:
-                value = re.split(
-                    r"[,，。；;!！?？]", text[start + len(marker) :], maxsplit=1
-                )[0].strip()
-                if value:
-                    avoid.append(
-                        Constraint(
-                            "negative",
-                            value[:30],
-                            ConstraintTarget.CANDIDATE,
-                            ConstraintOperator.EXCLUDES,
-                            evidence_span=text[
-                                start : start + len(marker) + len(value)
-                            ],
-                        )
-                    )
+        for match in re.finditer(r"不要|不吃|不喜欢|不能吃|避免|忌口", text):
+            value = re.split(
+                r"[,，。；;!！?？\n]", text[match.end() :], maxsplit=1
+            )[0].strip()
+            if not value or any(
+                action_marker in value
+                for action_marker in ("下单", "预订", "预约", "支付", "购买", "推荐")
+            ):
+                continue
+            avoid.append(
+                Constraint(
+                    "negative",
+                    value[:30],
+                    ConstraintTarget.CANDIDATE,
+                    ConstraintOperator.EXCLUDES,
+                    evidence_span=text[match.start() : match.end() + len(value)],
+                )
+            )
 
         required = _required_slots(domain, facet, action, text)
         unknown = [slot for slot in required if not _slot_is_present(slot, text)]
         resolved = {}
-        if any(c.kind == "address" for c in must):
-            resolved["address"] = next(c.value for c in must if c.kind == "address")
+        for constraint in must:
+            if constraint.target == ConstraintTarget.ARGUMENT:
+                resolved.setdefault(constraint.kind, constraint.value)
         return cls(
             text,
             domain,
@@ -313,6 +348,15 @@ class DecisionCard:
     preference_weights: dict[str, float] = field(default_factory=dict)
     preference_decisive: dict[str, bool] = field(default_factory=dict)
     preference_source_types: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Post-search candidate-specific evidence.  These values are internal
+    # ranking inputs, never prompt text: an edge can only refer to an ID in the
+    # current CandidateLedger and is discarded on the next subtask.
+    candidate_preference_scores: dict[str, float] = field(default_factory=dict)
+    candidate_parent_preference_scores: dict[str, float] = field(default_factory=dict)
+    candidate_grounding_sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    candidate_grounding_confidence: dict[str, float] = field(default_factory=dict)
+    candidate_grounding_edge_counts: dict[str, int] = field(default_factory=dict)
+    grounded_edge_count: int = 0
 
     def alignment_preferences(self) -> list[str]:
         """Sources eligible for candidate-induced, task-local grounding."""
@@ -374,6 +418,38 @@ class DecisionCard:
         return ("\n".join(sections) or "MUST: follow the current instruction")[
             :max_chars
         ]
+
+    def render_for_search(
+        self, max_chars: int = 1200, max_facts: int = 8
+    ) -> str:
+        """Render only evidence allowed to shape first-stage retrieval.
+
+        Before live candidates exist, an old entity or merchant preference can
+        accidentally become the search category itself.  Keep current-session
+        answers/corrections because they are part of the active request, but
+        defer historical positive facts and their evidence until candidate-
+        induced grounding has supplied an observable attribute vocabulary.
+        Hard MUST/AVOID constraints remain visible throughout.
+        """
+        current_sources = {
+            "current_instruction",
+            "current_user_answer",
+            "user_correction",
+        }
+        current_preferences = [
+            value
+            for value in self.prefer
+            if current_sources
+            & set(self.preference_source_types.get(value, ()))
+        ]
+        return DecisionCard(
+            must=list(self.must),
+            avoid=list(self.avoid),
+            prefer=current_preferences,
+            ask=list(self.ask),
+            constraints=list(self.constraints),
+            task_intent=list(self.task_intent),
+        ).render(max_chars=max_chars, max_facts=max_facts)
 
 
 def build_decision_card(
@@ -592,15 +668,21 @@ class Candidate:
 class CandidateLedger:
     """Typed, per-subtask observations and semantic search budgets."""
 
-    def __init__(self, max_searches_per_family: int = 2) -> None:
+    def __init__(
+        self,
+        max_searches_per_family: int = 2,
+        max_enrichment_reads_per_subtask: int = 12,
+    ) -> None:
         self.candidates: dict[str, Candidate] = {}
         self.search_counts: dict[str, int] = {}
         self.search_family_counts: dict[str, int] = {}
         self.enrichment_read_counts: dict[str, int] = {}
         self.pending_payment_ids: set[str] = set()
         self.state_ids: dict[str, set[str]] = {}
+        self.state_sources: dict[str, dict[str, set[str]]] = {}
         self.candidate_version = 0
         self.max_searches_per_family = max_searches_per_family
+        self.max_enrichment_reads_per_subtask = max_enrichment_reads_per_subtask
         self.require_max_preference_coverage = False
         self._turn = 0
 
@@ -611,6 +693,7 @@ class CandidateLedger:
         self.enrichment_read_counts.clear()
         self.pending_payment_ids.clear()
         self.state_ids.clear()
+        self.state_sources.clear()
         self.candidate_version = 0
         self.require_max_preference_coverage = False
         self._turn = 0
@@ -738,11 +821,11 @@ class CandidateLedger:
         )
         if not text:
             return
-        for field, value in re.findall(
+        for field_name, value in re.findall(
             r"['\"]?\b([A-Za-z][A-Za-z0-9_]*_id)['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9_.:-]+)",
             text,
         ):
-            kind = field.casefold().removesuffix("_id")
+            kind = field_name.casefold().removesuffix("_id")
             if not any(
                 marker in kind
                 for marker in (
@@ -752,6 +835,9 @@ class CandidateLedger:
             ):
                 continue
             self.state_ids.setdefault(kind, set()).add(value)
+            self.state_sources.setdefault(kind, {}).setdefault(value, set()).add(
+                tool_name
+            )
         lowered = text.casefold()
         if "status:unpaid" in lowered or "status=unpaid" in lowered:
             order_ids = self.state_ids.get("order", set())
@@ -788,14 +874,14 @@ class CandidateLedger:
                 if record.get(field) not in (None, "")
             )
             attributes: dict[str, str] = {}
-            for field in schema.attribute_fields:
-                value = record.get(field)
+            for schema_field in schema.attribute_fields:
+                value = record.get(schema_field)
                 if isinstance(value, dict):
                     attributes.update(
                         {str(key): str(item) for key, item in value.items()}
                     )
                 elif value not in (None, ""):
-                    attributes[field] = str(value)
+                    attributes[schema_field] = str(value)
             raw = json.dumps(record, ensure_ascii=False, sort_keys=True)
             self.candidates[candidate_id] = Candidate(
                 candidate_id=candidate_id,
@@ -872,6 +958,15 @@ class CandidateLedger:
     ) -> int:
         signature = f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False)}"
         return self.enrichment_read_counts.get(signature, 0)
+
+    def enrichment_read_total(self) -> int:
+        return sum(self.enrichment_read_counts.values())
+
+    def enrichment_budget_remaining(self) -> int:
+        return max(
+            0,
+            self.max_enrichment_reads_per_subtask - self.enrichment_read_total(),
+        )
 
     def search_allowed(self, tool_name: str) -> bool:
         # Arguments are not known while building the tool list. Keep the search
@@ -1246,6 +1341,7 @@ class CandidateLedger:
         card: DecisionCard,
         profile: dict[str, Any] | None = None,
         tool_meta: Any = None,
+        defer_missing_action_values: bool = False,
     ) -> list[str]:
         raw_role = getattr(tool_meta, "role", None)
         role = getattr(raw_role, "value", raw_role or "")
@@ -1357,6 +1453,7 @@ class CandidateLedger:
                         arguments,
                         profile or {},
                         selected_text=selected_text,
+                        allow_missing=defer_missing_action_values,
                     )
                 )
         if any(c.inventory == 0 for c in constraint_candidates):
@@ -1374,9 +1471,6 @@ class CandidateLedger:
                 key: [str(item) for item in (value if isinstance(value, list) else [value])]
                 for key, value in arguments.items()
                 if key in id_arguments and id_arguments[key] != "user"
-            }
-            all_selected = {
-                item for values in selected_by_argument.values() for item in values
             }
             for key, values in selected_by_argument.items():
                 other_selected = {
@@ -1480,6 +1574,7 @@ def _validate_argument_constraint(
     profile: dict[str, Any],
     *,
     selected_text: str = "",
+    allow_missing: bool = False,
 ) -> list[str]:
     aliases = {
         "date": (
@@ -1520,6 +1615,11 @@ def _validate_argument_constraint(
     # argument, and an explicit WRITE date must agree with that candidate.
     candidate_values = _candidate_bound_values(constraint.kind, selected_text)
     if not joined:
+        # Quantity is sometimes represented structurally by selected IDs while
+        # the tool has no quantity argument. A schema-required quantity is
+        # still enforced independently by ToolRegistry.validate_required.
+        if constraint.kind == "quantity":
+            return []
         if candidate_values and _constraint_present(
             constraint.value, " ".join(candidate_values)
         ):
@@ -1529,10 +1629,25 @@ def _validate_argument_constraint(
                 f"selected candidate does not satisfy required {constraint.kind}: "
                 f"{constraint.value}"
             ]
+        if allow_missing:
+            # Candidate admissibility and final action validity are separate.
+            # A missing date/address/count cannot make every concrete entity
+            # inadmissible; final preflight still requires and validates it.
+            return []
         return [
             f"{constraint.kind} argument does not satisfy required value: {constraint.value}"
         ]
-    if not _constraint_present(constraint.value, joined):
+    expected_value = constraint.value
+    if constraint.kind in {"quantity", "party_size"}:
+        expected_match = re.search(r"\d+", expected_value)
+        actual_match = re.search(r"\d+", joined)
+        if (
+            expected_match
+            and actual_match
+            and expected_match.group() == actual_match.group()
+        ):
+            return []
+    if not _constraint_present(expected_value, joined):
         return [
             f"{constraint.kind} argument does not satisfy required value: {constraint.value}"
         ]

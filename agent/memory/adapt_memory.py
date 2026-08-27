@@ -42,9 +42,13 @@ from agent.memory.entity_index import (
     CombinedFactView,
     EntityEvidenceIndex,
 )
+from agent.memory.evidence import (
+    PreferenceEvidenceStore,
+    is_persistent_statement,
+)
 from agent.memory.fact_store import FactStore
 from agent.memory.facts import fact_from_signal
-from agent.memory.grounding import ground_facts_to_candidates
+from agent.memory.grounding import candidate_evidence_edges
 from agent.memory.lifecycle import LifecycleManager
 from agent.memory.proactive import ProactiveEngine
 from agent.memory.retrieval import RetrievalConfig, RetrievalScorer, _normalize_domain
@@ -72,6 +76,9 @@ class ADAPTMemory(BaseMemory):
         enable_summary_rewrite: bool = False,
         enable_tiered_compaction: bool = True,
         entity_index_max_entries: int = 500,
+        enable_preference_modeling: bool = True,
+        memory_update_mode: str = "full",
+        enable_proactive_interaction: bool = True,
         **kwargs,
     ):
         super().__init__(language=language, top_k=top_k, **kwargs)
@@ -95,6 +102,10 @@ class ADAPTMemory(BaseMemory):
         self._summary_text: str = ""
         self.enable_tiered_compaction = enable_tiered_compaction
         self.preference_store = FactStore()
+        # The FactStore remains the bounded task-facing projection.  Evidence
+        # provenance and confidence aggregation live separately so duplicate
+        # rows or a weak search cannot silently become a durable belief.
+        self.preference_evidence = PreferenceEvidenceStore()
         # Compatibility name used by existing callers and diagnostics.
         self.fact_store = self.preference_store
         self.entity_index = EntityEvidenceIndex(entity_index_max_entries)
@@ -104,6 +115,11 @@ class ADAPTMemory(BaseMemory):
             enable_tiered_compaction,
         )
         self.enable_summary_rewrite = enable_summary_rewrite
+        self.enable_preference_modeling = enable_preference_modeling
+        if memory_update_mode not in {"full", "simple"}:
+            raise ValueError("memory_update_mode must be 'full' or 'simple'")
+        self.memory_update_mode = memory_update_mode
+        self.enable_proactive_interaction = enable_proactive_interaction
         self._seen_interactions: set[str] = set()
         self._current_task_key: str = ""
 
@@ -134,58 +150,144 @@ class ADAPTMemory(BaseMemory):
     ) -> DecisionCard:
         """Compile instruction and active facts into a bounded Decision Card."""
         spec = spec or TaskSpec.compile(instruction)
-        spec.resolved_slots.update(resolve_preference_slots(spec, self.facts))
-        return build_decision_card(spec, self.facts)
+        facts = self.facts if self.enable_preference_modeling else []
+        if self.enable_preference_modeling:
+            spec.resolved_slots.update(resolve_preference_slots(spec, facts))
+        card = build_decision_card(spec, facts)
+        if not self.enable_proactive_interaction:
+            card.ask.clear()
+        return card
 
     def resolve_task_slots(
         self, instruction: str, *, spec: TaskSpec | None = None
     ) -> dict[str, str]:
         """Return strong, unambiguous historical values for task-choice slots."""
         spec = spec or TaskSpec.compile(instruction)
+        if not self.enable_preference_modeling:
+            return {}
         return resolve_preference_slots(spec, self.facts)
 
     def storage_stats(self) -> dict[str, int | bool]:
         """Observable storage diagnostics for traces and zero-model audits."""
         return {
             "tiered_compaction": self.enable_tiered_compaction,
+            "preference_modeling": self.enable_preference_modeling,
+            "memory_update_simple": self.memory_update_mode == "simple",
+            "proactive_interaction": self.enable_proactive_interaction,
             "preference_entries": len(self.preference_store.facts),
             "entity_entries": len(self.entity_index),
             "combined_entries": len(self.facts),
+            **self.preference_evidence.stats(),
         }
 
     def _ingest_fact(
         self, fact, *, confirmed_drift: bool = False
     ):
+        hypothesis = self.preference_evidence.observe_fact(fact)
+        fact.confidence = hypothesis.confidence
+        fact.belief_confidence = hypothesis.confidence
+        fact.independent_evidence_count = hypothesis.evidence_count
+        fact.source_diversity = hypothesis.source_diversity
         if self.enable_tiered_compaction and fact.dimension in ENTITY_DIMENSIONS:
-            return self.entity_index.ingest(fact)
-        return self.preference_store.ingest(
+            stored = self.entity_index.ingest(fact)
+        else:
+            stored = self.preference_store.ingest(
             fact, confirmed_drift=confirmed_drift
         )
+        if stored is not None:
+            self.preference_evidence.apply_to_facts([stored])
+        return stored
+
+    def _ingest_fact_simple(self, fact):
+        """Controlled baseline: direct fact ingestion without belief updates."""
+        if self.enable_tiered_compaction and fact.dimension in ENTITY_DIMENSIONS:
+            return self.entity_index.ingest(fact)
+        return self.preference_store.ingest(fact, confirmed_drift=False)
 
     def apply_candidate_grounding(
         self,
         card: DecisionCard,
         candidates: list[object],
         *,
-        max_positive: int = 64,
+        max_positive: int = 8,
     ) -> dict[str, int]:
-        """Replace the pre-search pool with facts grounded to live candidates."""
-        grounded = ground_facts_to_candidates(self.facts, candidates)
-        positive = [fact for fact in grounded if fact.polarity != "negative"]
-        negative = [fact for fact in grounded if fact.polarity == "negative"]
+        """Project belief only through explicit current-candidate edges."""
+        if not self.enable_preference_modeling:
+            card.preference_pool.clear()
+            card.preference_weights.clear()
+            card.preference_decisive.clear()
+            card.preference_source_types.clear()
+            card.candidate_preference_scores.clear()
+            card.candidate_parent_preference_scores.clear()
+            card.candidate_grounding_sources.clear()
+            card.candidate_grounding_confidence.clear()
+            card.candidate_grounding_edge_counts.clear()
+            card.grounded_edge_count = 0
+            return {
+                "candidate_count": len(candidates),
+                "grounded_positive": 0,
+                "grounded_negative": 0,
+                "grounded_edges": 0,
+            }
+        self.preference_evidence.apply_to_facts(self.facts)
+        edges = candidate_evidence_edges(
+            self.facts,
+            candidates,
+            task_text=" ".join(card.task_intent),
+        )
+        positive = [edge for edge in edges if edge.fact.polarity != "negative"]
+        negative = [edge.projected_fact() for edge in edges if edge.fact.polarity == "negative"]
 
+        # Preserve a representative from each grounded dimension/category
+        # before filling by confidence.  This prevents an entity-heavy history
+        # from crowding out safety/conditional evidence while keeping the card
+        # bounded to the documented eight facts.
+        grouped: dict[tuple[str, str, str], list[object]] = {}
+        for edge in positive:
+            key = (
+                edge.fact.dimension,
+                edge.fact.category,
+                edge.fact.condition_signature,
+            )
+            grouped.setdefault(key, []).append(edge)
+        fair_first = [items[0] for _key, items in sorted(grouped.items()) if items]
+        remaining = [edge for edge in positive if edge not in fair_first]
+        ordered = [*fair_first, *remaining]
+        selected_fact_ids: set[str] = set()
         selected_values: list[str] = []
-        for fact in positive:
-            if fact.value not in selected_values:
-                selected_values.append(fact.value)
+        for edge in ordered:
+            value = edge.fact.value
+            if edge.fact.fact_id in selected_fact_ids or value in selected_values:
+                continue
+            selected_fact_ids.add(edge.fact.fact_id)
+            selected_values.append(value)
             if len(selected_values) >= max_positive:
                 break
         card.preference_pool = selected_values
         card.preference_weights.clear()
         card.preference_decisive.clear()
         card.preference_source_types.clear()
+        card.candidate_preference_scores.clear()
+        card.candidate_parent_preference_scores.clear()
+        card.candidate_grounding_sources.clear()
+        card.candidate_grounding_confidence.clear()
+        card.candidate_grounding_edge_counts.clear()
+        card.grounded_edge_count = 0
         selected = set(selected_values)
-        for fact in positive:
+        parent_identity_keys = {"store_name", "shop_name", "merchant_name"}
+        # Each fact contributes at most once per candidate.  Multiple raw
+        # fields exposing the same value are corroboration of grounding, not
+        # repeated preference evidence.
+        per_candidate_fact: dict[tuple[str, str], object] = {}
+        for edge in positive:
+            if edge.fact.fact_id not in selected_fact_ids:
+                continue
+            key = (edge.candidate_id, edge.fact.fact_id)
+            previous = per_candidate_fact.get(key)
+            if previous is None or edge.weight > previous.weight:
+                per_candidate_fact[key] = edge
+        for edge in per_candidate_fact.values():
+            fact = edge.fact
             if fact.value not in selected:
                 continue
             card.preference_weights[fact.value] = max(
@@ -203,6 +305,31 @@ class ADAPTMemory(BaseMemory):
                     ]
                 )
             )
+            target = (
+                card.candidate_parent_preference_scores
+                if edge.attribute_key in parent_identity_keys
+                else card.candidate_preference_scores
+            )
+            target[edge.candidate_id] = round(
+                target.get(edge.candidate_id, 0.0) + edge.weight,
+                4,
+            )
+            card.candidate_grounding_sources[edge.candidate_id] = tuple(
+                dict.fromkeys(
+                    [
+                        *card.candidate_grounding_sources.get(edge.candidate_id, ()),
+                        edge.attribute_source,
+                    ]
+                )
+            )
+            card.candidate_grounding_confidence[edge.candidate_id] = max(
+                edge.grounding_confidence,
+                card.candidate_grounding_confidence.get(edge.candidate_id, 0.0),
+            )
+            card.candidate_grounding_edge_counts[edge.candidate_id] = (
+                card.candidate_grounding_edge_counts.get(edge.candidate_id, 0) + 1
+            )
+            card.grounded_edge_count += 1
 
         existing_avoids = set(card.avoid)
         for fact in negative:
@@ -225,6 +352,7 @@ class ADAPTMemory(BaseMemory):
             "candidate_count": len(candidates),
             "grounded_positive": len(selected_values),
             "grounded_negative": len(negative),
+            "grounded_edges": card.grounded_edge_count,
         }
 
     def _summary_fallback(self, spec: TaskSpec) -> list[str]:
@@ -504,6 +632,8 @@ class ADAPTMemory(BaseMemory):
         else:
             evicted = 0
 
+        self._sync_fact_lifecycle()
+
         self._prune_stream()
         self._prune_facts()
 
@@ -535,6 +665,7 @@ class ADAPTMemory(BaseMemory):
         """
         # Collect dialogue texts
         dialogue_chunks: list[str] = []
+        user_evidence: list[str] = []
         ref_ts = ""
         for inter in interactions:
             if not isinstance(inter, dict):
@@ -550,9 +681,13 @@ class ADAPTMemory(BaseMemory):
                         continue
                     role = turn.get("role", turn.get("speaker", "")).lower()
                     content = turn.get("content", turn.get("message", ""))
-                    if isinstance(content, str) and content:
-                        role_label = "用户" if role in ("user", "human", "客户", "顾客") else "助手"
-                        lines.append(f"{role_label}: {content}")
+                    if (
+                        isinstance(content, str)
+                        and content
+                        and role in ("user", "human", "客户", "顾客")
+                    ):
+                        lines.append(f"用户: {content}")
+                        user_evidence.append(content)
                 if lines:
                     dialogue_chunks.append("\n".join(lines))
 
@@ -610,20 +745,26 @@ class ADAPTMemory(BaseMemory):
 
             from agent.memory.signals import Signal
             signals = []
+            evidence_text = "\n".join(user_evidence)
             for item in items:
                 if not isinstance(item, dict):
                     continue
                 pred = item.get("predicate", "")
                 obj = str(item.get("object", "")).strip()
                 conf = float(item.get("confidence", 0.8))
-                if pred and obj and 1 <= len(obj) <= 60:
+                if (
+                    pred
+                    and obj
+                    and 1 <= len(obj) <= 60
+                    and self._object_has_user_evidence(obj, evidence_text)
+                ):
                     signals.append(Signal(
                         predicate=pred,
                         object=obj,
                         confidence=min(0.95, max(0.5, conf)),
                         timestamp=ref_ts,
                         type="conversation",
-                        raw=f"[LLM extracted] {pred}: {obj}",
+                        raw=f"[LLM extracted from user] {evidence_text[:400]}",
                         importance=7.0,  # LLM-extracted signals are high value
                     ))
             return signals
@@ -631,6 +772,44 @@ class ADAPTMemory(BaseMemory):
         except Exception:  # noqa: BLE001 - optional model extraction must not break runtime
             # Never fail silently — LLM extraction is best-effort
             return []
+
+    @staticmethod
+    def _object_has_user_evidence(value: str, user_text: str) -> bool:
+        """Reject model-only preference objects without a user-text anchor."""
+        import re
+
+        def normalize(text: str) -> str:
+            return re.sub(
+                r"[^0-9A-Za-z\u4e00-\u9fff]+", "", (text or "").casefold()
+            )
+
+        normalized_value = normalize(value)
+        normalized_user = normalize(user_text)
+        if not normalized_value or not normalized_user:
+            return False
+        if normalized_value in normalized_user:
+            return True
+        anchors = re.findall(
+            r"[\u4e00-\u9fff]{2,}|[a-z0-9]{3,}", normalized_value
+        )
+        return any(anchor in normalized_user for anchor in anchors)
+
+    def _sync_fact_lifecycle(self) -> None:
+        """Expire unprotected facts only when lifecycle removed all evidence."""
+        alive_ids = {str(event.id) for event in self.stream.all()}
+        protected = {"safety", "explicit", "conditional"}
+        for fact in self.facts:
+            if fact.status != "active" or not fact.evidence_ids:
+                continue
+            surviving = [
+                evidence_id
+                for evidence_id in fact.evidence_ids
+                if str(evidence_id) in alive_ids
+            ]
+            if surviving:
+                fact.evidence_ids = surviving
+            elif fact.dimension not in protected:
+                fact.status = "expired"
 
     # ------------------------------------------------------------------
     # Hybrid memory: coherent LLM summary (rich "gist") + structured signals
@@ -771,10 +950,12 @@ class ADAPTMemory(BaseMemory):
         return self.proactive.commit_question(question)
 
     def record_user_answer(self, answer: str, question: str | None = None,
-                           dimension: str = "") -> bool:
+                           dimension: str = "", *, persistent: bool = True) -> bool:
         """Persist an answer to a committed proactive question."""
         q = question or self.proactive.pending_question
         if not q or not (answer or "").strip():
+            return False
+        if not persistent:
             return False
         before = len(self.stream)
         self.proactive.record_answer(q, answer, self)
@@ -789,6 +970,45 @@ class ADAPTMemory(BaseMemory):
                 fact.dimension = dimension
             self._ingest_fact(fact)
         return True
+
+    def acknowledge_task_answer(self, answer: str) -> bool:
+        """Clear a committed question after a task-local answer.
+
+        The runtime already stores the value in the active ``TaskSpec`` slot.
+        This method deliberately records no long-term preference fact.
+        """
+        if not self.proactive.pending_question or not (answer or "").strip():
+            return False
+        self.proactive.pending_question = None
+        return True
+
+    @staticmethod
+    def is_persistent_statement(text: str) -> bool:
+        """Expose the conservative persistence classifier to ADAPTAgent."""
+        return is_persistent_statement(text)
+
+    def record_runtime_preference(
+        self,
+        statement: str,
+        *,
+        persistent: bool = False,
+        timestamp: str = "",
+    ) -> int:
+        """Persist an explicit live preference without promoting task-only text.
+
+        Returns the number of facts accepted by the bounded profile.  Current
+        task requirements are intentionally handled by ``TaskSpec`` instead.
+        """
+        signals = self.parser.parse_runtime_statement(
+            statement, timestamp=timestamp, persistent=persistent
+        )
+        accepted = 0
+        for signal in signals:
+            event = self.stream.add(signal)
+            fact = fact_from_signal(signal, str(event.id))
+            if self._ingest_fact(fact) is not None:
+                accepted += 1
+        return accepted
 
     # ------------------------------------------------------------------
     # Agent-callable tools (auto-discovered via @is_tool)

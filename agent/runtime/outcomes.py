@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any
 
 
 class ToolEffect(str, Enum):
@@ -40,6 +41,53 @@ class ToolOutcomeNormalizer:
 
     _PENDING = {"unpaid", "pending_payment", "payment_pending", "awaiting_payment"}
     _SUCCESS = {"ok", "success", "successful", "succeeded", "completed", "paid"}
+    _FAILURE = {
+        "fail",
+        "failed",
+        "failure",
+        "error",
+        "rejected",
+        "invalid",
+        "unavailable",
+        "not_found",
+        "not found",
+    }
+    _TEXT_FAILURE_MARKERS = (
+        "not found",
+        "no available",
+        "insufficient",
+        "out of stock",
+        "does not exist",
+        "does not have",
+        "does not belong",
+        "doesn't exist",
+        "invalid",
+        "failed",
+        "failure",
+        "error",
+        "cannot ",
+        "can't ",
+        "unavailable",
+        "失败",
+        "不存在",
+        "无可用",
+        "库存不足",
+        "无库存",
+        "已售罄",
+        "错误",
+        "无法",
+        "不能",
+    )
+    _EMPTY_STATE_MARKERS = (
+        "no delivery orders available",
+        "no orders available",
+        "no bookings available",
+        "no reservations available",
+        "暂无订单",
+        "暂无预约",
+        "没有订单记录",
+        "没有预约记录",
+    )
 
     @classmethod
     def normalize(
@@ -56,6 +104,20 @@ class ToolOutcomeNormalizer:
         statuses = cls._status_values(payload)
         workflow_ids = tuple(dict.fromkeys(cls._ids(payload)))
         if payload is not None:
+            if tool_role == "state_read" and cls._structured_empty_state(payload):
+                return ToolOutcome(
+                    True,
+                    ToolEffect.OBSERVED,
+                    (),
+                    source="structured_empty_state",
+                )
+            if cls._structured_failure(payload, statuses):
+                return ToolOutcome(
+                    False,
+                    ToolEffect.NO_CHANGE,
+                    workflow_ids,
+                    source="structured_failure",
+                )
             if tool_role == "create":
                 effect = (
                     ToolEffect.CREATED_PENDING_PAYMENT
@@ -83,6 +145,25 @@ class ToolOutcomeNormalizer:
                 )
             )
         )
+        if tool_role == "state_read" and any(
+            marker in lowered or marker in text
+            for marker in cls._EMPTY_STATE_MARKERS
+        ):
+            return ToolOutcome(
+                True,
+                ToolEffect.OBSERVED,
+                (),
+                source="legacy_empty_state",
+            )
+        if cls._text_failure(lowered, text) or re.search(
+            r"\bno\b.{0,40}\bavailable\b", lowered
+        ):
+            return ToolOutcome(
+                False,
+                ToolEffect.NO_CHANGE,
+                workflow_ids,
+                source="legacy_text_failure",
+            )
         if tool_role == "create":
             pending = "unpaid" in lowered or "待支付" in text
             return ToolOutcome(
@@ -104,6 +185,49 @@ class ToolOutcomeNormalizer:
         if tool_role == "modify":
             return ToolOutcome(True, ToolEffect.MODIFIED, workflow_ids, source="legacy_text")
         return ToolOutcome(True, ToolEffect.OBSERVED, workflow_ids, source="legacy_text")
+
+    @classmethod
+    def _text_failure(cls, lowered: str, original: str) -> bool:
+        for marker in cls._TEXT_FAILURE_MARKERS:
+            haystack = (
+                original
+                if any("\u4e00" <= char <= "\u9fff" for char in marker)
+                else lowered
+            )
+            if marker in haystack:
+                return True
+        return bool(re.search(r"\bno\b.{0,40}\bavailable\b", lowered))
+
+    @classmethod
+    def _structured_empty_state(cls, payload: Any) -> bool:
+        return any(
+            any(marker in value.casefold() for marker in cls._EMPTY_STATE_MARKERS)
+            for _, value in cls._walk(payload)
+            if isinstance(value, str)
+        )
+
+    @classmethod
+    def _structured_failure(cls, payload: Any, statuses: set[str]) -> bool:
+        if statuses & cls._FAILURE:
+            return True
+        for key, value in cls._walk(payload):
+            normalized_key = key.casefold()
+            if normalized_key in {"ok", "success", "successful", "succeeded"}:
+                if value is False or str(value).strip().casefold() in {"false", "0", "no"}:
+                    return True
+            if normalized_key in {"error", "errors", "exception"} and value not in (
+                None,
+                "",
+                False,
+                [],
+                {},
+            ):
+                return True
+        return any(
+            cls._text_failure(value.casefold(), value)
+            for _, value in cls._walk(payload)
+            if isinstance(value, str)
+        )
 
     @staticmethod
     def _structured(content: Any) -> Any | None:

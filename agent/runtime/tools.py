@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from agent.decision import CandidateLedger, is_search_tool
 from agent.runtime.contracts import ToolContract, ToolContractCompiler
+from agent.runtime.schema_adapter import ObservableSchemaAdapter
 from agent.runtime.state import RuntimePhase, TaskRuntime
+
+
+_TOOL_ACTION_TOKENS = {
+    "create",
+    "pay",
+    "get",
+    "read",
+    "inspect",
+    "status",
+    "detail",
+    "search",
+    "recommend",
+    "recommand",
+    "order",
+    "booking",
+    "reservation",
+}
+
+
+def _tool_family_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", (value or "").casefold())
+        if token and token not in _TOOL_ACTION_TOKENS
+    }
 
 
 class ToolRole(str, Enum):
@@ -34,6 +61,7 @@ class ToolMeta:
     observation_schema: "ObservationSchema | None" = None
     question_arguments: dict[str, str] = field(default_factory=dict)
     argument_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    semantic_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -99,7 +127,21 @@ class ToolRegistry:
                     )
         except (AttributeError, TypeError, ValueError):
             pass
+        argument_schemas = ObservableSchemaAdapter.adapt(
+            argument_schemas, id_arguments
+        )
         observation_schema = _observation_schema(tool)
+        semantic_text = " ".join(
+            str(value)
+            for value in (
+                name,
+                getattr(tool, "short_desc", ""),
+                getattr(tool, "long_desc", ""),
+                info.get("description", ""),
+                *argument_text,
+            )
+            if value
+        )
         declared_role = str(info.get("adapt_role", "")).casefold()
         if declared_role in {role.value for role in ToolRole}:
             role = ToolRole(declared_role)
@@ -144,6 +186,7 @@ class ToolRegistry:
             observation_schema,
             question_arguments,
             argument_schemas,
+            semantic_text,
         )
 
     def result_schema(self, name: str) -> ObservationSchema | None:
@@ -152,6 +195,10 @@ class ToolRegistry:
 
     def contract(self, name: str) -> ToolContract | None:
         return self.contracts.get(name)
+
+    def action_capability(self, name: str):
+        contract = self.contract(name)
+        return contract.action_capability if contract is not None else None
 
     def role(self, name: str) -> ToolRole:
         return self.meta.get(name, ToolMeta(name, ToolRole.READ)).role
@@ -310,7 +357,13 @@ class ToolRegistry:
                     allowed.append(tool)
                 continue
             if runtime.phase in {RuntimePhase.START, RuntimePhase.SEARCH}:
-                if runtime.revision_requested and ledger.pending_payment_ids:
+                if runtime.spec.action == "modify":
+                    if meta.role == ToolRole.STATE_READ:
+                        allowed.append(tool)
+                elif self._state_access_requested(runtime, ledger):
+                    if meta.role == ToolRole.STATE_READ:
+                        allowed.append(tool)
+                elif runtime.revision_requested and ledger.pending_payment_ids:
                     if meta.role in {ToolRole.CANCEL, ToolRole.STATE_READ}:
                         allowed.append(tool)
                 elif meta.role in {ToolRole.SEARCH, ToolRole.UTILITY, ToolRole.READ}:
@@ -333,21 +386,105 @@ class ToolRegistry:
                 if (
                     meta.role == ToolRole.CREATE
                     and runtime.authorization.create_authorized
+                    and (
+                        not runtime.planned_create_tool
+                        or tool.name == runtime.planned_create_tool
+                    )
                 ):
                     allowed.append(tool)
+                continue
+            if runtime.phase == RuntimePhase.READY_TO_WORKFLOW:
+                if (
+                    meta.role.value == runtime.workflow_role()
+                    and self._workflow_state_compatible(meta, ledger)
+                ):
+                    allowed.append(tool)
+                continue
+            if runtime.phase in {
+                RuntimePhase.WAIT_CREATE_RESULT,
+                RuntimePhase.WAIT_PAY_RESULT,
+                RuntimePhase.WAIT_WORKFLOW_RESULT,
+            }:
+                continue
+            if runtime.phase == RuntimePhase.REPORT:
                 continue
             if runtime.phase == RuntimePhase.READY_TO_PAY:
                 if (
                     meta.role == ToolRole.PAY
-                    and runtime.authorization.pay_authorized
-                    and not runtime.authorization.pay_declined
-                    or meta.role == ToolRole.STATE_READ
+                    and runtime.can_execute_payment()
                 ):
                     allowed.append(tool)
                 continue
             if runtime.phase not in {RuntimePhase.DONE, RuntimePhase.UNSATISFIABLE}:
                 allowed.append(tool)
+        if runtime.phase == RuntimePhase.READY_TO_WORKFLOW and len(allowed) > 1:
+            scores = {
+                tool.name: self._workflow_semantic_score(self.meta[tool.name], ledger)
+                for tool in allowed
+            }
+            best = max(scores.values(), default=0.0)
+            if best > 0:
+                allowed = [tool for tool in allowed if scores[tool.name] == best]
+        if runtime.phase == RuntimePhase.READY_TO_PAY and len(allowed) > 1:
+            # Multiple domains may expose PAY tools with the same order_id
+            # shape. Match them to the observable CREATE/state provenance
+            # instead of letting the model guess a tool family.
+            scores = {
+                tool.name: self._workflow_semantic_score(self.meta[tool.name], ledger)
+                for tool in allowed
+            }
+            best = max(scores.values(), default=0.0)
+            winners = [tool for tool in allowed if scores[tool.name] == best]
+            # An irreversible tool-family choice must be unique. Ambiguous
+            # schemas remain unavailable rather than being guessed by policy.
+            allowed = winners if best > 0 and len(winners) == 1 else []
         return allowed
+
+    @staticmethod
+    def _workflow_state_compatible(meta: ToolMeta, ledger: CandidateLedger) -> bool:
+        required_state_types = {
+            entity_type
+            for argument, entity_type in meta.id_arguments.items()
+            if argument in meta.required_arguments and entity_type != "user"
+        }
+        return bool(required_state_types) and all(
+            ledger.state_ids.get(entity_type)
+            for entity_type in required_state_types
+        )
+
+    @staticmethod
+    def _workflow_semantic_score(meta: ToolMeta, ledger: CandidateLedger) -> float:
+        from agent.runtime.grounding import semantic_overlap_score
+
+        source_names = " ".join(
+            source
+            for entity_type in set(meta.id_arguments.values()) - {"user"}
+            for sources in ledger.state_sources.get(entity_type, {}).values()
+            for source in sources
+        )
+        family_overlap = _tool_family_tokens(meta.name) & _tool_family_tokens(
+            source_names
+        )
+        return semantic_overlap_score(
+            meta.semantic_text or meta.name, source_names
+        ) + float(10 * len(family_overlap))
+
+    @staticmethod
+    def workflow_state_ids(
+        meta: ToolMeta, ledger: CandidateLedger, entity_type: str
+    ) -> list[str]:
+        """Rank observed state IDs by structural tool-family provenance."""
+        from agent.runtime.grounding import semantic_overlap_score
+
+        values = sorted(ledger.state_ids.get(entity_type, set()))
+        return sorted(
+            values,
+            key=lambda value: semantic_overlap_score(
+                meta.semantic_text or meta.name,
+                " ".join(ledger.state_sources.get(entity_type, {}).get(value, set())),
+            ),
+            reverse=True,
+        )
 
     def validate_required(self, tool_name: str, arguments: dict[str, Any]) -> list[str]:
         meta = self.meta.get(tool_name)
@@ -360,6 +497,20 @@ class ToolRegistry:
             or arguments.get(key) == ""
             or arguments.get(key) == []
         ]
+
+    def validate_argument_types(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> list[str]:
+        contract = self.contract(tool_name)
+        if contract is None:
+            # Lightweight unit adapters and genuinely schema-less tools may
+            # expose ToolMeta without a compiled contract. Required/unknown
+            # tool validation is handled separately; type validation is only
+            # authoritative when an observable JSON schema exists.
+            return []
+        from agent.runtime.argument_binding import ArgumentBindingResolver
+
+        return ArgumentBindingResolver.type_errors(contract, arguments)
 
 
 def _is_workflow_state_read(

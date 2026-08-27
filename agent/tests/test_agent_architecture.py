@@ -381,6 +381,76 @@ def test_ordinal_without_visible_recommendation_does_not_grant_authorization():
     assert not agent.runtime.authorization.create_authorized
 
 
+def test_referential_acceptance_binds_first_visible_recommendation():
+    class Debug:
+        def emit(self, *args, **kwargs):
+            pass
+
+    class Proactive:
+        pending_question = ""
+
+    class Memory:
+        proactive = Proactive()
+
+    agent = object.__new__(ADAPTAgent)
+    agent.task_spec = TaskSpec.compile("帮我推荐一个选项")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.DONE
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates = {
+        "P-1": Candidate("P-1", "product", "Recomputed first", "blue", "search"),
+        "P-2": Candidate("P-2", "product", "Rendered first", "red", "search"),
+    }
+    agent.decision_card = DecisionCard(prefer=["blue"])
+    agent.tool_registry = ToolRegistry()
+    agent.tool_registry.meta = {
+        "create_order": ToolMeta(
+            "create_order", ToolRole.CREATE, {"product_id"}, {"product_id": "product"}
+        )
+    }
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+    agent.debug = Debug()
+    agent.memory = Memory()
+    agent.enable_lessons = False
+    agent.responses.commit(
+        agent.operations.epoch,
+        agent.ledger.candidate_version,
+        "recommendation",
+        candidate_ids=("P-2", "P-1"),
+    )
+
+    agent._observe_input(UserMessage(role="user", content="行，那就按你说的办吧。"))
+
+    assert agent.runtime.authorization.create_authorized
+    assert agent.runtime.selected_candidate_id == "P-2"
+    assert agent.runtime.phase == RuntimePhase.READY_TO_CREATE
+
+
+def test_referential_acceptance_requires_snapshot_and_rejects_negation():
+    from agent.intent import accepts_visible_recommendation
+
+    for text in (
+        "行，那就按你说的办吧",
+        "好的，就照你的推荐",
+        "可以，按照您的建议来",
+    ):
+        assert accepts_visible_recommendation(text)
+    assert not accepts_visible_recommendation("先别按你说的办")
+    assert not accepts_visible_recommendation("好的")
+
+    agent = object.__new__(ADAPTAgent)
+    agent.runtime = TaskRuntime.begin(TaskSpec.compile("帮我推荐一个选项"))
+    agent.ledger = CandidateLedger()
+    agent.decision_card = DecisionCard()
+    agent.tool_registry = ToolRegistry()
+    agent.operations = OperationJournal()
+    agent.responses = ResponseJournal()
+
+    agent._resolve_user_selection("行，那就按你说的办吧。")
+    assert not agent.runtime.authorization.create_authorized
+
+
 def test_ordinal_binds_the_rendered_snapshot_not_a_recomputed_ranking():
     agent = object.__new__(ADAPTAgent)
     agent.runtime = TaskRuntime.begin(TaskSpec.compile("帮我推荐一个选项"))
@@ -3101,11 +3171,6 @@ def test_ungrounded_short_task_does_not_let_memory_choose_another_entity_class()
         preference_pool=["鲜牛奶"],
         preference_weights={"鲜牛奶": 5.0},
     )
-    candidates = [
-        candidate
-        for candidate in ledger.candidates.values()
-        if candidate.entity_type == "product"
-    ]
     shortlist = ledger.shortlist(card)
     assert shortlist[0].candidate_id == "S1_P00001"
 
@@ -3150,7 +3215,6 @@ def test_multiple_open_world_preferences_remain_distinct_evidence_atoms():
             ]
         ),
     )
-    spec = TaskSpec.compile("今晚聚餐想吃个汤锅，帮我下单个套餐")
     card = DecisionCard(
         prefer=["麻辣火锅", "菌汤锅底", "茼蒿", "冰汤圆"],
     )
@@ -3212,6 +3276,8 @@ def test_hotel_room_ranking_uses_parent_location_and_room_style():
 def test_payment_confirmation_preserves_ready_to_pay():
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯咖啡送到家"))
     runtime.phase = RuntimePhase.READY_TO_PAY
+    runtime.payment_round = 1
+    runtime.commit_payment_question()
     runtime.observe_user("确认支付")
     assert runtime.phase == RuntimePhase.READY_TO_PAY
     assert runtime.authorization.pay_authorized
@@ -3220,6 +3286,7 @@ def test_payment_confirmation_preserves_ready_to_pay():
 def test_framework_asks_payment_once_before_exposing_pay():
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯咖啡送到家"))
     runtime.phase = RuntimePhase.READY_TO_PAY
+    runtime.payment_round = 1
     agent = object.__new__(ADAPTAgent)
     agent.runtime = runtime
     assert "支付" in agent._framework_payment_question()
@@ -3238,6 +3305,8 @@ def test_framework_asks_payment_once_before_exposing_pay():
 def test_natural_self_payment_phrase_declines_agent_payment():
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯咖啡送到家"))
     runtime.phase = RuntimePhase.READY_TO_PAY
+    runtime.payment_round = 1
+    runtime.commit_payment_question()
     runtime.observe_user("不用了，我自己会付")
     assert runtime.authorization.pay_declined
     assert not runtime.authorization.pay_authorized

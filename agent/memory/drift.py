@@ -69,9 +69,7 @@ class DriftDetector:
         if signal.predicate not in DIMENSION_PREDICATES:
             return None
         fact = fact_from_signal(signal)
-        # Single-valued dimensions share the default category within a scoped
-        # facet, while negative constraints remain additive and never get here.
-        return fact.scope, fact.facet, fact.dimension, "default"
+        return fact.slot_key
 
     def observe(self, signal: Signal) -> Optional[str]:
         """Process a new signal, updating dimension slots.

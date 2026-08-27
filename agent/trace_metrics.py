@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
+import math
+from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -20,11 +21,16 @@ def summarize(path: Path) -> dict[str, Any]:
     repeated_search_excess = 0
     incomplete_payments = 0
     subtask_rewards: list[float] = []
+    task_trials: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    subtask_trials: dict[tuple[str, str], list[tuple[int, float]]] = defaultdict(list)
 
-    for simulation in simulations:
+    for simulation_index, simulation in enumerate(simulations):
+        task_id = str(simulation.get("task_id") or f"simulation:{simulation_index}")
+        trial = int(simulation.get("trial") or 0)
         reward = (simulation.get("reward_info") or {}).get("reward")
         if isinstance(reward, (int, float)):
             rewards.append(float(reward))
+            task_trials[task_id].append((trial, float(reward)))
         breakdown = (
             ((simulation.get("reward_info") or {}).get("info") or {})
             .get("subtask_rewards")
@@ -35,6 +41,11 @@ def summarize(path: Path) -> dict[str, Any]:
             for value in breakdown.values()
             if isinstance(value, (int, float))
         )
+        for subtask_id, value in breakdown.items():
+            if isinstance(value, (int, float)):
+                subtask_trials[(task_id, str(subtask_id))].append(
+                    (trial, float(value))
+                )
         windows = _window_rewards(simulation.get("reward_info") or {})
         if windows:
             window_rewards.append(windows)
@@ -64,18 +75,57 @@ def summarize(path: Path) -> dict[str, Any]:
         incomplete_payments += int(pending_payment)
 
     early, late = _early_late(window_rewards)
-    task_avg_at_1 = _round(mean(rewards)) if rewards else None
+    configured_k = int((payload.get("info") or {}).get("num_trials") or 1)
+    observed_k = max((len(values) for values in task_trials.values()), default=0)
+    evaluation_k = min(configured_k, observed_k) if observed_k else configured_k
+    task_k_values = [
+        _ordered_values(values)[:evaluation_k]
+        for values in task_trials.values()
+        if values
+    ]
+    subtask_k_values = [
+        _ordered_values(values)[:evaluation_k]
+        for values in subtask_trials.values()
+        if values
+    ]
+    task_avg_at_1 = (
+        _round(mean(mean(values) for values in task_k_values))
+        if task_k_values
+        else None
+    )
     task_pass_at_1 = (
-        _round(mean(float(reward == 1.0) for reward in rewards))
-        if rewards
+        _round(mean(_pass_at_k(values, 1) for values in task_k_values))
+        if task_k_values
         else None
     )
     subtask_avg_at_1 = (
-        _round(mean(subtask_rewards)) if subtask_rewards else None
+        _round(mean(mean(values) for values in subtask_k_values))
+        if subtask_k_values
+        else None
     )
     subtask_pass_at_1 = (
-        _round(mean(float(reward == 1.0) for reward in subtask_rewards))
-        if subtask_rewards
+        _round(mean(_pass_at_k(values, 1) for values in subtask_k_values))
+        if subtask_k_values
+        else None
+    )
+    task_avg_at_k = (
+        _round(mean(mean(values) for values in task_k_values))
+        if task_k_values
+        else None
+    )
+    task_pass_at_k = (
+        _round(mean(_pass_at_k(values, evaluation_k) for values in task_k_values))
+        if task_k_values
+        else None
+    )
+    subtask_avg_at_k = (
+        _round(mean(mean(values) for values in subtask_k_values))
+        if subtask_k_values
+        else None
+    )
+    subtask_pass_at_k = (
+        _round(mean(_pass_at_k(values, evaluation_k) for values in subtask_k_values))
+        if subtask_k_values
         else None
     )
     return {
@@ -85,11 +135,16 @@ def summarize(path: Path) -> dict[str, Any]:
         "num_simulations": len(simulations),
         # ``avg_reward`` remains for backward compatibility. The explicit
         # names mirror VitaBench's task-level Avg@1 / Pass@1 definitions.
-        "avg_reward": task_avg_at_1,
+        "avg_reward": task_avg_at_k,
+        "evaluation_k": evaluation_k,
         "task_avg_at_1": task_avg_at_1,
         "task_pass_at_1": task_pass_at_1,
         "subtask_avg_at_1": subtask_avg_at_1,
         "subtask_pass_at_1": subtask_pass_at_1,
+        "task_avg_at_k": task_avg_at_k,
+        "task_pass_at_k": task_pass_at_k,
+        "subtask_avg_at_k": subtask_avg_at_k,
+        "subtask_pass_at_k": subtask_pass_at_k,
         "subtask_count": len(subtask_rewards),
         "early_window_reward": early,
         "late_window_reward": late,
@@ -119,6 +174,10 @@ def compare(baseline: dict[str, Any], adapt: dict[str, Any]) -> dict[str, Any]:
         "task_pass_at_1",
         "subtask_avg_at_1",
         "subtask_pass_at_1",
+        "task_avg_at_k",
+        "task_pass_at_k",
+        "subtask_avg_at_k",
+        "subtask_pass_at_k",
     ):
         original = baseline.get(metric)
         current = adapt.get(metric)
@@ -145,6 +204,20 @@ def _flatten_messages(messages: list[dict]) -> list[dict]:
         else:
             flattened.append(message)
     return flattened
+
+
+def _ordered_values(values: list[tuple[int, float]]) -> list[float]:
+    return [value for _, value in sorted(values, key=lambda item: item[0])]
+
+
+def _pass_at_k(values: list[float], k: int) -> float:
+    n = len(values)
+    if n < k or k <= 0:
+        return 0.0
+    successes = sum(value == 1.0 for value in values)
+    if n - successes < k:
+        return 1.0
+    return 1.0 - math.comb(n - successes, k) / math.comb(n, k)
 
 
 def _window_rewards(reward_info: dict) -> list[float]:

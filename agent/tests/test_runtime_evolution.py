@@ -21,18 +21,18 @@ from agent.runtime import (
 STATE_FAILURE = TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE
 
 
-def test_rule_is_learned_now_but_activates_on_later_subtask_only():
+def test_explicit_unresolved_state_is_learned_then_activates_later_only():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
     rule = store.observe(
-        "delivery", "retail", "missed_write", evidence_source=STATE_FAILURE
+        "delivery", "retail", "unresolved_operation", evidence_source=STATE_FAILURE
     )
     assert rule is not None
     assert rule.active_from_subtask == 2
-    assert not store.policy("delivery", "retail").force_decision_after_candidates
+    assert not store.policy("delivery", "retail").require_payment_completion_check
 
     store.begin_subtask("user-a")
-    assert store.policy("delivery", "retail").force_decision_after_candidates
+    assert store.policy("delivery", "retail").require_payment_completion_check
 
 
 def test_repeat_search_requires_repeated_evidence_and_changes_budget():
@@ -53,20 +53,22 @@ def test_repeat_search_requires_repeated_evidence_and_changes_budget():
 def test_policy_is_facet_scoped():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
-    store.observe(
-        "delivery", "beverage", "missed_write", evidence_source=STATE_FAILURE
-    )
+    for _ in range(2):
+        store.observe(
+            "delivery", "beverage", "repeat_search", evidence_source=STATE_FAILURE
+        )
     store.begin_subtask("user-a")
-    assert store.policy("delivery", "beverage").force_decision_after_candidates
-    assert not store.policy("delivery", "retail").force_decision_after_candidates
-    assert not store.policy("ota", "hotel").force_decision_after_candidates
+    assert store.policy("delivery", "beverage").max_searches_per_family == 1
+    assert store.policy("delivery", "retail").max_searches_per_family == 2
+    assert store.policy("ota", "hotel").max_searches_per_family == 2
 
 
 def test_switching_user_clears_all_learned_rules():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
     store.observe(
-        "delivery", "retail", "missed_write", evidence_source=STATE_FAILURE
+        "delivery", "retail", "tool_error",
+        evidence_source=TrajectoryEvidenceSource.TOOL_ERROR,
     )
     store.begin_subtask("user-a")
     assert store.rules()
@@ -75,14 +77,15 @@ def test_switching_user_clears_all_learned_rules():
     assert store.user_id == "user-b"
     assert store.subtask_index == 1
     assert store.rules() == []
-    assert not store.policy("delivery", "retail").force_decision_after_candidates
+    assert store.policy("delivery", "retail").max_identical_tool_failures == 2
 
 
 def test_rule_declares_capability_and_contains_no_case_specific_evidence():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
     rule = store.observe(
-        "delivery", "retail", "missed_write", evidence_source=STATE_FAILURE
+        "delivery", "retail", "tool_error",
+        evidence_source=TrajectoryEvidenceSource.TOOL_ERROR,
     )
     payload = asdict(rule)
     rendered = repr(payload)
@@ -98,7 +101,8 @@ def test_unknown_case_specific_scope_is_collapsed_to_general():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
     rule = store.observe(
-        "U999999", "P99999", "missed_write", evidence_source=STATE_FAILURE
+        "U999999", "P99999", "tool_error",
+        evidence_source=TrajectoryEvidenceSource.TOOL_ERROR,
     )
     assert rule.domain == "general"
     assert rule.facet == "general"
@@ -123,12 +127,12 @@ def test_hidden_evaluator_payload_cannot_be_passed_to_learner():
     assert store.rules() == []
 
 
-def test_policy_adapter_changes_deterministic_candidate_to_action_transition():
+def test_self_ranked_missed_write_cannot_force_candidate_to_action_transition():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
-    store.observe(
+    assert store.observe(
         "delivery", "retail", "missed_write", evidence_source=STATE_FAILURE
-    )
+    ) is None
     store.begin_subtask("user-a")
 
     runtime = TaskRuntime.begin(TaskSpec.compile("推荐一款鼠标"))
@@ -137,7 +141,7 @@ def test_policy_adapter_changes_deterministic_candidate_to_action_transition():
     ledger = CandidateLedger()
     RuntimePolicyAdapter.apply(store.policy("delivery", "retail"), runtime, ledger)
     runtime.observe_candidates(2, execution_ready=True)
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE
+    assert runtime.phase == RuntimePhase.SELECT
 
 
 def test_framework_self_diagnostics_do_not_create_hard_question_policy():
@@ -192,8 +196,8 @@ def test_policy_requires_same_tool_family_and_entity_structure():
     store.observe(
         "delivery",
         "retail",
-        "missed_write",
-        evidence_source=STATE_FAILURE,
+        "tool_error",
+        evidence_source=TrajectoryEvidenceSource.TOOL_ERROR,
         tool_family="product_search",
         entity_signature="product(store)+store",
     )
@@ -204,13 +208,13 @@ def test_policy_requires_same_tool_family_and_entity_structure():
         "retail",
         tool_family="product_search",
         entity_signature="product(store)+store",
-    ).force_decision_after_candidates
-    assert not store.policy(
+    ).max_identical_tool_failures == 1
+    assert store.policy(
         "delivery",
         "retail",
         tool_family="merchant_search",
         entity_signature="shop",
-    ).force_decision_after_candidates
+    ).max_identical_tool_failures == 2
 
 
 def test_policy_entity_signature_preserves_fictional_parent_topology():
@@ -237,11 +241,11 @@ def test_hard_rule_rejects_a_mismatched_or_missing_evidence_source():
     assert store.observe(
         "delivery",
         "retail",
-        "missed_write",
-        evidence_source=TrajectoryEvidenceSource.TOOL_ERROR,
+        "tool_error",
+        evidence_source=TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
     ) is None
     with pytest.raises(TypeError):
-        store.observe("delivery", "retail", "missed_write")
+        store.observe("delivery", "retail", "tool_error")
     assert store.rules() == []
 
 
@@ -299,12 +303,15 @@ def test_actual_tool_error_can_tighten_only_the_later_matching_scope():
 def test_payment_confirmation_followed_by_user_stop_is_not_agent_failure():
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯喝的送到公司"))
     runtime.phase = RuntimePhase.READY_TO_PAY
-    runtime.payment_question_sent = True
+    runtime.payment_round = 1
+    runtime.commit_payment_question()
     assert not runtime.has_unresolved_payment_failure({"order-1"})
 
 
 def test_authorized_payment_left_unexecuted_is_agent_failure():
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我买票并支付"))
     runtime.phase = RuntimePhase.READY_TO_PAY
-    runtime.authorization.pay_authorized = True
+    runtime.payment_round = 1
+    runtime.commit_payment_question()
+    runtime.observe_user("确认支付")
     assert runtime.has_unresolved_payment_failure({"order-1"})

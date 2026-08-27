@@ -34,6 +34,17 @@ class PreferenceFact:
     status: str = "active"
     evidence_types: list[str] = field(default_factory=list)
     decision_eligible: bool = True
+    # ``confidence`` remains the backwards-compatible effective decision
+    # confidence.  The following fields retain the components needed to audit
+    # how it was formed, rather than treating an extracted fact as ground
+    # truth.  Defaults preserve all existing construction sites/tests.
+    extraction_confidence: float | None = None
+    belief_confidence: float | None = None
+    source_kind: str = ""
+    persistence: str = "persistent"
+    condition_signature: str = ""
+    independent_evidence_count: int = 1
+    source_diversity: int = 1
 
     @property
     def slot_key(self) -> tuple[str, str, str, str]:
@@ -241,6 +252,11 @@ def fact_from_signal(signal: Signal, evidence_id: str = "") -> PreferenceFact:
         # Search and repeated browsing may help rank candidates, but a single
         # weak behavioral trace must not deterministically lock a WRITE.
         decision_eligible=signal.type not in {"search", "high_freq_browse", "browse"},
+        extraction_confidence=getattr(signal, "extraction_confidence", None)
+        or signal.confidence,
+        source_kind=getattr(signal, "source_kind", "") or signal.type,
+        persistence=getattr(signal, "persistence", "persistent") or "persistent",
+        condition_signature=getattr(signal, "condition_signature", ""),
     )
 
 

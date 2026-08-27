@@ -17,7 +17,7 @@ timestamp). Different interaction types carry different information density:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
 # --- Interaction type metadata -------------------------------------------------
@@ -105,6 +105,13 @@ class Signal:
     type: str                   # original interaction type
     raw: str = ""               # raw text for later reflection/retrieval
     importance: float = 5.0     # type prior
+    # Runtime turns may be explicit only for the current task.  Keep their
+    # persistence and extraction provenance observable so they are not
+    # silently promoted to durable user preferences.
+    source_kind: str = ""
+    persistence: str = "persistent"
+    extraction_confidence: float | None = None
+    condition_signature: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -115,6 +122,10 @@ class Signal:
             "type": self.type,
             "raw": self.raw,
             "importance": self.importance,
+            "source_kind": self.source_kind,
+            "persistence": self.persistence,
+            "extraction_confidence": self.extraction_confidence,
+            "condition_signature": self.condition_signature,
         }
 
 
@@ -144,6 +155,28 @@ class SignalParser:
                 }))
             else:
                 signals.append(self._raw_signal(str(inter)))
+        return signals
+
+    def parse_runtime_statement(
+        self,
+        text: str,
+        *,
+        timestamp: str = "",
+        persistent: bool = False,
+    ) -> List[Signal]:
+        """Parse a live user preference only when the caller authorizes it.
+
+        The caller is responsible for deciding that a statement applies to
+        future tasks.  This prevents a one-off order correction from entering
+        the durable profile merely because it looks like a dislike phrase.
+        """
+        if not persistent:
+            return []
+        signals = self._parse_dialogue_turn(text, timestamp)
+        for signal in signals:
+            signal.source_kind = "direct_user"
+            signal.persistence = "persistent"
+            signal.extraction_confidence = signal.confidence
         return signals
 
     # -- format 1: {type, timestamp, content} -----------------------------
@@ -232,6 +265,59 @@ class SignalParser:
                 if obj and 2 <= len(obj) <= 12:
                     signals.append(Signal("avoids_food", obj, 0.85, ts, "conversation",
                                           text, importance=7.0))
+
+        # Preserve complete preference-bearing clauses as open-world evidence.
+        # The object is intentionally not reduced to a food/product vocabulary:
+        # after SEARCH, candidate-induced grounding projects observable brand,
+        # specification and service attributes out of the clause.  Clauses
+        # that match no live attribute remain inert.
+        clauses = [
+            clause.strip()
+            for clause in re.split(r"[，,。；;！？!?]+", text)
+            if clause.strip()
+        ]
+        negative_cue = re.compile(
+            r"(?:不太?喜欢|不想要|不要|讨厌|排斥|避开|别选|就算了|"
+            r"不太?OK|不合适|一点儿?也不好|并不好)"
+        )
+        positive_cue = re.compile(
+            r"(?:更喜欢|偏好|偏爱|很喜欢|看起来可以|可以接受|就选|优先选)"
+        )
+        for index, clause in enumerate(clauses):
+            evidence_clause = clause
+            # Short anaphoric verdicts such as "一点儿也不好" qualify the
+            # immediately preceding clause. Preserve that antecedent instead
+            # of storing a sentiment fragment with no groundable attribute.
+            if (
+                index > 0
+                and len(clause) <= 16
+                and negative_cue.search(clause)
+            ):
+                evidence_clause = f"{clauses[index - 1]} {clause}"
+            if 2 <= len(evidence_clause) <= 120 and negative_cue.search(clause):
+                signals.append(
+                    Signal(
+                        "avoids_food",
+                        evidence_clause,
+                        0.9,
+                        ts,
+                        "conversation",
+                        text,
+                        importance=8.0,
+                    )
+                )
+            elif 2 <= len(clause) <= 120 and positive_cue.search(clause):
+                signals.append(
+                    Signal(
+                        "explicit_preference",
+                        clause,
+                        0.8,
+                        ts,
+                        "conversation",
+                        text,
+                        importance=7.0,
+                    )
+                )
 
         # --- LIKE / preference ---
         like_patterns = [

@@ -608,16 +608,113 @@
 ## E-044：自进化硬策略缺少可审计证据源，且拓扑作用域曾依赖 product 特例
 
 - **日期**：2026-08-26
-- **状态**：PARTIAL
+- **状态**：SUPERSEDED（硬策略边界由 E-046 进一步收紧）
 - **通用性判定**：`GENERAL-INVARIANT`。证据来源、事件是否真实提交、同用户延迟生效和父子拓扑均为 runtime 类型不变量，不依赖 benchmark 用户、商品或商家。
 - **难点**：旧 `RuntimePolicyStore.observe()` 只接收 failure class，调用方无需证明它来自真实工具错误还是框架自评；`repeat_search` 虽有模板却没有从真实提交计数接入；policy entity signature 只为 `product` 保存父类型，虚构实体父子结构会丢失。这样的 harness 可能把自身排名/拒绝放大成硬 WRITE 规则，也无法稳定迁移到开放世界结构。
 - **根因**：failure class、evidence source、commit boundary 和 policy scope 分散在 Agent、CandidateLedger 与模板表中，没有一个闭合的编译契约。
 - **无效方案**：继续允许 `preference_undercoverage`、`candidate_choice_reask` 或 `mixed_question_tool` 先触发后学习；它们分别属于软排名诊断或应由 CandidateDecision/ActionTransaction 固定保证的核心不变量，不应等犯错后才启用。
-- **有效方案**：新增闭集 `TrajectoryEvidenceSource`，每个硬模板声明唯一允许的来源；`observe()` 缺少来源或来源不匹配即拒绝。硬模板仅保留真实工具错误、已真实执行的重复搜索、授权后 missed write 和明确 unresolved operation；用户纠正只保留为当前会话证据，不生成跨任务硬候选规则。规则继续在同一用户下一子任务才生效，并要求 domain/facet、observable tool family 与任意实体父子 signature 全部相同；切换用户清空。工具错误策略只降低相同结构后续任务的同签名失败额度，不保存错误 ID 或参数值。
+- **有效方案**：新增闭集 `TrajectoryEvidenceSource`，每个硬模板声明唯一允许的来源；`observe()` 缺少来源或来源不匹配即拒绝。硬模板保留真实工具错误、已真实执行的重复搜索和明确 unresolved operation；E-046 进一步证明 `missed_write` 仍来自 Agent 自身的候选判断，已从硬模板删除。用户纠正只保留为当前会话证据，不生成跨任务硬候选规则。规则继续在同一用户下一子任务才生效，并要求 domain/facet、observable tool family 与任意实体父子 signature 全部相同；切换用户清空。工具错误策略只降低相同结构后续任务的同签名失败额度，不保存错误 ID 或参数值。
 - **验证**：覆盖错误/缺失 evidence source、框架 ranking/self-diagnostic 不学习、真实提交 search count 才触发、下一子任务延迟、跨用户清空、工具族/结构不匹配不迁移、虚构 `glyph(origin)` 父子 signature，以及 ToolErrorLedger 硬策略接线。完整测试门禁见 E-043，为 `267 passed`；尚无 smoke 分数证据。
 - **适用边界**：核心正确性不能依赖 harness；它只能对同用户后续同结构任务做有界调节。用户纠正仍必须由当前会话约束立即处理，不能等待在线学习。没有可靠工具族或实体结构时不做跨任务硬迁移。
 - **后续风险/下一步**：smoke 中同时记录 active policy、evidence source、scope 和作用前后的实际事件；若规则未改善对应能力指标则回退该 effect，不扩大 failure vocabulary。
 - **能力抽象**：candidate-to-action execution / long-horizon consistency / missing-information detection。
+
+## E-045：业务失败被 transport success 包装后污染操作状态
+
+- **日期**：2026-08-26
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-INVARIANT`。判定只依赖可见工具返回的结构化状态、文本失败语义、工具角色和状态 ID 来源，不依赖用户、实体或 evaluator。
+- **难点**：VitaBench 工具会以普通字符串返回 `No available rooms`、`does not have the specified seat` 或 `Order not found`；旧逻辑只看 `ToolMessage.error`，会把这些业务失败当作 CREATE/CANCEL/MODIFY 成功，继而污染 OperationJournal、pending payment、ToolErrorLedger 和 runtime phase。另一方面，`No delivery orders available` 对 STATE_READ 是成功的空观察，不应进入错误重试。
+- **有效方案**：ToolOutcomeNormalizer 先解析结构化 `status/success/error`，再使用隔离的 legacy 文本兼容层；业务失败统一产出 `ok=False/effect=no_change`，空状态查询产出 `ok=True/effect=observed`。所有 ledger、lineage、journal、lesson 和 phase 迁移只消费 normalized outcome，不再消费 transport error。STATE_READ 无记录时直接进入 REPORT；取消/修改工具只暴露与已观察 state ID 类型和来源工具族相容的动作，并自动绑定唯一状态 ID 与 profile user ID。
+- **反例门禁**：`{"status":"success","error":null}` 必须保持成功；STATE_READ 的空列表/无记录不得学习 tool-error；错误 CREATE 不得写入成功 journal；多个 cancel 工具只能由 state-read provenance 排序，无法唯一判定时仍保留模型选择而不猜 ID。
+- **验证**：新增普通失败字符串、结构化失败、结构化 success+null error、空状态、虚构 order/booking cancel 工具和 `search_train_order -> cancel_train_order` provenance 测试。完整门禁见 E-047；尚未获得 dev 指标证据。
+- **能力抽象**：candidate-to-action execution / long-horizon consistency。
+
+## E-046：候选计划、当前纠正和 runtime harness 的权威边界不闭合
+
+- **日期**：2026-08-26
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-INVARIANT`。测试使用 glyph/quasar/order 等虚构 schema，修改依据任务约束、工具输入结构、可见候选与证据来源，不包含用户、商品或商家特例。
+- **难点**：CandidateDecision 虽返回 selected binding，但 READY_CREATE 仍可暴露多个 CREATE，模型可重新选择工具和 ID；不同 CREATE 的缺失参数被全局合并，错误阻断正确工具；profile address alias、party size、quantity 和 modify date 没有统一绑定层。当前用户纠正只记录 lesson，不会立即替换活动 TaskSpec；漂移 detector 又强制使用 default category。harness 还能依据自身 `has_executable_candidate` 推断 missed-write 并生成 FORCE_CREATE 硬策略。
+- **有效方案**：selected CandidateBinding 成为唯一 ExecutionPlan，runtime 固化 selected tool 与 planner-owned arguments，工具暴露和 prepared call 都消费同一计划；新增 schema-driven ArgumentBindingResolver 处理 profile alias、人数、数量、日期/路线和 JSON 类型。当前会话 correction overlay 立即重编译并替换同槽 scalar/entity，独立禁项保持集合；漂移使用事实真实 `(scope, facet, dimension, category)`。LLM preference extraction 只接收 user turns，输出对象必须在用户原话有锚点。`missed_write` 从硬模板和轨迹收尾推断删除，仅用户纠正、工具错误和明确状态失败能进入相应证据层。
+- **反例门禁**：纯推荐中的序号不自动授权交易；只有实际展示快照中的明确选择才可重开 CREATE；软偏好不能写入 planner-owned ID；不同 category 的同维偏好不漂移；assistant 自述偏好和无 user-text anchor 的 LLM 输出必须丢弃；一个工具缺参数不能阻断另一个已完整工具。
+- **验证**：新增 per-tool missing、唯一 CREATE 暴露/ID freeze、party/address binding、多禁项 correction、跨 category drift、LLM user anchor、protected lifecycle 和 `missed_write -> no hard rule` 测试。尚未声明 Avg@1 提升。
+- **能力抽象**：preference extraction / preference drift / missing-information detection / preference-to-candidate grounding / candidate-to-action execution。
+
+## E-047：checkpoint 无实现指纹且本地汇总不等价于官方 Avg@k/Pass@k
+
+- **日期**：2026-08-26
+- **状态**：VERIFIED（静态/聚合定义）
+- **通用性判定**：`GENERAL-INVARIANT`。只涉及运行配置、代码内容和公开 reward 聚合，不读取 rubric、target 或逐案例隐藏信息。
+- **难点**：同一路径 checkpoint 只比较模型名、seed 和 max_steps，代码或模型配置改变后仍可能续跑，造成混合版本结果；旧 trace_metrics 只报告 @1，无法正确汇总最终四 trial。把 Pass@4 简化为普通均值也不等价于 VitaBench 的组合公式。
+- **有效方案**：runner 在 checkpoint 中写入 ADAPT runtime 源码/config 内容指纹与 Vita 实际解析的 model YAML 指纹，并把 task/trial/seed/implementation fingerprint 写入 debug context。续跑必须完整匹配。trace_metrics 按 task/subtask 分组，使用 VitaBench `1-C(n-c,k)/C(n,k)` 计算 Pass@k，并按官方定义计算 Avg@k；单 trial 开发评测仍以 task Avg@1 为晋级指标。
+- **验证**：两任务四 trial 合成结果验证 Avg@4=`0.4875`、Pass@4=`0.5`、Pass@1=`0.125`，并验证代码与实际模型配置均产生 20 字符指纹。VitaBench 源码保持只读。
+- **适用边界**：聚合器只能汇总已完成的 trial；中断 checkpoint 会把 `evaluation_k` 降为当前完整可见 trial 数，不能伪装成最终 @4。
+- **能力抽象**：evaluation harness / reproducibility / long-horizon consistency。
+
+## E-048：合成单测通过但真实 WRITE schema 与候选阶段仍发生确定性回归
+
+- **日期**：2026-08-26
+- **状态**：PARTIAL（静态与反事实门禁已通过，模型端点未恢复，尚缺 1–2 用户 smoke）
+- **通用性判定**：`GENERAL-INVARIANT`。根因分别是 JSON schema 递归类型、候选 admissibility 与动作参数完整性的职责边界、中文强调词的实体证据强度，以及 enrichment 总预算；不依赖用户、商品、商家或隐藏目标。
+- **难点与失败证据**：`adapt_dev_execution_plan_v3` 在 8 用户运行到 4 个完整用户时 task Avg@1 仅 `0.052713`、通过 `3/53` 个子任务，故提前终止并保留 partial checkpoint。可见 trace 中 14 次 delivery、2 次 train、1 次 flight CREATE 将计数传为字符串（例如 `product_cnts=["1"]`、`quantity="一"`），环境统一产生类型错误。另有一个咖啡子任务因未绑定 `dispatch_time`，CandidateDecision 把日期动作约束误作候选失败并连续展开 140 个详情；“猪瘾就犯了”“下雨就找个室内的”还被宽泛 `就...` 正则错误提升为精确实体 MUST。
+- **为何旧门禁漏检**：此前测试只覆盖标量 `"1" -> 1` 和合成单层 schema，没有覆盖真实 `array[integer]` 的 item 类型；虚构 CandidateDecision 用例全部预先具备动作参数，没有测试“候选完整但日期/地址稍后由 proposal 填入”；验收也没有回放历史可见 tool calls/results 统计结构性不可执行子任务。因此 `281 passed` 只能证明局部不变量，不能作为进入 8 用户评测的充分条件。
+- **无效/过早判断**：不能用所有 `no_admissible_binding` 事件的总占比直接证明绑定过严；其中包含只看到父实体、尚未 enrichment 的正常中间态。修复前先按子任务切段，确认真正异常的是候选已完整但仍无 binding 的终态。也不能把 CREATE 后支付确认计为缺陷，因为公开工具协议要求 PAY 独立授权。
+- **有效方案**：ArgumentContract 保存公开 JSON schema 片段，ArgumentBindingResolver 对 array/object/nullable union 递归归一化并在最终 preflight 再验类型，支持阿拉伯与中文数量；CandidateDecision 在候选阶段允许尚未出现的动作参数，但最终 WRITE 对日期、地址、数量、ID、库存和父子关系继续硬校验；精确实体只接受 `就选/指定/要的是/就要` 或带结尾 `吧` 的裸 `就...吧`；每子任务 enrichment 详情读取上限为 12，阻止候选展开穷举。
+- **新增发布门禁**：真实 Delivery/InStore/OTA public schema 遍历所有 CREATE/PAY/CANCEL/MODIFY 工具并递归检查参数类型；跨域测试覆盖三条 `SEARCH -> SELECT -> CREATE` 与真实 OTA `STATE_READ -> CANCEL`；`agent.counterfactual_gate` 只回放用户指令、公开 schema、tool call/result，不读取 reward/rubric/target。对 partial checkpoint 的 53 个子任务、41 个有候选的 commit 子任务和 48 个 WRITE 调用回放后，结构性不可绑定为 `0`，原始类型错误 `17`，归一化后 `0`。
+- **静态验证**：完整 `agent/tests` 为 `289 passed`；compileall、Ruff `F/B023`、`git diff --check` 与 VitaBench `src/vita` 只读检查通过。第一次全量回归发现 schema-less 轻量测试桩被类型门禁误判，已改为只在存在公开 contract 时执行类型校验，并重跑全部测试，不跳过失败。
+- **运行门禁状态**：1 用户 smoke 启动前，`localhost:8000/8002/59863` 三个模型端点连续 20 秒无响应；因此没有启动会混入服务超时的评测。端点恢复后先跑一个固定开发用户，只有无确定性类型错误、enrichment 不超 12、结构绑定不退化且对应用户 Avg@1 不低于历史，才允许第二用户和完整 8 用户。
+- **能力抽象**：candidate-to-action execution / preference-to-candidate grounding / missing-information detection / evaluation harness / long-horizon consistency。
+
+## E-049：偏好事实把抽取置信度、持久性与候选满足语义混为一层
+
+- **日期**：2026-08-26
+- **状态**：PARTIAL（确定性实现与合成门禁完成，尚未获得开发集指标证据）
+- **通用性判定**：`GENERAL-INVARIANT`。只依赖用户可见 interaction、当前候选字段与公开 CREATE schema；测试使用 glyph/relic 等虚构实体，不包含用户、商品、商家、target、rubric 或 reward。
+- **难点**：旧 `PreferenceFact.confidence` 同时表示抽取可靠性、重复证据和决策强度；实时用户说“这次不要 X”也容易被长期化。候选字段匹配又只返回全局事实，无法说明哪个候选、哪个字段使其相关。最后，CREATE 的 `note/attributes` 等请求字段可能在返回订单中回显，不能被误判成实际规格已满足。
+- **有效方案**：新增 append-only `PreferenceEvidenceStore`，以 `(scope, facet, dimension, category, condition, persistence)` 聚合独立可观察证据，并将置信度、来源多样性和证据数投影回兼容的 FactStore 视图；仅 schema 标记为持久或包含明确未来默认语句的 runtime 用户话语写入长期记忆，其他回答只写当前 TaskSpec slot。SEARCH 后构造显式 `fact -> current candidate attribute` edge（字段来源、精确/部分匹配、grounding confidence），排序消费候选级 edge 分数且最多保留八个公平覆盖的正向事实。工具 schema 将备注/属性类参数标为“可传达请求”；框架可转发显式 AVOID，但仍保持候选内在规格、库存、ID、父子关系和 safety 校验，绝不把回显请求当 fulfillment 证据。
+- **反例门禁**：相同可见事件即使被重放并赋予不同 event ID，也不会提升 confidence；不同条件下的同维偏好不会互相 supersede；当前一次性禁项不会进入长期 profile；未匹配候选不得取得 edge 分；带 `special_instructions` 的 CREATE 能收到请求文本，但内在包含禁项的候选仍被 WRITE validator 拒绝。
+- **验证**：新增 `agent/tests/test_preference_evidence.py` 覆盖 runtime persistence、condition slot、独立证据 confidence、候选级 edge 与虚构 schema action capability；该文件及历史开放世界负向投影门禁已通过。完整测试和真实 smoke 尚待本轮修改收尾后执行。
+- **适用边界**：公开 schema 只能证明“可以传达”而不能证明供应方会执行自由文本请求；没有暴露候选属性时，历史偏好仍不应决定当前候选类别。自然语言条件提取仍保守地使用显式 `condition=>choice` 表达，未声称解决隐含条件理解。
+- **能力抽象**：preference extraction / preference drift / conditional preference / preference-to-candidate grounding / candidate-to-action execution / long-horizon consistency。
+
+## E-050：支付确认后的延期回复触发无界状态查询循环
+
+- **日期**：2026-08-27
+- **状态**：VERIFIED（循环修复已由 paired smoke 复现；该用户 Avg@1 未提升）
+- **通用性判定**：`GENERAL-INVARIANT`。失败由支付授权阶段、状态转移和工具白名单共同决定；合成测试使用虚构 workflow 与工具族，不包含用户、商品、商家或隐藏评测字段。
+- **难点与证据**：可见 trace `data/traces/adapt_pref_evidence_smoke_U200109_v1.jsonl` 中，CREATE 后框架已询问支付，用户表达暂不处理，runtime 仍停在 `READY_TO_PAY`，随后同一 `get_delivery_order_status` 在该阶段连续调用 46 次。另有代码反例：普通阶段出现“买票”也会被全局 substring 当作支付授权；同一 assistant 批次的两个不可逆调用在 journal 提交前可分别通过 preflight。
+- **根因**：支付回复只由少量全局关键词写入两个布尔值，没有“已发送支付问题”这一上下文边界，也没有授权、拒绝、延期、自己支付、询问和未知的互斥状态。`READY_TO_PAY` 的工具条件还通过布尔优先级无条件暴露 `STATE_READ`，而状态读取没有推动支付状态变化。
+- **有效方案**：新增纯函数 `classify_payment_intent` 与结构化 `PaymentDisposition`；短确认只在支付问题发出后授权，拒绝/延期/自己支付安全进入 DONE 并保留未支付订单，询问或未知最多澄清一次后安全延期。支付问题与授权分别绑定当前 `payment_round`，只有 `READY_TO_PAY + 当轮问题 + 当轮授权` 同时成立才可执行 PAY；新订单、修订或阶段切换都使旧授权失效。`READY_TO_PAY` 未授权时不暴露任何工具，授权后只暴露 PAY；多个 PAY 依据可见 CREATE/state provenance 选择工具族。工具暴露和 preflight 共用同一 `can_execute_payment()` 门禁，且同批次最多允许一个 CREATE/PAY/CANCEL/MODIFY，终止消息明确区分未支付、自己支付和支付完成。
+- **验证**：新增 `agent/tests/test_payment_state_machine.py`，覆盖上下文纯分类、确认授权、过期布尔授权拒绝、新支付轮次使旧授权失效、工具白名单与 preflight 双门禁、延期终止、自付/拒绝、交易词不提前授权、一次澄清、多 PAY 工具族选择、真实终止文案及双不可逆调用拒绝。加固后完整 `agent/tests` 为 `318 passed`，compileall、`git diff --check` 和 VitaBench `src/vita` 只读检查通过。相同 U200109/seed=42/max_steps=100 paired smoke 中，原复现语句“晚点再说”从 46 次 `get_delivery_order_status` 变为直接 `DEFERRED -> DONE`，全轨迹 tool proposal 从 99 降至 52；但新旧 Avg@1 均为 `0.133333`，因此只确认执行正确性和效率提升，不声称分数提升。轮次加固后又单独运行 `U200109/sub_U200109_6`：CREATE 进入待支付、框架询问、用户回复“不用了，我自己弄就行”后直接 DONE，无 PAY 和状态查询，12 条消息正常 `user_stop`；子任务 reward 仍为 0，不能归因于支付阶段。该轨迹还显示支付拒绝被误记为 `user_correction` lesson，属于独立的 harness 污染问题，待单独修复。当前 `trace_metrics.incomplete_payments` 仍把用户主动延期记为 1，属于诊断口径待修正，不代表 runtime 未终止。
+- **适用边界**：本机制不自动支付，也不把订单 ID 从账本删除；创建后要求更换订单属于独立 revision/cancel 状态机，不由支付延期逻辑擅自取消或重建订单。
+- **能力抽象**：candidate-to-action execution / long-horizon consistency / runtime safety。
+
+## E-051：多个原始文本解释器使阶段正确的回复污染 harness
+
+- **日期**：2026-08-27
+- **状态**：VERIFIED（同用户、同子任务、同 seed paired trace replay 已通过；不声称 reward 提升）
+- **通用性判定**：`GENERAL-INVARIANT`。根因是用户回复被状态机、当前纠正检测和 lesson harness 分别从原始文本重新解释；修复仅依赖 phase、当前问题合同和可见事件，不包含用户、商品或商家特例。
+- **难点与证据**：`U200109/sub_U200109_6` 的旧可见 trace 中，用户对支付询问回复“不用了，我自己弄就行”，支付状态机正确终止，但通用 `不用` 关键词检测又写入 `user_correction` lesson。零模型历史 replay 计得 `harness_event_conflicts=1`。
+- **有效方案**：建立单一纯函数 `classify_user_event`，根据当前 phase、支付问题轮次和待回答 slot 输出互斥的 `UserEventKind`。`TaskRuntime` 返回该事件，当前 TaskSpec 纠正、候选选择、记忆持久化和 lesson harness 只消费它；支付事件不得进入通用纠正路径。用户纠正 lesson 只能通过类型化 `CURRENT_CORRECTION` 入口写入，直接传入原始 `user_correction` 会被 harness 拒绝。硬执行内核仍只消费 ID/库存/父子关系/阶段/授权/OperationJournal；preference 和 user-correction lesson 仅作排序或后续提示，不生成硬 WRITE 授权。
+- **可归因验证**：新增可见 `decision_surface` 和 `failure_attributed`事件，区分 `framework / model_policy / validator / environment / harness`；`agent.action_audit` 可零模型 replay 新旧 trace，统计类型化用户事件、不可执行决策面和 harness 事件冲突。新增合成测试覆盖同一否定语句在支付/补充信息/候选纠正阶段的不同语义、类型化 lesson 门禁及五类归因。
+- **实测结果**：旧 v1 replay 为 `harness_event_conflicts=1`；修复后 v2 将用户回复唯一标记为 `payment_self_pay`，`observable_failure_events={}`、`harness_event_conflicts=0`、`blocked_action_surfaces=0`，无 PAY、无状态查询、无 lesson 污染。该子任务 reward 仍为 0，说明支付/harness 问题已与候选质量问题成功分离，不将整体零分误归因于本修复。
+- **能力抽象**：missing-information detection / candidate-to-action execution / long-horizon consistency / observable self-evolution safety。
+
+## E-052：候选排名无法区分请求宾语、后置限定与展平父实体文本
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（可见 trace shadow replay、两个 runtime smoke 和全量单测已通过；尚缺 8 用户 Avg@1 证据）
+- **通用性判定**：`GENERAL-INVARIANT`。根因是中文请求的语法证据层级与 legacy `key=value` 候选解析的信息损失；修复依赖请求动词—宾语、后置限定、当前候选字段和公开拓扑，不包含用户、商品、商家或类别词表。
+- **难点与可见证据**：首个 smoke 中“晚饭…想吃粉类”使“晚饭”中的单字“饭”与当前请求宾语“粉”同 band，历史卤肉饭因 intrinsic grounding 更高成为首选。加入宾语层后，未见实体 smoke 又暴露“一本小说，日文原著的”中限定语与中心名词分离，先选中文小说，再选名称含日文“小説家”但可见类别为随笔的候选。
+- **根因**：`TaskRelevanceMatrix` 将整句所有 n-gram 视为同层当前需求；第一次修复又只强化中心宾语，未强化逗号后的后置限定。同时 `CandidateLedger` 的 legacy 字段解析只保留复合 `attributes=` 的第一个逗号片段，排名看不到后续语言、类别和 tags。
+- **尝试过但无效的方案**：不应通过删除 band-0 候选来降低 Top-3 异类率；该做法曾将反事实比例从 `4.32%` 人为降低，但破坏完整 shortlist 和开放世界回退，被全量测试拦截后撤销。仅强化请求宾语也不足，因为强限定可以出现在后置分句。
+- **有效方案**：新增 `CandidateAttributionRecord` 及三种显式分层 key；production 采用 `current-task-first + availability + intrinsic grounding + preference tie-break`，偏好不再先于库存和 intrinsic 证据。当前任务证据分为请求宾语/后置限定强层与全句上下文弱层。legacy raw 仅在删除关系 ID 和不同父实体 `*_name` 值后作为 intrinsic 补充，恢复语言/类别/tags，不改变 ID、库存、父子关系、日期、地址、支付和 `OperationJournal` 门禁。
+- **反事实结果**：对旧 8 用户可见轨迹的 53 个已完成子任务零模型 replay 中，Top-3 band-0 从 `6/139 (4.32%)` 降为 `2/139 (1.44%)`，无可执行候选保持 `5/53`，历史偏好压过更高任务匹配为 `0`，request-only 与 intrinsic 混淆为 `0`。task-only 改变 `34/53` 个 Top-3，task-first preference tie-break 仅改变 `8/53`，因此选后者作为更保守的 production policy。旧 CREATE 与新 top-1 的 `11/41` 仅是版本漂移 proxy，不是 runtime CREATE 退化证据。
+- **runtime 验证**：`U200109/sub_U200109_6` 从“卤肉饭首选、无 CREATE”恢复为三个粉类候选，用户选第一项后 `create_consistency=true`，订单成功进入待支付。未见实体 `U901652/sub_U901652_15` 经过两次可归因修复后最终选择可见 tags 同时满足“日文原版+小说”的《暗夜行路》并成功 CREATE。两个子任务 evaluator reward 都为 0，因此本记录只声称可见候选/执行闭环修复，不声称 Avg@1 提升。
+- **验证门禁**：虚构 schema 覆盖请求宾语与上下文同字冲突、后置限定、复合 legacy attributes 及父实体名称防泄漏；完整 `agent/tests` 为 `334 passed`，compileall 与 VitaBench `src/vita` 只读检查通过。
+- **后续风险/下一步**：当前语法抽取是保守规则，不声称覆盖所有隐含限定；先跑同版本 8 用户 Avg@1，再依候选归因报告判断是否扩展，禁止为已知书名或粉类添加词表。
+- **能力抽象**：preference-to-candidate grounding / candidate-to-action execution / long-horizon consistency / evaluation harness。
 
 ## 新记录模板
 

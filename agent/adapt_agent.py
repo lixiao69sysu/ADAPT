@@ -34,16 +34,23 @@ from agent.decision import (
     resolve_profile_address,
 )
 from agent.framework.context import compact_messages
-from agent.intent import DesiredOutcome, selected_ordinal
+from agent.intent import (
+    DesiredOutcome,
+    accepts_visible_recommendation,
+    selected_ordinal,
+)
 from agent.lessons import ExecutionLessonStore
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.runtime import (
     ActionTransaction,
+    attribute_preflight_failure,
+    CandidateAttributionEngine,
     CallLineageLedger,
     DebugEventStore,
     InformationGap,
     InformationGapContract,
     OperationJournal,
+    PaymentDisposition,
     QuestionGate,
     ReplanContext,
     ResponseJournal,
@@ -58,6 +65,8 @@ from agent.runtime import (
     ToolOutcomeNormalizer,
     ToolRegistry,
     ToolRole,
+    UserEvent,
+    UserEventKind,
     default_gap,
 )
 
@@ -65,7 +74,7 @@ _ADAPT_POLICY = """
 
 ## ADAPT decision protocol
 1. Treat the current user instruction and corrections as hard constraints. Memory preferences are soft unless marked AVOID.
-2. Before a search, read MUST/AVOID/PREFER. After search, compare concrete candidate name, variant, date, location, inventory and IDs.
+2. Build the first search from the current instruction, MUST/AVOID, and current-session answers. Historical PREFER facts are post-search ranking evidence only unless the current instruction repeats them.
 3. Every ID used in create/book/pay must be copied from the Candidate Ledger. Never invent an ID or substitute a nearby name.
 4. Do not choose a larger/smaller, flavored, bundled, room-view, seat, sugar, ice, date, origin or destination variant unless it satisfies MUST exactly.
 5. If ASK contains a decision-critical gap, ask one focused question. Do not ask again for information already supplied by the user or account profile.
@@ -155,21 +164,29 @@ class ADAPTAgent(PersonalizationAgent):
                 candidates.append(self.ledger.candidates[candidate_id])
                 if len(candidates) >= limit:
                     return candidates
-        return candidates or active_registry.shortlist(
-            self.ledger, self.decision_card, limit=limit
-        )
+        if candidates:
+            return candidates
+        if not any(
+            contract.role == "create"
+            for contract in active_registry.contracts.values()
+        ):
+            return self.ledger.shortlist(self.decision_card, limit=limit)
+        return []
 
     def _candidate_decision(self, registry: ToolRegistry | None = None):
         active_registry = registry or self.tool_registry
+        from agent.runtime.argument_binding import ArgumentBindingResolver
+
         fixed_arguments: dict[str, dict[str, object]] = {}
         for name, contract in active_registry.contracts.items():
             if contract.role != "create":
                 continue
-            resolved = {
-                argument.name: self.runtime.resolved_slots[argument.name]
-                for argument in contract.arguments
-                if argument.name in self.runtime.resolved_slots
-            }
+            resolved = ArgumentBindingResolver.bind(
+                contract,
+                self.task_spec,
+                self.runtime.resolved_slots,
+                getattr(self, "user_profile", {}),
+            )
             if resolved:
                 fixed_arguments[name] = resolved
         return active_registry.candidate_decision(
@@ -188,12 +205,7 @@ class ADAPTAgent(PersonalizationAgent):
         # identical instructions and must still receive fresh operation,
         # question, search and candidate state.
         if previous:
-            active_registry = (
-                self._active_context.tool_registry
-                if self._active_context is not None
-                else self.tool_registry
-            )
-            self._finalize_visible_trajectory(active_registry)
+            self._finalize_visible_trajectory()
         if self._pending_tool_registry is not None:
             self.tool_registry = self._pending_tool_registry
             self._pending_tool_registry = None
@@ -203,6 +215,7 @@ class ADAPTAgent(PersonalizationAgent):
         self.lineage.reset()
         self.responses.reset()
         self.memory.begin_subtask(instruction)
+        self._current_corrections: list[str] = []
         self.task_spec = TaskSpec.compile(
             instruction, domain_hint=self.tool_registry.domain_hint()
         )
@@ -258,21 +271,43 @@ class ADAPTAgent(PersonalizationAgent):
 
     @property
     def system_prompt(self) -> str:
-        base = super().system_prompt
+        # PersonalizationAgent.system_prompt always injects memory.read().
+        # ADAPT owns a phase-aware Decision Card instead: exposing that base
+        # memory block here would leak historical entities into the first
+        # search before candidate-induced grounding can establish relevance.
+        prompt_time = getattr(self, "time", None)
+        base = self.domain_policy.format(time=prompt_time or "")
+        profile_text = self._format_user_profile()
+        if profile_text:
+            base += (
+                "\n\n## 当前用户基础信息\n"
+                "以下是该用户的账户注册信息，可直接使用：\n"
+                f"{profile_text}"
+            )
         lessons = (
             self.lessons.render(self.task_spec.domain, self.task_spec.facet)
             if self.enable_lessons
             else ""
         )
+        decision = self._candidate_decision()
+        entity_types = {
+            self.ledger.candidates[candidate_id].entity_type
+            for binding in decision.admissible
+            for candidate_id in binding.leaf_ids
+            if candidate_id in self.ledger.candidates
+        }
         ledger = self.ledger.render(
             self.decision_card,
-            entity_types=self.tool_registry.candidate_entity_types(self.ledger),
+            entity_types=entity_types or self.ledger.structural_leaf_types(),
         )
         additions = [_ADAPT_POLICY]
         additions.append(
             "## Current instruction\n" + (self.task_spec.instruction or "none")
         )
-        additions.append(self.decision_card.render())
+        if self.runtime.phase in {RuntimePhase.START, RuntimePhase.SEARCH}:
+            additions.append(self.decision_card.render_for_search())
+        else:
+            additions.append(self.decision_card.render())
         additions.append(self.runtime.render())
         if lessons:
             additions.append(lessons)
@@ -460,6 +495,26 @@ class ADAPTAgent(PersonalizationAgent):
             self._refresh_system_message(state)
             compact_messages(state.messages)
             allowed_tools = self.tool_registry.allowed_tools(self.runtime, self.ledger)
+            self.debug.emit(
+                "decision_surface",
+                phase=self.runtime.phase.value,
+                allowed_tool_count=len(allowed_tools),
+                allowed_roles=sorted(
+                    {self.tool_registry.role(tool.name).value for tool in allowed_tools}
+                ),
+                attempt=attempt,
+            )
+            if not allowed_tools and self.runtime.phase in {
+                RuntimePhase.READY_TO_CREATE,
+                RuntimePhase.READY_TO_PAY,
+                RuntimePhase.READY_TO_WORKFLOW,
+            }:
+                self.debug.emit(
+                    "failure_attributed",
+                    owner="framework",
+                    stage="decision_surface",
+                    reason="an irreversible phase has no executable exposed tool",
+                )
             generation_messages = self._generation_messages(
                 state, allowed_tools, attempt, replan_context
             )
@@ -477,7 +532,9 @@ class ADAPTAgent(PersonalizationAgent):
                 assistant, self._prepare_tool_call
             )
             valid = transaction.validate(
-                lambda prepared: self._preflight(prepared, allowed_tools)
+                lambda prepared, exposed=allowed_tools: self._preflight(
+                    prepared, exposed
+                )
             )
             if valid:
                 transaction.emit(state.messages)
@@ -490,6 +547,17 @@ class ADAPTAgent(PersonalizationAgent):
             )
             logger.warning(correction)
             self.debug.emit("preflight_rejected", attempt=attempt, problems=problems)
+            attribution = attribute_preflight_failure(
+                problems,
+                allowed_tool_count=len(allowed_tools),
+                proposed_call_count=len(transaction.prepared.tool_calls or []),
+            )
+            self.debug.emit(
+                "failure_attributed",
+                owner=attribution.owner.value,
+                stage=attribution.stage,
+                reason=attribution.reason,
+            )
             replan_context = ReplanContext(tuple(problems))
 
         if self.runtime.phase == RuntimePhase.READY_TO_PAY:
@@ -519,6 +587,7 @@ class ADAPTAgent(PersonalizationAgent):
         if self.runtime.phase not in {
             RuntimePhase.READY_TO_CREATE,
             RuntimePhase.READY_TO_PAY,
+            RuntimePhase.READY_TO_WORKFLOW,
         }:
             messages = list(state.system_messages) + list(state.messages)
             if replan_context and replan_context.issues:
@@ -554,12 +623,19 @@ class ADAPTAgent(PersonalizationAgent):
                 f"exact name={chosen_candidate.name}; parent IDs={parent_ids}. "
                 "Use this exact candidate and its observed parent IDs."
             )
-        action = (
-            "Call exactly one exposed CREATE tool now using the best compliant "
-            f"Candidate Ledger IDs and all required arguments.{candidate_directive}"
-            if self.runtime.phase == RuntimePhase.READY_TO_CREATE
-            else "Call the exposed PAY tool now using the pending observed order ID."
-        )
+        if self.runtime.phase == RuntimePhase.READY_TO_CREATE:
+            action = (
+                "Call exactly one exposed CREATE tool now using the selected "
+                "ExecutionPlan, the best compliant Candidate Ledger IDs, and "
+                f"all required arguments.{candidate_directive}"
+            )
+        elif self.runtime.phase == RuntimePhase.READY_TO_PAY:
+            action = "Call the exposed PAY tool now using the pending observed order ID."
+        else:
+            action = (
+                "Call exactly one exposed workflow tool now using only the "
+                "observed state ID and the user's requested change."
+            )
         directive = (
             "## Runtime controller\n"
             f"Focused irreversible phase, replan attempt {attempt + 1}. "
@@ -599,8 +675,7 @@ class ADAPTAgent(PersonalizationAgent):
                 self._observe_assistant(message)
                 return
             if response_type == "payment_question":
-                self.runtime.payment_question_sent = True
-                self.runtime.record("payment_question")
+                self.runtime.commit_payment_question()
                 return
             if response_type == "information_question":
                 gap = self._information_gap_contract().next_gap(
@@ -637,11 +712,11 @@ class ADAPTAgent(PersonalizationAgent):
     def _framework_payment_question(self) -> str:
         if self.runtime.phase != RuntimePhase.READY_TO_PAY:
             return ""
-        if (
-            self.runtime.authorization.pay_authorized
-            or self.runtime.authorization.pay_declined
-            or self.runtime.payment_question_sent
-        ):
+        if self.runtime.can_execute_payment():
+            return ""
+        if self.runtime.payment_clarification_pending:
+            return "请确认：需要我现在支付吗？如果暂时不支付，我会保留未支付订单并结束当前任务。"
+        if self.runtime.has_current_payment_question():
             return ""
         return "订单已创建并处于待支付状态。需要我现在支付吗？"
 
@@ -733,7 +808,7 @@ class ADAPTAgent(PersonalizationAgent):
                         )
                         continue
                 candidates_before = set(self.ledger.candidates)
-                if not item.error and role in {
+                if outcome.ok and role in {
                     ToolRole.SEARCH, ToolRole.ENRICH, ToolRole.READ
                 }:
                     self.ledger.observe(
@@ -741,7 +816,7 @@ class ADAPTAgent(PersonalizationAgent):
                         item.content,
                         self.tool_registry.result_schema(item.name),
                     )
-                elif not item.error and role in {
+                elif outcome.ok and role in {
                     ToolRole.CREATE,
                     ToolRole.PAY,
                     ToolRole.CANCEL,
@@ -749,6 +824,13 @@ class ADAPTAgent(PersonalizationAgent):
                     ToolRole.STATE_READ,
                 }:
                     self.ledger.observe_state(item.name, item.content)
+                    if role == ToolRole.STATE_READ:
+                        self.runtime.observe_workflow_state(
+                            has_state=bool(
+                                self.ledger.pending_payment_ids
+                                or any(self.ledger.state_ids.values())
+                            )
+                        )
                 if outcome.effect == ToolEffect.CREATED_PENDING_PAYMENT:
                     self.ledger.pending_payment_ids.update(
                         state_id
@@ -764,13 +846,13 @@ class ADAPTAgent(PersonalizationAgent):
                     else:
                         self.ledger.pending_payment_ids.clear()
                 attempt = self.tool_errors.observe_result(
-                    item.id, item.name, item.content or "", item.error
+                    item.id, item.name, item.content or "", not outcome.ok
                 )
                 self._operation_journal().observe_result(
                     item.id,
                     item.name,
                     self.tool_registry.role(item.name).value,
-                    item.error,
+                    not outcome.ok,
                 )
                 self.runtime.observe_tool_outcome(
                     item.name,
@@ -807,12 +889,15 @@ class ADAPTAgent(PersonalizationAgent):
                 self.debug.emit(
                     "tool_result",
                     tool=item.name,
-                    error=item.error,
+                    error=not outcome.ok,
+                    transport_error=item.error,
+                    outcome_source=outcome.source,
+                    outcome_effect=outcome.effect.value,
                     phase=self.runtime.phase.value,
                     candidates=len(self.ledger.candidates),
                     tracked_attempt=attempt is not None,
                 )
-                if not item.error and role in {
+                if outcome.ok and role in {
                     ToolRole.SEARCH, ToolRole.ENRICH, ToolRole.READ
                 }:
                     grounding_stats = self.memory.apply_candidate_grounding(
@@ -844,8 +929,16 @@ class ADAPTAgent(PersonalizationAgent):
                         missing_arguments=list(decision.missing_arguments),
                         enrichment_requests=len(decision.needs_enrichment),
                     )
+                    self._emit_candidate_attribution(decision)
                     self._emit_preference_alignment()
-                if item.error:
+                if not outcome.ok:
+                    self.debug.emit(
+                        "failure_attributed",
+                        owner="environment",
+                        stage="tool_result",
+                        reason="an emitted tool call returned an observable failure",
+                        tool=item.name,
+                    )
                     self._record_lesson(
                         "tool_error",
                         item.content or item.name,
@@ -860,11 +953,13 @@ class ADAPTAgent(PersonalizationAgent):
                 )
                 was_ready_to_pay = self.runtime.phase == RuntimePhase.READY_TO_PAY
                 was_done = self.runtime.phase == RuntimePhase.DONE
-                self.runtime.observe_user(text)
+                user_event = self.runtime.observe_user(text)
+                if user_event.kind == UserEventKind.CURRENT_CORRECTION:
+                    self._apply_current_correction(text)
                 # Resolve presentation references while the recommendation's
                 # operation epoch is still current. Selecting a displayed item
                 # may open a new transaction epoch immediately afterwards.
-                self._resolve_user_selection(text)
+                self._resolve_user_selection(text, user_event=user_event)
                 if (
                     (was_ready_to_pay and self.runtime.revision_requested)
                     or (
@@ -875,20 +970,13 @@ class ADAPTAgent(PersonalizationAgent):
                 ):
                     epoch = self._operation_journal().begin_new_epoch()
                     self.debug.emit("operation_epoch_started", epoch=epoch)
-                if (was_ready_to_pay or was_done) and self.runtime.revision_requested:
-                    revised_instruction = (
-                        f"{self._current_instruction or ''}\n"
-                        f"当前用户明确补充：{text}"
-                    )
-                    self.task_spec = TaskSpec.compile(revised_instruction)
-                    self.runtime.spec = self.task_spec
-                    self.runtime.resolved_slots.update(self.task_spec.resolved_slots)
-                    self.decision_card = self.memory.compile_task(revised_instruction)
                 self.debug.emit(
                     "user_observation",
                     phase=self.runtime.phase.value,
                     delegated=self.runtime.authorization.choice_delegated,
                     pending_answer_dimension=pending_dimension,
+                    user_event=user_event.kind.value,
+                    payment_intent=user_event.payment_intent.value,
                 )
                 resolved_answer = self.runtime.resolved_slots.get(
                     pending_dimension, text
@@ -896,16 +984,23 @@ class ADAPTAgent(PersonalizationAgent):
                 if (
                     self.memory.proactive.pending_question
                     and resolved_answer != "__delegated__"
-                    and (
-                        not pending_question_id
-                        or pending_persist_as_preference
-                    )
                 ):
-                    self.memory.record_user_answer(
-                        resolved_answer, dimension=pending_dimension
-                    )
+                    # A clarification always updates this task, but becomes a
+                    # durable preference only when the public tool schema
+                    # explicitly declares it persistent.  A one-off answer
+                    # such as a delivery address or today's room type must not
+                    # pollute the next subtask.
+                    if pending_persist_as_preference:
+                        self.memory.record_user_answer(
+                            resolved_answer,
+                            dimension=pending_dimension,
+                            persistent=True,
+                        )
+                    else:
+                        self.memory.acknowledge_task_answer(resolved_answer)
                     self.decision_card = self.memory.compile_task(
-                        self._current_instruction or ""
+                        self.task_spec.instruction,
+                        spec=self.task_spec,
                     )
                     self._promote_current_answer(
                         pending_dimension, resolved_answer, text
@@ -917,15 +1012,103 @@ class ADAPTAgent(PersonalizationAgent):
                         self.runtime.apply_candidate_decision(
                             self._candidate_decision()
                         )
-                if any(
-                    marker in text
-                    for marker in ("不是", "不对", "错了", "我说的是", "不要", "不用")
+                elif (
+                    not user_event.is_payment
+                    and
+                    callable(getattr(self.memory, "is_persistent_statement", None))
+                    and self.memory.is_persistent_statement(text)
                 ):
-                    self._record_lesson(
-                        "user_correction",
-                        text,
-                        "Apply the user's latest correction as a hard constraint before any further tool call.",
+                    # Outside a schema-marked question, persist only an
+                    # explicit future-default statement.  Current corrections
+                    # still flow through TaskSpec above and remain local.
+                    added = self.memory.record_runtime_preference(
+                        text, persistent=True
                     )
+                    if added:
+                        self.decision_card = self.memory.compile_task(
+                            self.task_spec.instruction,
+                            spec=self.task_spec,
+                        )
+                        if self.ledger.candidates:
+                            self.runtime.apply_candidate_decision(
+                                self._candidate_decision()
+                            )
+                        self.debug.emit(
+                            "persistent_runtime_preference_recorded",
+                            facts=added,
+                        )
+                if user_event.kind == UserEventKind.CURRENT_CORRECTION:
+                    self._record_user_correction_lesson(user_event)
+
+    def _apply_current_correction(self, text: str) -> None:
+        """Overlay visible user corrections onto the active task contract."""
+        correction = (text or "").strip()
+        if not correction:
+            return
+        corrections = getattr(self, "_current_corrections", [])
+        corrections.append(correction)
+        self._current_corrections = corrections[-4:]
+        revised_instruction = "\n".join(
+            [
+                self._current_instruction or self.task_spec.instruction,
+                *(
+                    f"当前用户明确纠正：{value}"
+                    for value in self._current_corrections
+                ),
+            ]
+        )
+        revised = TaskSpec.compile(
+            revised_instruction, domain_hint=self.tool_registry.domain_hint()
+        )
+        # Latest scalar/entity corrections replace older values. Independent
+        # negative constraints remain additive because safety sets can coexist.
+        latest_by_slot: dict[tuple[object, str, str], Constraint] = {}
+        retained: list[Constraint] = []
+        for constraint in revised.must:
+            if any(
+                constraint.evidence_span and constraint.evidence_span in value
+                for value in self._current_corrections
+            ):
+                constraint.source = "user_correction"
+            slot = (
+                constraint.target,
+                constraint.kind,
+                constraint.argument_name,
+            )
+            if constraint.kind == "authorization":
+                retained.append(constraint)
+            else:
+                latest_by_slot[slot] = constraint
+        revised.must = [*retained, *latest_by_slot.values()]
+        for constraint in revised.avoid:
+            if any(
+                constraint.evidence_span and constraint.evidence_span in value
+                for value in self._current_corrections
+            ):
+                constraint.source = "user_correction"
+        self.task_spec = revised
+        self.decision_card = self.memory.compile_task(
+            revised_instruction, spec=revised
+        )
+        self.runtime.spec = revised
+        self.runtime.resolved_slots.update(revised.resolved_slots)
+        self.runtime.selected_candidate_id = ""
+        self.runtime.selection_made = False
+        self.runtime.planned_create_tool = ""
+        self.runtime.planned_create_arguments = {}
+        if self.ledger.candidates and self.runtime.phase not in {
+            RuntimePhase.READY_TO_PAY,
+            RuntimePhase.WAIT_PAY_RESULT,
+        }:
+            self.runtime.phase = RuntimePhase.SELECT
+            self.runtime.apply_candidate_decision(self._candidate_decision())
+        self.debug.emit(
+            "current_correction_applied",
+            correction=correction[:160],
+            must=[constraint.value for constraint in revised.must],
+            avoid=[constraint.value for constraint in revised.avoid],
+            phase=self.runtime.phase.value,
+        )
 
     def _preflight(self, assistant: AssistantMessage, allowed_tools=None) -> list[str]:
         problems: list[str] = []
@@ -941,6 +1124,16 @@ class ADAPTAgent(PersonalizationAgent):
         elif has_question and not question_decision.allowed:
             problems.append(f"question gate: {question_decision.reason}")
         allowed_names = {tool.name for tool in (allowed_tools or [])}
+        irreversible_calls = [
+            call
+            for call in calls
+            if self.tool_registry.role(call.name)
+            in {ToolRole.CREATE, ToolRole.PAY, ToolRole.CANCEL, ToolRole.MODIFY}
+        ]
+        if len(irreversible_calls) > 1:
+            problems.append(
+                "one assistant message may contain at most one irreversible tool call"
+            )
         for call in calls:
             if call.name not in allowed_names:
                 problems.append(
@@ -950,6 +1143,11 @@ class ADAPTAgent(PersonalizationAgent):
             role = self.tool_registry.role(call.name)
             problems.extend(
                 self.tool_registry.validate_required(call.name, call.arguments)
+            )
+            problems.extend(
+                self.tool_registry.validate_argument_types(
+                    call.name, call.arguments
+                )
             )
             problems.extend(
                 self._operation_journal().validate(
@@ -1025,10 +1223,7 @@ class ADAPTAgent(PersonalizationAgent):
                 and not self.runtime.authorization.create_authorized
             ):
                 problems.append("CREATE is not authorized by the user")
-            if role == ToolRole.PAY and (
-                not self.runtime.authorization.pay_authorized
-                or self.runtime.authorization.pay_declined
-            ):
+            if role == ToolRole.PAY and not self.runtime.can_execute_payment():
                 problems.append("PAY is not authorized by the user")
 
         if not calls and self.task_spec.action == "commit":
@@ -1047,13 +1242,21 @@ class ADAPTAgent(PersonalizationAgent):
         already_emitted = self.responses.has(
             epoch, self.ledger.candidate_version, "completion"
         )
+        disposition = self.runtime.authorization.payment_disposition
+        payment_terminal = {
+            PaymentDisposition.DECLINED: "订单已创建，按你的要求没有支付。",
+            PaymentDisposition.DEFERRED: "订单已创建并保持未支付，你之后可以继续处理。",
+            PaymentDisposition.SELF_PAY: "订单已创建，我没有代为支付。",
+            PaymentDisposition.COMPLETED: "订单已创建并支付成功。",
+        }.get(disposition)
         response = AssistantMessage(
             role="assistant",
             content=(
                 "当前任务已结束，没有重复执行。"
                 if already_emitted
                 else (
-                    "操作已成功完成。"
+                    payment_terminal
+                    or "操作已成功完成。"
                     if self.runtime.write_succeeded
                     else "当前任务已结束，未执行新的操作。"
                 )
@@ -1071,9 +1274,109 @@ class ADAPTAgent(PersonalizationAgent):
         role = self.tool_registry.role(prepared.name)
         if role in {ToolRole.CREATE, ToolRole.MODIFY}:
             prepared = self._normalize_profile_arguments(prepared)
+        if role in {ToolRole.CANCEL, ToolRole.MODIFY}:
+            prepared = self._bind_workflow_arguments(prepared)
+        if role == ToolRole.CREATE and self.runtime.planned_create_tool == prepared.name:
+            arguments = dict(prepared.arguments or {})
+            # CandidateDecision owns entity/profile bindings. The model may
+            # supply remaining operational fields, but cannot swap the chosen
+            # tool or IDs after deterministic selection.
+            arguments.update(self.runtime.planned_create_arguments)
+            prepared = ToolCall(
+                id=prepared.id,
+                name=prepared.name,
+                arguments=arguments,
+            )
+            prepared = self._normalize_profile_arguments(prepared)
         # Recovery is allowed to mutate only the private prepared copy.
         self.tool_errors.recover(prepared.name, prepared.arguments, role)
+        contract = self.tool_registry.contract(prepared.name)
+        if contract is not None:
+            if role == ToolRole.CREATE:
+                prepared = self._bind_transmittable_preference_request(
+                    prepared, contract
+                )
+            from agent.runtime.argument_binding import ArgumentBindingResolver
+
+            prepared = ToolCall(
+                id=prepared.id,
+                name=prepared.name,
+                arguments=ArgumentBindingResolver.normalize_arguments(
+                    contract, prepared.arguments
+                ),
+            )
         return prepared
+
+    def _bind_transmittable_preference_request(
+        self, call: ToolCall, contract) -> ToolCall:
+        """Transmit explicit avoids only through a declared CREATE field.
+
+        This is deliberately one-way: a note/attribute field carries user
+        intent to the environment but never proves the chosen candidate has
+        fulfilled it.  Candidate and safety validation stay intrinsic.
+        """
+        capability = getattr(contract, "action_capability", None)
+        if capability is None or not capability.can_transmit_request:
+            return call
+        values: list[str] = []
+        for constraint in self.decision_card.constraints:
+            operator = getattr(constraint.operator, "value", constraint.operator)
+            target = getattr(constraint.target, "value", constraint.target)
+            if (
+                operator == "excludes"
+                and target == "candidate"
+                and constraint.value
+                and constraint.value not in values
+            ):
+                values.append(str(constraint.value))
+        if not values:
+            return call
+        # The wording is content-agnostic and visible to the tool provider.
+        # Cap it so a large legacy profile cannot monopolize a CREATE payload.
+        request = "用户要求：请勿包含" + "、".join(values[:3])
+        arguments = dict(call.arguments or {})
+        for name in capability.request_arguments:
+            if arguments.get(name) not in (None, "", []):
+                continue
+            arguments[name] = [request] if name in capability.list_request_arguments else request
+            return ToolCall(id=call.id, name=call.name, arguments=arguments)
+        return call
+
+    def _bind_workflow_arguments(self, call: ToolCall) -> ToolCall:
+        """Bind unique observed state/profile IDs and current task arguments."""
+        meta = self.tool_registry.meta.get(call.name)
+        contract = self.tool_registry.contract(call.name)
+        if meta is None or contract is None:
+            return call
+        arguments = dict(call.arguments or {})
+        for name, entity_type in meta.id_arguments.items():
+            if arguments.get(name) not in (None, "", []):
+                continue
+            if entity_type == "user":
+                value = self.user_profile.get("user_id")
+                if value not in (None, ""):
+                    arguments[name] = value
+                continue
+            observed = self.tool_registry.workflow_state_ids(
+                meta, self.ledger, entity_type
+            )
+            explicit = [
+                value for value in observed if value in self.task_spec.instruction
+            ]
+            selected = explicit or observed
+            if len(selected) == 1:
+                arguments[name] = selected if name.endswith("_ids") else selected[0]
+        from agent.runtime.argument_binding import ArgumentBindingResolver
+
+        planned = ArgumentBindingResolver.bind(
+            contract,
+            self.task_spec,
+            self.runtime.resolved_slots,
+            self.user_profile,
+        )
+        for name, value in planned.items():
+            arguments.setdefault(name, value)
+        return ToolCall(id=call.id, name=call.name, arguments=arguments)
 
     def _normalize_profile_arguments(self, call: ToolCall) -> ToolCall:
         """Return a copy with account aliases bound to WRITE arguments."""
@@ -1182,6 +1485,10 @@ class ADAPTAgent(PersonalizationAgent):
         recovered = self.tool_errors.recovered_create_attempt()
         if recovered is None or recovered.tool_name not in self.tool_registry.meta:
             return None
+        if self.runtime.phase == RuntimePhase.WAIT_CREATE_RESULT:
+            # A recovered proposal proves the preceding attempt failed. Bring
+            # legacy/manual state in line with the typed outcome transition.
+            self.runtime.phase = RuntimePhase.READY_TO_CREATE
         call = ToolCall(
             id=f"adapt-recovered-write-{len(self.runtime.events)}",
             name=recovered.tool_name,
@@ -1263,6 +1570,51 @@ class ADAPTAgent(PersonalizationAgent):
                     role=role.value,
                     phase=self.runtime.phase.value,
                 )
+                if role == ToolRole.CREATE:
+                    meta = self.tool_registry.meta.get(call.name)
+                    proposed_ids = []
+                    if meta is not None:
+                        proposed_ids = [
+                            str(item)
+                            for argument, kind in meta.id_arguments.items()
+                            if kind != "user" and argument in call.arguments
+                            for item in (
+                                call.arguments[argument]
+                                if isinstance(call.arguments[argument], list)
+                                else [call.arguments[argument]]
+                            )
+                        ]
+                    selected_id = self.runtime.selected_candidate_id
+                    if selected_id:
+                        self.debug.emit(
+                            "create_consistency",
+                            selection_source="runtime_selected",
+                            selected_candidate_id=selected_id,
+                            selected_candidate_ids=[selected_id],
+                            proposed_candidate_ids=proposed_ids,
+                            consistent=selected_id in proposed_ids,
+                        )
+                    else:
+                        # An already-authorized task may deterministically
+                        # select and CREATE without displaying a shortlist.
+                        # Attribute that transition to the same candidate
+                        # authority rather than silently dropping it from the
+                        # CREATE-consistency denominator.
+                        decision = self._candidate_decision()
+                        decision_ids = (
+                            list(decision.selected.leaf_ids)
+                            if decision.selected is not None
+                            else []
+                        )
+                        if decision_ids:
+                            self.debug.emit(
+                                "create_consistency",
+                                selection_source="candidate_decision",
+                                selected_candidate_id=decision_ids[0],
+                                selected_candidate_ids=decision_ids,
+                                proposed_candidate_ids=proposed_ids,
+                                consistent=set(decision_ids).issubset(proposed_ids),
+                            )
                 self.tool_errors.register_proposal(
                     call.id,
                     call.name,
@@ -1314,6 +1666,10 @@ class ADAPTAgent(PersonalizationAgent):
                             strict=False,
                         )
             return
+        if self.runtime.phase == RuntimePhase.REPORT:
+            self.runtime.phase = RuntimePhase.DONE
+            self.runtime.record("report_completed")
+            return
         if self.question_gate.is_question(assistant.content or ""):
             decision = self.question_gate.evaluate(
                 assistant.content or "", self.runtime
@@ -1354,14 +1710,21 @@ class ADAPTAgent(PersonalizationAgent):
             unique.setdefault(gap.dimension, gap)
         return InformationGapContract(tuple(unique.values()))
 
-    def _resolve_user_selection(self, text: str) -> None:
-        index = selected_ordinal(text)
-        if not index:
-            return
+    def _resolve_user_selection(
+        self, text: str, *, user_event: UserEvent | None = None
+    ) -> None:
         snapshot = self.responses.latest_snapshot(
             self._operation_journal().epoch, "recommendation"
         )
         if snapshot is None:
+            return
+        index = user_event.selection_index if user_event is not None else selected_ordinal(text)
+        if not index and accepts_visible_recommendation(text):
+            # Framework recommendations explicitly identify the first rendered
+            # candidate as the preferred option.  Bind the acceptance to that
+            # immutable rendered order, never to a newly recomputed ranking.
+            index = 1
+        if not index:
             return
         _, candidate_ids = snapshot
         if not 1 <= index <= len(candidate_ids):
@@ -1372,12 +1735,10 @@ class ADAPTAgent(PersonalizationAgent):
         # The ordinal is resolved against the exact list actually rendered.
         self.runtime.authorization.create_authorized = True
         self.runtime.authorization.candidate_choice_authorized = True
-        self.runtime.select_candidate(
-            selected.candidate_id,
-            execution_ready=self.tool_registry.execution_ready(
-                self.ledger, self.decision_card
-            ),
-        )
+        self.runtime.selected_candidate_id = selected.candidate_id
+        self.runtime.selection_made = True
+        decision = self._candidate_decision()
+        self.runtime.select_candidate(selected.candidate_id, decision=decision)
 
     def _emit_preference_alignment(self) -> None:
         """Expose capability-level evidence without evaluator information."""
@@ -1414,16 +1775,32 @@ class ADAPTAgent(PersonalizationAgent):
             ),
         )
 
+    def _emit_candidate_attribution(self, decision) -> None:
+        """Record all shadow policies without changing the production choice."""
+        candidates = list(self.ledger.structural_leaf_candidates())
+        if not candidates:
+            return
+        comparison = CandidateAttributionEngine.compare(
+            candidates, self.decision_card, decision=decision
+        )
+        self._latest_candidate_attribution = comparison
+        for policy, batch in comparison.items():
+            self.debug.emit(
+                "candidate_attribution",
+                policy=policy,
+                instruction_epoch=getattr(self, "_instruction_epoch", 0),
+                candidate_version=self.ledger.candidate_version,
+                summary=batch.summary.as_dict(),
+                top3=[record.as_dict() for record in batch.records[:3]],
+            )
+
     @staticmethod
     def _is_delegation(text: str) -> bool:
         return any(
             marker in (text or "") for marker in ("随便", "看着办", "不太清楚", "都行")
         )
 
-    def _finalize_visible_trajectory(
-        self, tool_registry: ToolRegistry | None = None
-    ) -> None:
-        registry = tool_registry or self.tool_registry
+    def _finalize_visible_trajectory(self) -> None:
         if self.runtime.has_unresolved_payment_failure(
             self.ledger.pending_payment_ids
         ):
@@ -1440,27 +1817,36 @@ class ADAPTAgent(PersonalizationAgent):
                 "the same normalized search signature was emitted more than once",
                 "Use observed candidates after a repeated search instead of issuing the same search again.",
             )
-        decision = self._candidate_decision(registry)
-        has_executable_candidate = bool(
-            self._candidate_shortlist(limit=1, registry=registry)
-        ) and bool(decision.admissible)
-        if (
-            self.runtime.authorization.create_authorized
-            and has_executable_candidate
-            and self.runtime.phase not in {
-            RuntimePhase.WAIT_CREATE_RESULT,
-            RuntimePhase.READY_TO_PAY,
-            RuntimePhase.WAIT_PAY_RESULT,
-            RuntimePhase.DONE,
-            }
-        ):
-            self._record_lesson(
-                "missed_write",
-                self.task_spec.instruction,
-                "When CREATE is authorized and a compliant candidate exists, transition to CREATE instead of asking again.",
-            )
 
     def _record_lesson(self, failure_class: str, trigger: str, correction: str) -> None:
+        # Raw-text callers may not manufacture correction evidence. User
+        # correction lessons enter only through _record_user_correction_lesson.
+        if failure_class == "user_correction":
+            self.debug.emit(
+                "lesson_suppressed",
+                failure_class=failure_class,
+                owner="harness",
+                reason="user correction requires a typed CURRENT_CORRECTION event",
+            )
+            return
+        self._commit_lesson(failure_class, trigger, correction)
+
+    def _record_user_correction_lesson(self, event: UserEvent) -> None:
+        if event.kind != UserEventKind.CURRENT_CORRECTION:
+            self.debug.emit(
+                "lesson_suppressed",
+                failure_class="user_correction",
+                owner="harness",
+                reason=f"incompatible typed event: {event.kind.value}",
+            )
+            return
+        self._commit_lesson(
+            "user_correction",
+            event.text,
+            "Apply the user's latest correction before any further tool call.",
+        )
+
+    def _commit_lesson(self, failure_class: str, trigger: str, correction: str) -> None:
         if not self.enable_lessons:
             return
         self.lessons.add(
@@ -1474,7 +1860,6 @@ class ADAPTAgent(PersonalizationAgent):
             "tool_error": TrajectoryEvidenceSource.TOOL_ERROR,
             "user_correction": TrajectoryEvidenceSource.USER_CORRECTION,
             "repeat_search": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
-            "missed_write": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
             "unresolved_operation": TrajectoryEvidenceSource.EXPLICIT_STATE_FAILURE,
         }
         evidence_source = evidence_sources.get(failure_class)
