@@ -68,6 +68,90 @@ class UserEventKind(str, Enum):
     OTHER = "other"
 
 
+class SemanticActKind(str, Enum):
+    """Composable meanings; unlike UserEventKind these are not exclusive."""
+
+    INFORMATION_ANSWER = "information_answer"
+    CURRENT_CORRECTION = "current_correction"
+    CANDIDATE_SELECTION = "candidate_selection"
+    DELEGATION = "delegation"
+    CREATE_AUTHORIZATION = "create_authorization"
+    PAYMENT_AUTHORIZE = "payment_authorize"
+    PAYMENT_DECLINE = "payment_decline"
+    PAYMENT_DEFER = "payment_defer"
+    PAYMENT_SELF_PAY = "payment_self_pay"
+    PAYMENT_QUESTION = "payment_question"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class EvidenceSpan:
+    start: int
+    end: int
+    text: str
+
+
+@dataclass(frozen=True)
+class SemanticAct:
+    kind: SemanticActKind
+    evidence: tuple[EvidenceSpan, ...] = ()
+    value: str = ""
+    selection_index: int = 0
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class TurnInterpretation:
+    acts: tuple[SemanticAct, ...]
+    evidence_spans: tuple[EvidenceSpan, ...]
+    confidence: float
+    unresolved: tuple[str, ...] = ()
+
+    def has(self, kind: SemanticActKind) -> bool:
+        return any(act.kind == kind for act in self.acts)
+
+    def first(self, kind: SemanticActKind) -> SemanticAct | None:
+        return next((act for act in self.acts if act.kind == kind), None)
+
+
+@dataclass
+class AuthorizationGrant:
+    """An operation permission scoped to visible runtime provenance."""
+
+    operation: str
+    candidate_id: str = ""
+    snapshot_id: str = ""
+    order_id: str = ""
+    payment_round: int = 0
+    source_turn: int = 0
+    evidence: str = ""
+    expires_on: str = "subtask_end"
+    active: bool = True
+
+    def matches(
+        self,
+        operation: str,
+        *,
+        candidate_id: str = "",
+        snapshot_id: str = "",
+        order_id: str = "",
+        payment_round: int = 0,
+    ) -> bool:
+        if not self.active or self.operation != operation:
+            return False
+        checks = (
+            (self.candidate_id, candidate_id),
+            (self.snapshot_id, snapshot_id),
+            (self.order_id, order_id),
+        )
+        if any(
+            expected and observed and expected != observed
+            for expected, observed in checks
+        ):
+            return False
+        return not self.payment_round or self.payment_round == payment_round
+
+
 _PAYMENT_EVENT_KINDS = frozenset(
     {
         UserEventKind.PAYMENT_AUTHORIZE,
@@ -330,6 +414,92 @@ def classify_user_event(
     )
 
 
+def _span(text: str, evidence: str) -> EvidenceSpan:
+    start = text.find(evidence) if evidence else -1
+    return EvidenceSpan(max(0, start), max(0, start) + len(evidence), evidence)
+
+
+def interpret_user_turn(
+    text: str,
+    *,
+    phase: RuntimePhase,
+    payment_question_sent: bool,
+    pending_question_dimension: str = "",
+    prior_correction: bool = False,
+) -> TurnInterpretation:
+    """Return all independently supported meanings in one user turn.
+
+    The legacy classifier is retained only as a compatibility projection.  A
+    marker contributes an evidence span; authorization is granted later only
+    after the span is validated against a current snapshot/operation scope.
+    """
+
+    content = (text or "").strip()
+    legacy = classify_user_event(
+        content,
+        phase=phase,
+        payment_question_sent=payment_question_sent,
+        pending_question_dimension=pending_question_dimension,
+        prior_correction=prior_correction,
+    )
+    acts: list[SemanticAct] = []
+
+    def add(kind: SemanticActKind, evidence: str, **kwargs) -> None:
+        span = _span(content, evidence)
+        if not any(item.kind == kind and item.evidence == (span,) for item in acts):
+            acts.append(SemanticAct(kind, (span,), **kwargs))
+
+    if pending_question_dimension:
+        add(SemanticActKind.INFORMATION_ANSWER, content, value=content)
+    correction_marker = next(
+        (marker for marker in _REVISION_MARKERS if marker in content), ""
+    )
+    if legacy.kind == UserEventKind.CURRENT_CORRECTION or correction_marker:
+        add(SemanticActKind.CURRENT_CORRECTION, correction_marker or content)
+    if legacy.selection_index:
+        evidence = next(
+            (token for token in ("第一", "第二", "第三", "这个", "就这个") if token in content),
+            content,
+        )
+        add(
+            SemanticActKind.CANDIDATE_SELECTION,
+            evidence,
+            selection_index=legacy.selection_index,
+        )
+    delegation_marker = next(
+        (marker for marker in _DELEGATION_MARKERS if marker in content), ""
+    )
+    if legacy.delegated:
+        add(SemanticActKind.DELEGATION, delegation_marker or content)
+    create_marker = next((marker for marker in _CREATE_MARKERS if marker in content), "")
+    if legacy.create_authorized:
+        add(SemanticActKind.CREATE_AUTHORIZATION, create_marker or content)
+
+    contextual_payment_intent = classify_payment_intent(
+        content, payment_question_sent=payment_question_sent
+    )
+    payment_kind = {
+        PaymentIntent.AUTHORIZE: SemanticActKind.PAYMENT_AUTHORIZE,
+        PaymentIntent.DECLINE: SemanticActKind.PAYMENT_DECLINE,
+        PaymentIntent.DEFER: SemanticActKind.PAYMENT_DEFER,
+        PaymentIntent.SELF_PAY: SemanticActKind.PAYMENT_SELF_PAY,
+        PaymentIntent.QUESTION: SemanticActKind.PAYMENT_QUESTION,
+    }.get(contextual_payment_intent)
+    if payment_kind is not None and payment_question_sent:
+        add(payment_kind, content)
+    if not acts:
+        add(SemanticActKind.OTHER, content, confidence=0.5)
+    spans = tuple(span for act in acts for span in act.evidence)
+    confidence = min((act.confidence for act in acts), default=0.0)
+    unresolved = (
+        ("payment_intent",)
+        if phase == RuntimePhase.READY_TO_PAY
+        and legacy.payment_intent == PaymentIntent.UNKNOWN
+        else ()
+    )
+    return TurnInterpretation(tuple(acts), spans, confidence, unresolved)
+
+
 @dataclass
 class TaskRuntime:
     spec: TaskSpec
@@ -363,6 +533,9 @@ class TaskRuntime:
     payment_clarifications: int = 0
     current_correction_count: int = 0
     write_succeeded: bool = False
+    source_turn: int = 0
+    authorization_grants: list[AuthorizationGrant] = field(default_factory=list)
+    last_interpretation: TurnInterpretation | None = None
     events: list[dict] = field(default_factory=list)
 
     @classmethod
@@ -409,6 +582,57 @@ class TaskRuntime:
             and auth.pay_authorized
             and not auth.pay_declined
             and self.authorized_payment_round == self.payment_round
+            and self.has_authorization("pay", payment_round=self.payment_round)
+        )
+
+    def grant_authorization(
+        self,
+        operation: str,
+        *,
+        candidate_id: str = "",
+        snapshot_id: str = "",
+        order_id: str = "",
+        payment_round: int = 0,
+        evidence: str = "",
+        expires_on: str = "subtask_end",
+    ) -> AuthorizationGrant:
+        grant = AuthorizationGrant(
+            operation=operation,
+            candidate_id=candidate_id,
+            snapshot_id=snapshot_id,
+            order_id=order_id,
+            payment_round=payment_round,
+            source_turn=self.source_turn,
+            evidence=evidence,
+            expires_on=expires_on,
+        )
+        self.authorization_grants.append(grant)
+        self.record(
+            "authorization_granted",
+            operation=operation,
+            candidate_id=candidate_id,
+            snapshot_id=snapshot_id,
+            payment_round=payment_round,
+        )
+        return grant
+
+    def has_authorization(self, operation: str, **scope) -> bool:
+        return any(
+            grant.matches(operation, **scope)
+            for grant in self.authorization_grants
+        )
+
+    def invalidate_authorizations(self, *operations: str) -> None:
+        selected = set(operations)
+        for grant in self.authorization_grants:
+            if not selected or grant.operation in selected:
+                grant.active = False
+
+    def can_execute_create(self, candidate_id: str) -> bool:
+        return (
+            self.authorization.create_authorized
+            and bool(candidate_id)
+            and self.has_authorization("create", candidate_id=candidate_id)
         )
 
     def critical_gaps(self) -> list[str]:
@@ -435,6 +659,14 @@ class TaskRuntime:
 
     def observe_user(self, text: str) -> UserEvent:
         content = (text or "").strip()
+        self.source_turn += 1
+        self.last_interpretation = interpret_user_turn(
+            content,
+            phase=self.phase,
+            payment_question_sent=self.has_current_payment_question(),
+            pending_question_dimension=self.pending_question_dimension,
+            prior_correction=self.current_correction_count > 0,
+        )
         event = classify_user_event(
             content,
             phase=self.phase,
@@ -443,14 +675,17 @@ class TaskRuntime:
             prior_correction=self.current_correction_count > 0,
         )
         self.last_user_answer = content[:240]
-        if event.delegated:
+        if self.last_interpretation.has(SemanticActKind.DELEGATION):
             self.authorization.choice_delegated = True
         selection_authorizes = (
             self.spec.action == "commit"
             and self.phase in {RuntimePhase.SELECT, RuntimePhase.DONE}
             and bool(event.selection_index or re.search(r"就这个|选这个", content))
         )
-        if event.create_authorized or selection_authorizes:
+        if (
+            self.last_interpretation.has(SemanticActKind.CREATE_AUTHORIZATION)
+            or selection_authorizes
+        ):
             self.authorization.create_authorized = True
             self.authorization.candidate_choice_authorized = True
         if event.selection_index or re.search(r"就这个|选这个", content):
@@ -477,6 +712,7 @@ class TaskRuntime:
             self.payment_question_round = 0
             self.payment_clarification_pending = False
             self.selection_made = False
+            self.invalidate_authorizations("create", "pay")
             self.phase = RuntimePhase.SEARCH
         elif self.phase == RuntimePhase.READY_TO_PAY:
             intent = event.payment_intent
@@ -524,25 +760,36 @@ class TaskRuntime:
                 self.payment_round if self.has_current_payment_question() else 0
             )
             self.payment_clarification_pending = False
+            if self.authorized_payment_round:
+                self.grant_authorization(
+                    "pay",
+                    payment_round=self.authorized_payment_round,
+                    evidence=self.last_user_answer,
+                    expires_on="payment_result",
+                )
         elif intent == PaymentIntent.DECLINE:
+            self.invalidate_authorizations("pay")
             auth.payment_disposition = PaymentDisposition.DECLINED
             auth.pay_authorized = False
             auth.pay_declined = True
             self.authorized_payment_round = 0
             self.payment_clarification_pending = False
         elif intent == PaymentIntent.DEFER:
+            self.invalidate_authorizations("pay")
             auth.payment_disposition = PaymentDisposition.DEFERRED
             auth.pay_authorized = False
             auth.pay_declined = True
             self.authorized_payment_round = 0
             self.payment_clarification_pending = False
         elif intent == PaymentIntent.SELF_PAY:
+            self.invalidate_authorizations("pay")
             auth.payment_disposition = PaymentDisposition.SELF_PAY
             auth.pay_authorized = False
             auth.pay_declined = True
             self.authorized_payment_round = 0
             self.payment_clarification_pending = False
         elif intent in {PaymentIntent.QUESTION, PaymentIntent.UNKNOWN}:
+            self.invalidate_authorizations("pay")
             auth.payment_disposition = PaymentDisposition.UNRESOLVED
             auth.pay_authorized = False
             auth.pay_declined = False
@@ -673,6 +920,15 @@ class TaskRuntime:
         if decision.selected is not None:
             self.planned_create_tool = decision.selected.create_tool
             self.planned_create_arguments = decision.selected.as_arguments()
+            if self.authorization.create_authorized and decision.selected.leaf_ids:
+                candidate_id = decision.selected.leaf_ids[0]
+                if not self.has_authorization("create", candidate_id=candidate_id):
+                    self.grant_authorization(
+                        "create",
+                        candidate_id=candidate_id,
+                        evidence=self.last_user_answer or self.spec.instruction,
+                        expires_on="create_result",
+                    )
         else:
             self.planned_create_tool = ""
             self.planned_create_arguments = {}
@@ -704,6 +960,7 @@ class TaskRuntime:
         *,
         execution_ready: bool = False,
         decision=None,
+        snapshot_id: str = "",
     ) -> None:
         """Record a user's concrete choice without replaying SEARCH state.
 
@@ -713,6 +970,15 @@ class TaskRuntime:
         """
         self.selected_candidate_id = candidate_id
         self.selection_made = True
+        self.invalidate_authorizations("create")
+        if self.authorization.create_authorized:
+            self.grant_authorization(
+                "create",
+                candidate_id=candidate_id,
+                snapshot_id=snapshot_id,
+                evidence=self.last_user_answer or self.spec.instruction,
+                expires_on="create_result",
+            )
         if decision is not None:
             self.apply_candidate_decision(decision)
             execution_ready = bool(decision.admissible)
@@ -756,6 +1022,7 @@ class TaskRuntime:
             self.record("tool_error", tool=tool_name, content=raw_error[:200])
             return
         if outcome.effect in {ToolEffect.CREATED, ToolEffect.CREATED_PENDING_PAYMENT}:
+            self.invalidate_authorizations("create")
             self.revision_requested = False
             self.write_succeeded = True
             self.phase = (
@@ -781,6 +1048,7 @@ class TaskRuntime:
             self.write_succeeded = True
             self.phase = RuntimePhase.DONE
             if outcome.effect == ToolEffect.PAID:
+                self.invalidate_authorizations("pay")
                 self.authorization.payment_disposition = PaymentDisposition.COMPLETED
         self.record(
             "tool_result",

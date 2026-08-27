@@ -1293,6 +1293,32 @@ class ADAPTAgent(PersonalizationAgent):
                 and not self.runtime.authorization.create_authorized
             ):
                 problems.append("CREATE is not authorized by the user")
+            if (
+                role == ToolRole.CREATE
+                and meta is not None
+                and (
+                    self.runtime.planned_create_arguments
+                    or self.runtime.selected_candidate_id
+                )
+            ):
+                scoped_candidates = [
+                    str(value)
+                    for argument, kind in meta.id_arguments.items()
+                    if kind not in {"user", "order"} and argument in call.arguments
+                    for value in (
+                        call.arguments[argument]
+                        if isinstance(call.arguments[argument], list)
+                        else [call.arguments[argument]]
+                    )
+                    if str(value) in self.ledger.candidates
+                ]
+                if not any(
+                    self.runtime.can_execute_create(candidate_id)
+                    for candidate_id in scoped_candidates
+                ):
+                    problems.append(
+                        "CREATE authorization is not scoped to a current candidate"
+                    )
             if role == ToolRole.PAY and not self.runtime.can_execute_payment():
                 problems.append("PAY is not authorized by the user")
 
@@ -1796,7 +1822,7 @@ class ADAPTAgent(PersonalizationAgent):
             index = 1
         if not index:
             return
-        _, candidate_ids = snapshot
+        candidate_version, candidate_ids = snapshot
         if not 1 <= index <= len(candidate_ids):
             return
         selected = self.ledger.candidates.get(candidate_ids[index - 1])
@@ -1808,7 +1834,11 @@ class ADAPTAgent(PersonalizationAgent):
         self.runtime.selected_candidate_id = selected.candidate_id
         self.runtime.selection_made = True
         decision = self._candidate_decision()
-        self.runtime.select_candidate(selected.candidate_id, decision=decision)
+        self.runtime.select_candidate(
+            selected.candidate_id,
+            decision=decision,
+            snapshot_id=f"{self._operation_journal().epoch}:{candidate_version}",
+        )
 
     def _emit_preference_alignment(self) -> None:
         """Expose capability-level evidence without evaluator information."""

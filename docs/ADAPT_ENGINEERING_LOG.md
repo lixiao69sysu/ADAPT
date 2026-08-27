@@ -726,6 +726,15 @@
 - **验证**：合成测试覆盖快照深拷贝隔离、ledger/runtime/OperationJournal 回滚及同一原状态重试的结果等价；相关 165 项测试通过。
 - **能力抽象**：candidate-to-action execution / long-horizon consistency / evaluation harness。
 
+## E-054：互斥用户事件丢失同一回合的复合语义和授权范围
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（组合语义与作用域授权合成门禁通过，尚待真实轨迹）
+- **通用性判定**：`GENERAL-INVARIANT`。一个用户回合可同时包含选择、修正、CREATE 授权和支付处置；不能用一个互斥枚举无损表示。
+- **有效方案**：新增 `TurnInterpretation`/`SemanticAct`/`EvidenceSpan`，旧 `UserEvent` 只作兼容投影；新增 `AuthorizationGrant`，将 CREATE 绑定候选和展示快照，将 PAY 绑定支付轮次，修订或成功结果显式使 grant 失效。marker 仅保留为可见 evidence span，不再单独构成无作用域 WRITE 权限。
+- **验证**：合成测试覆盖单句四语义、脱离支付问题的短确认、候选作用域、轮次作用域及 CREATE 不升级 PAY；相关 178 项测试通过。
+- **能力抽象**：missing-information detection / candidate-to-action execution / long-horizon consistency。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

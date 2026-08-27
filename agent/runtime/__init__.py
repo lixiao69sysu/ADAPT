@@ -60,13 +60,19 @@ from agent.runtime.question_gate import QuestionDecision, QuestionGate
 from agent.runtime.responses import ResponseJournal
 from agent.runtime.schema_adapter import ObservableSchemaAdapter
 from agent.runtime.state import (
+    AuthorizationGrant,
     AuthorizationState,
+    EvidenceSpan,
     PaymentDisposition,
     PaymentIntent,
     RuntimePhase,
+    SemanticAct,
+    SemanticActKind,
     TaskRuntime,
     classify_payment_intent,
     classify_user_event,
+    interpret_user_turn,
+    TurnInterpretation,
     UserEvent,
     UserEventKind,
 )
@@ -75,8 +81,10 @@ from agent.runtime.tools import ToolRegistry, ToolRole
 from agent.runtime.transactions import ActionTransaction, ReplanContext
 
 __all__ = [
+    "AuthorizationGrant",
     "ADAPTAgentState",
     "AuthorizationState",
+    "EvidenceSpan",
     "FailureAttribution",
     "FailureOwner",
     "attribute_preflight_failure",
@@ -120,6 +128,8 @@ __all__ = [
     "PaymentDisposition",
     "PaymentIntent",
     "RuntimePhase",
+    "SemanticAct",
+    "SemanticActKind",
     "RuntimePolicyAdapter",
     "RuntimePolicyRule",
     "RuntimePolicyStore",
@@ -128,6 +138,8 @@ __all__ = [
     "TaskRuntime",
     "classify_payment_intent",
     "classify_user_event",
+    "interpret_user_turn",
+    "TurnInterpretation",
     "UserEvent",
     "UserEventKind",
     "ToolRegistry",
