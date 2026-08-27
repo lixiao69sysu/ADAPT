@@ -735,6 +735,15 @@
 - **验证**：合成测试覆盖单句四语义、脱离支付问题的短确认、候选作用域、轮次作用域及 CREATE 不升级 PAY；相关 178 项测试通过。
 - **能力抽象**：missing-information detection / candidate-to-action execution / long-horizon consistency。
 
+## E-055：无 ADAPT 注解的工具结果退化为有损文本候选解析
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（虚构 schema 和现有回归门禁通过，尚待 VitaBench smoke）
+- **通用性判定**：`GENERAL-INVARIANT`。未修改的工具已提供 JSON/Pydantic 返回结构；结果未声明 `x-adapt-*` 不应迫使 Agent 改用 ID/行文本正则作为主权威。
+- **有效方案**：新增 lossless `CandidateManifest`，递归保存原始记录、JSON 字段路径、未知属性、ID、名称、库存、价格和可观测父子顺序；新增 `ExecutionWorkflowGraph` 从公开输入/输出实体编译 producer-consumer 边，并用 `SearchPlan` 保存当前约束和允许搜索结构。ID 前缀与 legacy 文本解析仅在 JSON 不可用时回退。
+- **验证**：完全虚构 vault/relic/receipt schema 覆盖嵌套列表、非标准 ID、未知字段、父子结构、SEARCH→CREATE→PAY 工作流和当前约束搜索计划；相关 188 项测试通过。
+- **能力抽象**：search recall / preference-to-candidate grounding / candidate-to-action execution。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

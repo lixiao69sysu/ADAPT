@@ -674,6 +674,7 @@ class CandidateLedger:
         max_enrichment_reads_per_subtask: int = 12,
     ) -> None:
         self.candidates: dict[str, Candidate] = {}
+        self.manifests: list[Any] = []
         self.search_counts: dict[str, int] = {}
         self.search_family_counts: dict[str, int] = {}
         self.enrichment_read_counts: dict[str, int] = {}
@@ -688,6 +689,7 @@ class CandidateLedger:
 
     def reset(self) -> None:
         self.candidates.clear()
+        self.manifests.clear()
         self.search_counts.clear()
         self.search_family_counts.clear()
         self.enrichment_read_counts.clear()
@@ -699,7 +701,11 @@ class CandidateLedger:
         self._turn = 0
 
     def observe(
-        self, tool_name: str, content: Any, observation_schema: Any = None
+        self,
+        tool_name: str,
+        content: Any,
+        observation_schema: Any = None,
+        result_json_schema: dict[str, Any] | None = None,
     ) -> None:
         text = content if isinstance(content, str) else json.dumps(
             content, ensure_ascii=False
@@ -718,8 +724,19 @@ class CandidateLedger:
             except (TypeError, ValueError, json.JSONDecodeError):
                 structured = None
         observed_structured = False
-        if observation_schema is not None and isinstance(
-            structured, (dict, list)
+        if isinstance(structured, (dict, list)):
+            from agent.runtime.manifest import CandidateManifestParser
+
+            manifests = CandidateManifestParser.parse(
+                tool_name, structured, result_json_schema
+            )
+            if manifests:
+                self._observe_manifests(manifests)
+                observed_structured = True
+        if (
+            not observed_structured
+            and observation_schema is not None
+            and isinstance(structured, (dict, list))
         ):
             observed_structured = self._observe_structured(
                 tool_name, structured, observation_schema
@@ -813,6 +830,30 @@ class CandidateLedger:
         }
         if after != before:
             self.candidate_version += 1
+
+    def _observe_manifests(
+        self, manifests: Iterable[Any]
+    ) -> None:
+        for manifest in manifests:
+            self.manifests.append(manifest)
+            self.candidates[manifest.candidate_id] = Candidate(
+                candidate_id=manifest.candidate_id,
+                entity_type=manifest.entity_type,
+                name=manifest.name,
+                raw=json.dumps(
+                    manifest.raw_record,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+                tool_name=manifest.tool_name,
+                attributes=manifest.attributes(),
+                parent_ids=list(manifest.parent_ids),
+                price=manifest.price,
+                inventory=manifest.inventory,
+                observed_turn=self._turn,
+                hard_attribute_keys=tuple(field.path for field in manifest.fields),
+            )
 
     def observe_state(self, tool_name: str, content: Any) -> None:
         """Record workflow state without admitting it to the candidate pool."""

@@ -49,6 +49,15 @@ from agent.runtime.information import (
     default_gap,
 )
 from agent.runtime.lineage import CallLineageLedger, CallLineageRecord
+from agent.runtime.manifest import (
+    CandidateManifest,
+    CandidateManifestParser,
+    ExecutionWorkflowGraph,
+    ManifestField,
+    SearchPlan,
+    WorkflowEdge,
+    WorkflowNode,
+)
 from agent.runtime.operations import OperationJournal, OperationRecord
 from agent.runtime.outcomes import (
     CorrectionEvidence,
@@ -106,7 +115,10 @@ __all__ = [
     "layered_ranking_key",
     "CallLineageLedger",
     "CallLineageRecord",
+    "CandidateManifest",
+    "CandidateManifestParser",
     "DebugEventStore",
+    "ExecutionWorkflowGraph",
     "CapabilityTarget",
     "CompiledRuntimePolicy",
     "CorrectionEvidence",
@@ -118,6 +130,7 @@ __all__ = [
     "EnrichmentRequest",
     "InformationGapContract",
     "InformationSource",
+    "ManifestField",
     "IdVariable",
     "default_gap",
     "OperationJournal",
@@ -135,6 +148,7 @@ __all__ = [
     "RuntimePolicyStore",
     "TrajectoryEvidenceSource",
     "SchemaQuestionPlanner",
+    "SearchPlan",
     "TaskRuntime",
     "classify_payment_intent",
     "classify_user_event",
@@ -142,6 +156,8 @@ __all__ = [
     "TurnInterpretation",
     "UserEvent",
     "UserEventKind",
+    "WorkflowEdge",
+    "WorkflowNode",
     "ToolRegistry",
     "ToolContract",
     "ToolContractCompiler",

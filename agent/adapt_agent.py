@@ -60,6 +60,7 @@ from agent.runtime import (
     RuntimePhase,
     RuntimePolicyAdapter,
     RuntimePolicyStore,
+    SearchPlan,
     SchemaQuestionPlanner,
     TaskRuntime,
     TrajectoryEvidenceSource,
@@ -75,6 +76,7 @@ from agent.runtime import (
 
 _STATEFUL_AGENT_ATTRIBUTES = (
     "task_spec", "decision_card", "ledger", "runtime", "tool_registry",
+    "search_plan",
     "tool_errors", "operations", "lineage", "responses", "question_gate",
     "lessons", "runtime_policies", "debug", "_current_instruction",
     "_current_corrections", "_instruction_epoch", "_tool_epoch",
@@ -129,6 +131,7 @@ class ADAPTAgent(PersonalizationAgent):
         self.ledger = CandidateLedger()
         self.runtime = TaskRuntime.begin(self.task_spec)
         self.tool_registry = ToolRegistry()
+        self.search_plan = SearchPlan.compile(self.task_spec, ())
         self.tool_errors = ToolErrorLedger()
         self.operations = OperationJournal()
         self.lineage = CallLineageLedger()
@@ -268,6 +271,7 @@ class ADAPTAgent(PersonalizationAgent):
         self.task_spec = TaskSpec.compile(
             instruction, domain_hint=self.tool_registry.domain_hint()
         )
+        self.search_plan = self.tool_registry.search_plan(self.task_spec)
         self.task_spec.resolved_slots.update(
             self.memory.resolve_task_slots(instruction)
         )
@@ -387,6 +391,7 @@ class ADAPTAgent(PersonalizationAgent):
         self.task_spec = TaskSpec.compile(
             self._current_instruction, domain_hint=self.tool_registry.domain_hint()
         )
+        self.search_plan = self.tool_registry.search_plan(self.task_spec)
         self.task_spec.resolved_slots.update(
             self.memory.resolve_task_slots(
                 self._current_instruction, spec=self.task_spec
@@ -885,6 +890,7 @@ class ADAPTAgent(PersonalizationAgent):
                         item.name,
                         item.content,
                         self.tool_registry.result_schema(item.name),
+                        self.tool_registry.result_json_schema(item.name),
                     )
                 elif outcome.ok and role in {
                     ToolRole.CREATE,
@@ -1157,6 +1163,7 @@ class ADAPTAgent(PersonalizationAgent):
             ):
                 constraint.source = "user_correction"
         self.task_spec = revised
+        self.search_plan = self.tool_registry.search_plan(revised)
         self.decision_card = self.memory.compile_task(
             revised_instruction, spec=revised
         )

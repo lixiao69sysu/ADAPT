@@ -9,6 +9,7 @@ from typing import Any
 
 from agent.decision import CandidateLedger, is_search_tool
 from agent.runtime.contracts import ToolContract, ToolContractCompiler
+from agent.runtime.manifest import ExecutionWorkflowGraph, SearchPlan
 from agent.runtime.schema_adapter import ObservableSchemaAdapter
 from agent.runtime.state import RuntimePhase, TaskRuntime
 
@@ -62,6 +63,8 @@ class ToolMeta:
     question_arguments: dict[str, str] = field(default_factory=dict)
     argument_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
     semantic_text: str = ""
+    result_json_schema: dict[str, Any] = field(default_factory=dict)
+    observation_entities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,7 @@ class ToolRegistry:
         self.tools: list[Any] = []
         self.meta: dict[str, ToolMeta] = {}
         self.contracts: dict[str, ToolContract] = {}
+        self.workflow_graph = ExecutionWorkflowGraph((), ())
 
     def rebuild(self, tools: list[Any]) -> None:
         self.tools = list(tools or [])
@@ -96,6 +100,7 @@ class ToolRegistry:
         # immutable contracts, while rebuilding them here makes no environment
         # call and does not change the current action policy.
         self.contracts = ToolContractCompiler.compile(self.meta.values())
+        self.workflow_graph = ExecutionWorkflowGraph.compile(self.contracts.values())
 
     def _inspect(self, tool: Any) -> ToolMeta:
         name = tool.name
@@ -130,7 +135,12 @@ class ToolRegistry:
         argument_schemas = ObservableSchemaAdapter.adapt(
             argument_schemas, id_arguments
         )
+        try:
+            result_json_schema = tool.returns.model_json_schema()
+        except (AttributeError, TypeError, ValueError):
+            result_json_schema = {}
         observation_schema = _observation_schema(tool)
+        observation_entities = tuple(sorted(_result_id_entities(result_json_schema)))
         semantic_text = " ".join(
             str(value)
             for value in (
@@ -187,11 +197,20 @@ class ToolRegistry:
             question_arguments,
             argument_schemas,
             semantic_text,
+            result_json_schema,
+            observation_entities,
         )
 
     def result_schema(self, name: str) -> ObservationSchema | None:
         meta = self.meta.get(name)
         return meta.observation_schema if meta else None
+
+    def result_json_schema(self, name: str) -> dict[str, Any]:
+        meta = self.meta.get(name)
+        return dict(meta.result_json_schema) if meta else {}
+
+    def search_plan(self, spec) -> SearchPlan:
+        return SearchPlan.compile(spec, self.contracts.values())
 
     def contract(self, name: str) -> ToolContract | None:
         return self.contracts.get(name)
@@ -606,3 +625,21 @@ def _find_candidate_schema(node: Any) -> dict[str, Any] | None:
             if found is not None:
                 return found
     return None
+
+
+def _result_id_entities(node: Any) -> set[str]:
+    entities: set[str] = set()
+    if not isinstance(node, dict):
+        return entities
+    for field_name, field_schema in node.get("properties", {}).items():
+        role = str((field_schema or {}).get("x-adapt-role", ""))
+        if role in {"id", "parent_id"} or field_name.casefold().endswith("_id"):
+            entities.add(
+                str((field_schema or {}).get("x-adapt-entity", "")).strip()
+                or field_name.casefold().removesuffix("_id")
+            )
+    for child in node.values():
+        values = child if isinstance(child, list) else [child]
+        for value in values:
+            entities.update(_result_id_entities(value))
+    return entities

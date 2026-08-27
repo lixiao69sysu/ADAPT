@@ -69,6 +69,7 @@ class ToolContract:
     id_variables: tuple[IdVariable, ...]
     question_arguments: tuple[tuple[str, str], ...] = ()
     observation_entity: str = ""
+    observation_entities: tuple[str, ...] = ()
     state_effect: str = ""
     arguments: tuple[ArgumentContract, ...] = ()
     action_capability: ActionCapability = ActionCapability()
@@ -160,6 +161,9 @@ class ToolContractCompiler:
                 ),
                 observation_entity=str(
                     getattr(observation, "entity_type", "") or ""
+                ),
+                observation_entities=tuple(
+                    getattr(meta, "observation_entities", ()) or ()
                 ),
                 state_effect=str(getattr(meta, "state_effect", "") or ""),
                 arguments=arguments,
