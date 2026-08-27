@@ -18,8 +18,49 @@ def aggregate(events: Iterable[dict[str, Any]], *, sources: list[str] | None = N
     create_checked = 0
     create_consistent = 0
     create_by_source: dict[str, Counter[str]] = defaultdict(Counter)
+    causal_layers: dict[str, Counter[str]] = {
+        name: Counter()
+        for name in (
+            "TaskSpec", "Search", "Grounding", "Admissibility", "Ranking",
+            "Presentation", "Selection", "ExecutionPlan", "Preflight", "Model",
+            "Environment", "Harness",
+        )
+    }
     for event in events:
         kind = event.get("event")
+        if kind in {"subtask_begin", "task_context_bound"}:
+            causal_layers["TaskSpec"][kind] += 1
+        if kind in {"decision_surface", "tool_proposal", "tool_result"}:
+            role = str(event.get("role", ""))
+            if role == "search" or kind == "decision_surface":
+                causal_layers["Search"][kind] += 1
+        if kind in {"candidate_memory_retrieval", "candidate_schema_constraints"}:
+            causal_layers["Grounding"][kind] += 1
+        if kind == "candidate_decision":
+            causal_layers["Admissibility"][str(event.get("selection_basis", kind))] += 1
+        if kind == "candidate_attribution":
+            causal_layers["Ranking"][str(event.get("policy", "unknown"))] += 1
+        if kind in {"recommendation_finalized", "model_candidate_proposal"}:
+            causal_layers["Presentation"][kind] += 1
+        if kind == "user_observation" and event.get("user_event") == "candidate_selection":
+            causal_layers["Selection"]["candidate_selection"] += 1
+        if kind == "create_consistency":
+            causal_layers["ExecutionPlan"]["consistent" if event.get("consistent") else "inconsistent"] += 1
+        if kind == "preflight_rejected":
+            causal_layers["Preflight"]["rejected"] += 1
+        if kind == "failure_attributed":
+            owner = str(event.get("owner", "unknown"))
+            target = {
+                "model_policy": "Model",
+                "environment": "Environment",
+                "harness": "Harness",
+                "validator": "Preflight",
+                "framework": "Admissibility",
+            }.get(owner)
+            if target:
+                causal_layers[target][str(event.get("stage", "unknown"))] += 1
+        if kind in {"lesson_recorded", "lesson_suppressed", "runtime_policy_learned"}:
+            causal_layers["Harness"][kind] += 1
         if kind == "candidate_attribution":
             policy = str(event.get("policy", "unknown"))
             summary = event.get("summary") or {}
@@ -119,6 +160,10 @@ def aggregate(events: Iterable[dict[str, Any]], *, sources: list[str] | None = N
                 }
                 for source, counts in sorted(create_by_source.items())
             },
+        },
+        "causal_layers": {
+            layer: dict(sorted(counts.items()))
+            for layer, counts in causal_layers.items()
         },
         "data_access": {
             "inputs": [

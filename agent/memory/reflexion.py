@@ -2,8 +2,8 @@
 
 This module is not wired into benchmark execution and must never consume an
 evaluator reward. Runtime self-improvement lives in ``agent.lessons`` and uses
-only agent-visible user corrections, tool errors, validator rejections,
-repeated searches, missed writes and incomplete payment states.
+only agent-visible user corrections, real tool errors and explicit state
+failures. Framework ranking or validator opinion cannot create a hard lesson.
 """
 
 from __future__ import annotations

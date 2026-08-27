@@ -180,6 +180,51 @@ class ADAPTMemory(BaseMemory):
             **self.preference_evidence.stats(),
         }
 
+    def retrieve_facts(
+        self,
+        *,
+        task_scope: str = "",
+        candidate_fields: tuple[str, ...] = (),
+        unresolved_dimensions: tuple[str, ...] = (),
+        evidence_required: bool = True,
+        limit: int = 8,
+    ) -> tuple[object, ...]:
+        """Typed, side-effect-free retrieval from the canonical fact view.
+
+        This is the candidate-induced recovery path. It returns fact objects,
+        never the narrative summary and never evaluator-derived information.
+        """
+        scope = (task_scope or "").strip().casefold()
+        dimensions = {item.casefold() for item in unresolved_dimensions if item}
+        field_blob = " ".join(str(item) for item in candidate_fields).casefold()
+        eligible = []
+        for fact in self.facts:
+            if fact.status != "active" or not fact.decision_eligible:
+                continue
+            if evidence_required and not fact.evidence_ids:
+                continue
+            if scope and fact.scope not in {scope, "general"}:
+                continue
+            if dimensions and fact.dimension.casefold() not in dimensions:
+                continue
+            if field_blob and not any(
+                token and token.casefold() in field_blob
+                for token in (fact.value, fact.category, fact.dimension)
+            ):
+                continue
+            eligible.append(fact)
+        eligible.sort(
+            key=lambda fact: (
+                fact.dimension == "safety",
+                fact.polarity == "negative",
+                fact.confidence,
+                fact.independent_evidence_count,
+                fact.observed_at,
+            ),
+            reverse=True,
+        )
+        return tuple(eligible[: max(0, int(limit))])
+
     def _ingest_fact(
         self, fact, *, confirmed_drift: bool = False
     ):

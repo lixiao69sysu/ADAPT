@@ -50,6 +50,8 @@ from agent.runtime import (
     CandidateAttributionEngine,
     CallLineageLedger,
     DebugEventStore,
+    DecisionRuntime,
+    ExecutionSafetyKernel,
     InformationGap,
     InformationGapContract,
     OperationJournal,
@@ -61,6 +63,7 @@ from agent.runtime import (
     RuntimePolicyAdapter,
     RuntimePolicyStore,
     SearchPlan,
+    SemanticMemoryStore,
     SchemaQuestionPlanner,
     TaskRuntime,
     TrajectoryEvidenceSource,
@@ -149,6 +152,25 @@ class ADAPTAgent(PersonalizationAgent):
         self._tool_epoch = 0
         self._active_context: SubtaskContext | None = None
         self._pending_tool_registry: ToolRegistry | None = None
+        self._refresh_authority_centers()
+
+    def _refresh_authority_centers(self) -> None:
+        """Rebind non-owning center views after any state restore/replacement."""
+        self.semantic_memory = SemanticMemoryStore(self.memory)
+        self.decision_runtime = DecisionRuntime(
+            self.task_spec,
+            self.search_plan,
+            self.runtime,
+            self.ledger,
+            self.responses,
+        )
+        self.safety_kernel = ExecutionSafetyKernel(
+            self.runtime,
+            self.tool_registry,
+            self.operations,
+            self.lineage,
+            self.tool_errors,
+        )
 
     def _capture_framework_state(self) -> dict[str, Any]:
         """Capture all controller values that can change during generation."""
@@ -174,6 +196,7 @@ class ADAPTAgent(PersonalizationAgent):
                     setattr(self.memory, memory_name, deepcopy(memory_value))
                 continue
             setattr(self, name, deepcopy(value))
+        self._refresh_authority_centers()
 
     def get_init_state(self, message_history: Optional[list] = None) -> ADAPTAgentState:
         base_state = super().get_init_state(message_history=message_history)
@@ -321,6 +344,7 @@ class ADAPTAgent(PersonalizationAgent):
             self.tool_registry,
         )
         super().set_current_instruction(instruction)
+        self._refresh_authority_centers()
 
     @property
     def system_prompt(self) -> str:
@@ -383,6 +407,7 @@ class ADAPTAgent(PersonalizationAgent):
             self.tool_registry = registry
             self._bind_current_task_to_tools()
         super().update_tools(tools)
+        self._refresh_authority_centers()
 
     def _bind_current_task_to_tools(self) -> None:
         """Bind tools only before the first observation of an instruction."""
@@ -420,6 +445,7 @@ class ADAPTAgent(PersonalizationAgent):
             domain=self.task_spec.domain,
             facet=self.task_spec.facet,
         )
+        self._refresh_authority_centers()
 
     def process_interactions(self, interactions: list):
         """Keep the task-local card synchronized with incremental memory.

@@ -753,6 +753,15 @@
 - **验证**：虚构跨结构候选不再自动 CREATE；展示第 2 项、selection snapshot 与 execution candidate 可在同一归因记录中对齐；完整 `agent/tests` 为 346 passed。
 - **能力抽象**：preference-to-candidate grounding / ranking / presentation / candidate-to-action execution。
 
+## E-057：多个存储、决策和学习对象缺少显式权威边界
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（静态架构、学习触发和报告门禁通过，尚待轨迹对照）
+- **通用性判定**：`GENERAL-INVARIANT`。偏好事实、当前候选和不可逆操作必须各有唯一权威；派生 summary/index/lesson 不得反向成为 WRITE 依据。
+- **有效方案**：新增三个非拥有式中心视图：`SemanticMemoryStore`、`DecisionRuntime`、`ExecutionSafetyKernel`，共享并指向原有唯一实例，状态恢复后重绑定而不复制权威。记忆增加只返回有证据结构事实的 typed retrieval；`ExecutionLessonStore` 从存储入口拒绝 framework self-opinion；Reflexion、旧 fuzzy resolution 和旧 search guard 保留为 compatibility legacy，生产代码导入扫描必须为 0。候选报告固定输出十二层 causal counters。
+- **验证**：测试覆盖三中心引用同一性、typed retrieval 纯函数、跨 scope 隔离、非观测 lesson 拒绝、legacy 生产导入为 0 和十二层报告完整性；完整 `agent/tests` 为 351 passed。
+- **能力抽象**：preference updating / preference utilization / long-horizon consistency / observable self-evolution safety。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

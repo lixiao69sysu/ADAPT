@@ -6,6 +6,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 
+_OBSERVABLE_LESSON_FAILURES = frozenset(
+    {"user_correction", "tool_error", "repeat_search", "unresolved_operation"}
+)
+
+
 @dataclass
 class ExecutionLesson:
     domain: str
@@ -40,7 +45,9 @@ class ExecutionLessonStore:
         failure_class: str,
         trigger: str,
         correction: str,
-    ) -> ExecutionLesson:
+    ) -> ExecutionLesson | None:
+        if failure_class not in _OBSERVABLE_LESSON_FAILURES:
+            return None
         candidate = ExecutionLesson(
             domain=domain,
             facet=facet,

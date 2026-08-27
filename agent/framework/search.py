@@ -1,9 +1,7 @@
-"""Search-result trimming for the ADAPT framework.
+"""Legacy search-result trimming retained only for compatibility.
 
-The stock VitaBench search tools return the top-100 fuzzy matches with no
-relevance floor. Most of those are junk, and together they blow up the agent
-context (the 27-38K-char tool messages that killed v17 trials at 131K tokens).
-This module caps the result list and drops near-irrelevant hits.
+Production ADAPT uses CandidateLedger search budgets and must not import this
+module; in particular, value-level fuzzy ranking cannot become runtime policy.
 """
 
 from agent.framework.config import SEARCH_MIN_SCORE, SEARCH_TOP_K
