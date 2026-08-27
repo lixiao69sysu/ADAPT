@@ -1627,6 +1627,8 @@ class ADAPTAgent(PersonalizationAgent):
             return None
         if self.runtime.phase != RuntimePhase.SELECT:
             return None
+        if self.runtime.requires_model_proposal:
+            return None
         response_key = (
             self._operation_journal().epoch,
             self.ledger.candidate_version,
@@ -1783,6 +1785,31 @@ class ADAPTAgent(PersonalizationAgent):
                 dimension=decision.dimension,
                 phase=self.runtime.phase.value,
             )
+            return
+        if self.runtime.requires_model_proposal and assistant.content:
+            ordered = sorted(
+                (
+                    (assistant.content.find(candidate.name), candidate.candidate_id)
+                    for candidate in self.ledger.structural_leaf_candidates()
+                    if candidate.name and candidate.name in assistant.content
+                ),
+                key=lambda item: item[0],
+            )
+            candidate_ids = tuple(
+                dict.fromkeys(candidate_id for _, candidate_id in ordered)
+            )
+            if candidate_ids:
+                self.responses.commit(
+                    self._operation_journal().epoch,
+                    self.ledger.candidate_version,
+                    "recommendation",
+                    candidate_ids=candidate_ids,
+                )
+                self.debug.emit(
+                    "model_candidate_proposal",
+                    candidate_ids=list(candidate_ids),
+                    confidence=self.runtime.candidate_decision_confidence,
+                )
 
     def _framework_question(self) -> str:
         gap = self._information_gap_contract().next_gap(
@@ -1846,6 +1873,7 @@ class ADAPTAgent(PersonalizationAgent):
             decision=decision,
             snapshot_id=f"{self._operation_journal().epoch}:{candidate_version}",
         )
+        self._emit_candidate_attribution(decision)
 
     def _emit_preference_alignment(self) -> None:
         """Expose capability-level evidence without evaluator information."""
@@ -1887,12 +1915,32 @@ class ADAPTAgent(PersonalizationAgent):
         candidates = list(self.ledger.structural_leaf_candidates())
         if not candidates:
             return
+        snapshot = self.responses.latest_snapshot(
+            self._operation_journal().epoch, "recommendation"
+        )
+        candidate_version, displayed_ids = snapshot or (0, ())
+        selected_binding = getattr(decision, "selected", None)
         comparison = CandidateAttributionEngine.compare(
-            candidates, self.decision_card, decision=decision
+            candidates,
+            self.decision_card,
+            decision=decision,
+            presentation_snapshot=tuple(displayed_ids),
+            snapshot_id=(
+                f"{self._operation_journal().epoch}:{candidate_version}"
+                if displayed_ids
+                else ""
+            ),
+            execution_tool=(selected_binding.create_tool if selected_binding else ""),
+            execution_candidate_ids=(
+                tuple(selected_binding.leaf_ids) if selected_binding else ()
+            ),
         )
         self._latest_candidate_attribution = comparison
+        debug = getattr(self, "debug", None)
+        if debug is None:
+            return
         for policy, batch in comparison.items():
-            self.debug.emit(
+            debug.emit(
                 "candidate_attribution",
                 policy=policy,
                 instruction_epoch=getattr(self, "_instruction_epoch", 0),

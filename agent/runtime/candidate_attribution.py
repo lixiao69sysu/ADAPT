@@ -43,6 +43,14 @@ class CandidateAttributionRecord:
     request_only_grounding_count: int
     availability: int
     ranking_key: tuple[float | int, ...]
+    hard_constraint_results: tuple[str, ...] = ()
+    preference_contributions: tuple[str, ...] = ()
+    admissibility_reasons: tuple[str, ...] = ()
+    displayed_rank: int = 0
+    selection_snapshot_id: str = ""
+    selected_from_snapshot: bool = False
+    execution_tool: str = ""
+    execution_candidate_ids: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -80,6 +88,10 @@ class CandidateAttributionEngine:
         *,
         decision: Any | None = None,
         policy: RankingPolicy | str = RankingPolicy.CURRENT,
+        presentation_snapshot: tuple[str, ...] = (),
+        snapshot_id: str = "",
+        execution_tool: str = "",
+        execution_candidate_ids: tuple[str, ...] = (),
     ) -> CandidateAttributionBatch:
         policy = RankingPolicy(policy)
         ranker = CandidateRanker()
@@ -96,6 +108,20 @@ class CandidateAttributionEngine:
         selected_ids = set(getattr(getattr(decision, "selected", None), "leaf_ids", ()))
         sources_by_id = getattr(card, "candidate_grounding_sources", {})
         edge_counts = getattr(card, "candidate_grounding_edge_counts", {})
+        constraints = tuple(getattr(card, "constraints", ()) or ())
+        displayed = {
+            candidate_id: index
+            for index, candidate_id in enumerate(presentation_snapshot, 1)
+        }
+        failures_by_id: dict[str, list[str]] = {}
+        for binding in getattr(decision, "considered", ()):
+            for candidate_id in binding.leaf_ids:
+                failures_by_id.setdefault(candidate_id, []).extend(
+                    binding.hard_failures
+                )
+        for binding in getattr(decision, "admissible", ()):
+            for candidate_id in binding.leaf_ids:
+                failures_by_id.setdefault(candidate_id, [])
         records: list[CandidateAttributionRecord] = []
         for rank, candidate in enumerate(ranked, 1):
             candidate_id = str(candidate.candidate_id)
@@ -104,6 +130,20 @@ class CandidateAttributionEngine:
             sources = tuple(sources_by_id.get(candidate_id, ()))
             request_only = sum(source in _REQUEST_ONLY_SOURCES for source in sources)
             intrinsic_count = max(0, int(edge_counts.get(candidate_id, 0)) - request_only)
+            raw = str(getattr(candidate, "raw", "") or "")
+            hard_results = tuple(
+                f"{getattr(constraint, 'kind', 'constraint')}="
+                f"{'pass' if str(getattr(constraint, 'value', '')) in raw else 'fail'}"
+                for constraint in constraints
+                if getattr(constraint, "hard", True)
+                and getattr(getattr(constraint, "target", None), "value", "candidate")
+                == "candidate"
+                and getattr(constraint, "value", "")
+            )
+            preference_contributions = tuple(
+                f"{source}:{score.historical_preference + score.historical_parent_preference:.6f}"
+                for source in sources
+            )
             records.append(
                 CandidateAttributionRecord(
                     policy=policy.value,
@@ -127,6 +167,18 @@ class CandidateAttributionEngine:
                     request_only_grounding_count=request_only,
                     availability=score.availability,
                     ranking_key=layered_ranking_key(score, candidate, policy).values,
+                    hard_constraint_results=hard_results,
+                    preference_contributions=preference_contributions,
+                    admissibility_reasons=tuple(failures_by_id.get(candidate_id, ())),
+                    displayed_rank=displayed.get(candidate_id, 0),
+                    selection_snapshot_id=snapshot_id if candidate_id in displayed else "",
+                    selected_from_snapshot=(candidate_id in selected_ids and candidate_id in displayed),
+                    execution_tool=(execution_tool if candidate_id in execution_candidate_ids else ""),
+                    execution_candidate_ids=(
+                        execution_candidate_ids
+                        if candidate_id in execution_candidate_ids
+                        else ()
+                    ),
                 )
             )
         outranks = 0
@@ -171,11 +223,16 @@ class CandidateAttributionEngine:
 
     @classmethod
     def compare(
-        cls, candidates: list[Any], card: Any, *, decision: Any | None = None
+        cls,
+        candidates: list[Any],
+        card: Any,
+        *,
+        decision: Any | None = None,
+        **context: Any,
     ) -> dict[str, CandidateAttributionBatch]:
         return {
             policy.value: cls.build(
-                candidates, card, decision=decision, policy=policy
+                candidates, card, decision=decision, policy=policy, **context
             )
             for policy in RankingPolicy
         }

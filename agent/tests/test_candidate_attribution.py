@@ -1,7 +1,10 @@
 from agent.candidate_attribution_report import aggregate
-from agent.decision import Candidate, DecisionCard
-from agent.runtime import CandidateAttributionEngine, RankingPolicy
+from types import SimpleNamespace
+
+from agent.decision import Candidate, CandidateLedger, DecisionCard, TaskSpec
+from agent.runtime import CandidateAttributionEngine, RankingPolicy, TaskRuntime, ToolRegistry, ToolRole
 from agent.runtime.ranking import CandidateRanker
+from agent.runtime.tools import ToolMeta
 
 
 def _shadow_fixture():
@@ -68,6 +71,66 @@ def test_candidate_attribution_record_exposes_task_preference_and_grounding():
     assert record.grounding_sources == ("field",)
     assert record.intrinsic_grounding_count == 1
     assert record.request_only_grounding_count == 0
+
+
+def test_attribution_binds_presentation_selection_execution_and_constraints():
+    candidates, card = _shadow_fixture()
+    card.constraints = []
+    selected = SimpleNamespace(
+        leaf_ids=("glyph-a",), create_tool="phase_beta", hard_failures=()
+    )
+    decision = SimpleNamespace(
+        admissible=(selected,),
+        ordered=(selected,),
+        considered=(selected,),
+        selected=selected,
+    )
+    batch = CandidateAttributionEngine.build(
+        candidates,
+        card,
+        decision=decision,
+        presentation_snapshot=("glyph-b", "glyph-a"),
+        snapshot_id="1:4",
+        execution_tool="phase_beta",
+        execution_candidate_ids=("glyph-a",),
+    )
+    record = next(item for item in batch.records if item.candidate_id == "glyph-a")
+
+    assert record.displayed_rank == 2
+    assert record.selection_snapshot_id == "1:4"
+    assert record.selected_from_snapshot
+    assert record.execution_tool == "phase_beta"
+    assert record.execution_candidate_ids == ("glyph-a",)
+
+
+def test_unreliable_cross_structure_candidates_cannot_auto_transition_to_create():
+    ledger = CandidateLedger()
+    ledger.candidates = {
+        "glyph-1": Candidate("glyph-1", "glyph", "alpha", "alpha", "scan"),
+        "relic-1": Candidate("relic-1", "relic", "beta", "beta", "scan"),
+    }
+    registry = ToolRegistry()
+    registry.meta = {
+        "phase_g": ToolMeta(
+            "phase_g", ToolRole.CREATE, {"glyph_id"}, {"glyph_id": "glyph"}
+        ),
+        "phase_r": ToolMeta(
+            "phase_r", ToolRole.CREATE, {"relic_id"}, {"relic_id": "relic"}
+        ),
+    }
+    runtime = TaskRuntime.begin(TaskSpec.compile("execute the requested object"))
+    runtime.authorization.create_authorized = True
+    runtime.authorization.candidate_choice_authorized = True
+
+    decision = registry.candidate_decision(
+        ledger,
+        DecisionCard(task_intent=["unobserved omega object"]),
+        runtime=runtime,
+    )
+
+    assert decision.selected is None
+    assert decision.requires_model_proposal
+    assert decision.confidence < 0.5
 
 
 def test_task_first_shadows_rank_task_match_without_deleting_open_world_fallbacks():

@@ -744,6 +744,15 @@
 - **验证**：完全虚构 vault/relic/receipt schema 覆盖嵌套列表、非标准 ID、未知字段、父子结构、SEARCH→CREATE→PAY 工作流和当前约束搜索计划；相关 188 项测试通过。
 - **能力抽象**：search recall / preference-to-candidate grounding / candidate-to-action execution。
 
+## E-056：低可靠候选 grounding 仍被自动收敛为 CREATE 计划
+
+- **日期**：2026-08-27
+- **状态**：PARTIAL（确定性决策和归因门禁通过，尚待 shadow replay/smoke）
+- **通用性判定**：`GENERAL-INVARIANT`。当前请求没有可靠连接到多种候选结构时，任意第一名都不足以构成不可逆操作证据。
+- **有效方案**：`CandidateDecision` 输出 confidence 和 `requires_model_proposal`；跨结构且无可靠当前任务 grounding 时不自动选中或进入 CREATE，而是保留 SELECT 观测/展示通道。模型展示的精确候选名称被保存为有序快照，后续 ordinal 仍受作用域授权和 preflight 保护。`CandidateAttributionRecord` 增加硬约束结果、偏好贡献、admissibility 原因、展示位次、快照选择和执行绑定。
+- **验证**：虚构跨结构候选不再自动 CREATE；展示第 2 项、selection snapshot 与 execution candidate 可在同一归因记录中对齐；完整 `agent/tests` 为 346 passed。
+- **能力抽象**：preference-to-candidate grounding / ranking / presentation / candidate-to-action execution。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

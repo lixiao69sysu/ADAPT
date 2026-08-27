@@ -536,6 +536,8 @@ class TaskRuntime:
     source_turn: int = 0
     authorization_grants: list[AuthorizationGrant] = field(default_factory=list)
     last_interpretation: TurnInterpretation | None = None
+    candidate_decision_confidence: float = 0.0
+    requires_model_proposal: bool = False
     events: list[dict] = field(default_factory=list)
 
     @classmethod
@@ -916,6 +918,12 @@ class TaskRuntime:
 
     def apply_candidate_decision(self, decision) -> None:
         """Apply the single candidate authority's immutable result."""
+        self.candidate_decision_confidence = float(
+            getattr(decision, "confidence", 0.0)
+        )
+        self.requires_model_proposal = bool(
+            getattr(decision, "requires_model_proposal", False)
+        )
         self.execution_ready = bool(decision.admissible)
         if decision.selected is not None:
             self.planned_create_tool = decision.selected.create_tool
@@ -1125,6 +1133,8 @@ class TaskRuntime:
             f"CREATE_AUTHORIZED={auth.create_authorized}\n"
             f"SELECTION_MADE={self.selection_made}\n"
             f"EXECUTION_READY={self.execution_ready}\n"
+            f"CANDIDATE_DECISION_CONFIDENCE={self.candidate_decision_confidence:.2f}\n"
+            f"REQUIRES_MODEL_PROPOSAL={self.requires_model_proposal}\n"
             f"LEARNED_FORCE_DECISION={self.force_decision_after_candidates}\n"
             f"LEARNED_PAYMENT_CHECK={self.require_payment_completion_check}\n"
             f"PAY_AUTHORIZED={auth.pay_authorized}\n"
@@ -1136,5 +1146,8 @@ class TaskRuntime:
             f"CRITICAL_GAPS={','.join(gaps) or 'none'}\n"
             f"RECENT_USER_ANSWER={self.last_user_answer or 'none'}\n"
             f"LAST_TOOL_ERROR={self.last_tool_error or 'none'}\n"
+            "When REQUIRES_MODEL_PROPOSAL=True, do not claim execution. "
+            "Present exact current-ledger names in numbered order or use an exposed "
+            "observation tool; the framework will bind any later selection to that snapshot.\n"
             "Obey the phase and use only the tools exposed in this call."
         )

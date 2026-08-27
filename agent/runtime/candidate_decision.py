@@ -45,6 +45,9 @@ class CandidateDecision:
     missing_arguments: tuple[str, ...]
     needs_enrichment: tuple[EnrichmentRequest, ...]
     selection_basis: str
+    confidence: float = 1.0
+    requires_model_proposal: bool = False
+    considered: tuple[CandidateBinding, ...] = ()
 
 
 class CandidateDecisionEngine:
@@ -200,6 +203,11 @@ class CandidateDecisionEngine:
         selected: CandidateBinding | None = None
         basis = "no_admissible_binding"
         selected_id = str(getattr(runtime, "selected_candidate_id", "") or "")
+        reliable_grounding = ranker.has_reliable_task_grounding(
+            all_candidates, card
+        )
+        confidence = 1.0 if reliable_grounding else (0.0 if not ordered else 0.35)
+        requires_model_proposal = bool(ordered and not reliable_grounding)
         if selected_id:
             selected = next(
                 (
@@ -210,9 +218,16 @@ class CandidateDecisionEngine:
                 None,
             )
             basis = "explicit_display_selection" if selected else "explicit_selection_not_bindable"
+            if selected is not None:
+                confidence = 1.0
+                requires_model_proposal = False
         elif ordered:
-            selected = ordered[0]
-            basis = "current_task_then_preference_order"
+            if reliable_grounding:
+                selected = ordered[0]
+                basis = "current_task_then_preference_order"
+            else:
+                selected = None
+                basis = "low_confidence_requires_model_or_user_proposal"
 
         enrichment = self._enrichment_requests(ledger, card)
         if not ledger.candidates:
@@ -248,6 +263,9 @@ class CandidateDecisionEngine:
             ),
             needs_enrichment=enrichment,
             selection_basis=basis,
+            confidence=confidence,
+            requires_model_proposal=requires_model_proposal,
+            considered=tuple(raw_bindings),
         )
 
     def _enrichment_requests(self, ledger: Any, card: Any) -> tuple[EnrichmentRequest, ...]:
