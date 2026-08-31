@@ -77,22 +77,8 @@ class CandidateRanker:
                 for candidate in candidates
             )
         }
-        has_groundable_identity = any(
-            getattr(constraint, "kind", "") in {"category", "entity"}
-            and constraint.value
-            and any(
-                _hard_constraint_matches(constraint.value, candidate.raw, candidate)
-                for candidate in candidates
-            )
-            for constraint in constraints
-        )
-        task_identity = (
-            None if has_groundable_identity else alignment.task_identity_atom()
-        )
         for candidate in candidates:
             raw = candidate.raw or ""
-            if not alignment.satisfies_task_identity(candidate, task_identity):
-                continue
             if _strong_preference_conflict(raw, getattr(card, "prefer", [])):
                 continue
             required = [

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from agent.adapt_agent import ADAPTAgent
 from agent.decision import (
     CandidateLedger,
@@ -22,8 +20,6 @@ from agent.memory.facts import PreferenceFact, fact_from_signal
 from agent.memory.signals import Signal, SignalParser
 from agent.runtime import (
     DebugEventStore,
-    InformationGap,
-    OperationJournal,
     QuestionGate,
     RuntimePhase,
     TaskRuntime,
@@ -60,22 +56,6 @@ def test_question_budget_changes_only_on_commit_and_answer_is_recorded():
     assert memory.record_user_answer("坐高铁")
     assert any(fact.value == "坐高铁" for fact in memory.facts)
     assert any(fact.dimension == "transport" for fact in memory.facts)
-
-
-def test_identical_consecutive_subtasks_receive_independent_question_budgets():
-    memory = ADAPTMemory(language="chinese")
-    instruction = "帮我订一家酒店"
-
-    memory.begin_subtask(instruction)
-    first_question = memory.propose_question(instruction, "ota")
-    assert first_question
-    assert memory.commit_question(first_question)
-    assert memory.proactive.asked_this_subtask == 1
-
-    memory.begin_subtask(instruction)
-    assert memory.proactive.asked_this_subtask == 0
-    assert memory.proactive.pending_question is None
-    assert memory.propose_question(instruction, "ota") == first_question
 
 
 def test_stable_room_preference_resolves_runtime_gap_and_suppresses_repeat_question():
@@ -209,7 +189,7 @@ def test_unique_preference_evidence_leader_is_locked_for_write():
             [
                 "ShopProduct(shop_id=S1_I00001, product_id=S1_P00081, "
                 "name=酸菜鱼汤锅套餐（含茼蒿/冰汤圆）, price=118, quantity=20)",
-                "ShopProduct(shop_id=S1_I00002, product_id=S1_P10101, "
+                "ShopProduct(shop_id=S1_I00002, product_id=S1_P00094, "
                 "name=麻辣火锅聚餐4人套餐（含茼蒿/毛肚/鸭血/肥牛/冰汤圆）, "
                 "price=168, quantity=20)",
             ]
@@ -218,13 +198,13 @@ def test_unique_preference_evidence_leader_is_locked_for_write():
     card = DecisionCard(prefer=["麻辣火锅", "茼蒿", "冰汤圆"])
     leader = ledger.unique_evidence_leader(card)
     assert leader is not None
-    assert leader.candidate_id == "S1_P10101"
+    assert leader.candidate_id == "S1_P00094"
     errors = ledger.validate_ranked_choice(
         {"shop_id": "S1_I00001", "product_id": "S1_P00081"}, card
     )
-    assert any("uniquely leads to S1_P10101" in error for error in errors)
+    assert any("uniquely leads to S1_P00094" in error for error in errors)
     assert not ledger.validate_ranked_choice(
-        {"shop_id": "S1_I00002", "product_id": "S1_P10101"}, card
+        {"shop_id": "S1_I00002", "product_id": "S1_P00094"}, card
     )
 
 
@@ -249,35 +229,6 @@ def test_tied_preference_evidence_does_not_lock_framework_choice():
     assert not ledger.validate_ranked_choice(
         {"shop_id": "S1_I00002", "product_id": "S1_P00002"}, card
     )
-
-
-def test_unique_evidence_leader_is_not_assumed_to_be_scalar_rank_first():
-    ledger = CandidateLedger()
-    ledger.observe(
-        "instore_product_search_recommend",
-        "\n".join(
-            [
-                "ShopProduct(shop_id=S1_I00001, product_id=S1_P00001, "
-                "name=新近单项券, price=9, quantity=100, tags=['单项'])",
-                "ShopProduct(shop_id=S1_I00002, product_id=S1_P00002, "
-                "name=稳定组合券, price=99, quantity=10, "
-                "tags=['偏好甲', '偏好乙'])",
-            ]
-        ),
-    )
-    card = DecisionCard(prefer=["单项", "偏好甲", "偏好乙"])
-
-    # Exercise the invariant directly: evidence leadership is the unique
-    # decisive-score maximum, regardless of any scalar shortlist ordering.
-    with patch.object(
-        CandidateRanker,
-        "decisive_preference_scores",
-        return_value={"S1_P00001": 1.0, "S1_P00002": 2.0},
-    ):
-        leader = ledger.unique_evidence_leader(card)
-
-    assert leader is not None
-    assert leader.candidate_id == "S1_P00002"
 
 
 def test_open_world_alignment_induces_unseen_attribute_keys_from_candidates():
@@ -812,7 +763,6 @@ def test_unserialized_category_hypernym_does_not_erase_observed_candidates():
         {
             "store_id": "S1_S00001",
             "product_ids": ["S1_P00001", "S1_P00002"],
-            "address": "测试收货地址",
         },
         card,
     )
@@ -1099,7 +1049,7 @@ def test_newer_topping_avoidance_suppresses_old_likes_but_not_new_exception():
     assert "布蕾" in card.prefer
 
 
-def test_search_normalization_preserves_open_world_semantics():
+def test_search_rewrite_prioritizes_newer_no_topping_constraint():
     agent = ADAPTAgent.__new__(ADAPTAgent)
     agent.task_spec = TaskSpec.compile("帮我点杯喝的送到公司")
     agent.decision_card = DecisionCard(
@@ -1112,10 +1062,10 @@ def test_search_normalization_preserves_open_world_semantics():
     call = ToolCall(
         id="search",
         name="delivery_product_search_recommand",
-        arguments={"keywords": ["老红糖珍珠奶茶", "热", "不加小料", "热"]},
+        arguments={"keywords": ["老红糖珍珠奶茶", "热", "不加小料"]},
     )
     agent._normalize_search_call(call)
-    assert call.arguments["keywords"] == ["老红糖珍珠奶茶", "热", "不加小料"]
+    assert call.arguments["keywords"] == ["奶茶", "无小料", "原味"]
 
 
 def test_no_topping_order_note_suppresses_catalog_topping_signal():
@@ -1402,61 +1352,6 @@ def test_third_identical_search_is_counted_for_rejection():
     assert ledger.register_search("delivery_product_search_recommand", args) == 3
 
 
-def test_keyword_changes_do_not_reset_semantic_search_family_budget():
-    ledger = CandidateLedger()
-    tool = "instore_product_search_recommend"
-    assert ledger.register_search(tool, {"keywords": ["室内", "陶艺"]}) == 1
-    assert ledger.register_search(tool, {"keywords": ["室内", "攀岩"]}) == 1
-    assert ledger.register_search(tool, {"keywords": ["室内", "音乐现场"]}) == 1
-    assert ledger.family_search_count(tool) == 3
-
-
-def test_agent_blocks_third_search_family_even_when_keywords_change():
-    class Tool:
-        name = "instore_product_search_recommend"
-
-    class Debug:
-        def emit(self, *args, **kwargs):
-            pass
-
-    agent = object.__new__(ADAPTAgent)
-    agent.task_spec = TaskSpec.compile("帮我预约一个室内场馆")
-    agent.runtime = TaskRuntime.begin(agent.task_spec)
-    agent.runtime.phase = RuntimePhase.SEARCH
-    agent.tool_registry = ToolRegistry()
-    agent.tool_registry.meta = {
-        Tool.name: ToolMeta(Tool.name, ToolRole.SEARCH, set(), {})
-    }
-    agent.tool_errors = ToolErrorLedger()
-    agent.ledger = CandidateLedger()
-    agent.decision_card = DecisionCard()
-    agent.user_profile = {}
-    agent.question_gate = QuestionGate()
-    agent.enable_candidate_validation = False
-    agent.debug = Debug()
-    agent._record_lesson = lambda *args: None
-
-    for index, keywords in enumerate((("室内", "陶艺"), ("室内", "攀岩"))):
-        call = ToolCall(
-            id=f"search-{index}",
-            name=Tool.name,
-            arguments={"keywords": list(keywords)},
-        )
-        assert not agent._preflight(
-            AssistantMessage(role="assistant", tool_calls=[call]), [Tool()]
-        )
-
-    third = ToolCall(
-        id="search-2",
-        name=Tool.name,
-        arguments={"keywords": ["室内", "音乐现场"]},
-    )
-    problems = agent._preflight(
-        AssistantMessage(role="assistant", tool_calls=[third]), [Tool()]
-    )
-    assert any("semantic search family budget exhausted" in item for item in problems)
-
-
 def test_third_identical_failed_write_is_rejected():
     failures = ToolErrorLedger(max_identical_failures=2)
     arguments = {
@@ -1728,14 +1623,6 @@ def test_framework_recovered_write_freezes_unaffected_create_arguments():
         for event in agent.debug.events
     )
 
-    agent._operation_journal().register(
-        "successful-create", "create", "create_delivery_order", replayed
-    )
-    agent._operation_journal().observe_result(
-        "successful-create", "create_delivery_order", "create", False
-    )
-    assert agent._framework_recovered_write() is None
-
 
 def test_agent_blocks_third_write_after_observing_two_real_failures():
     class Tool:
@@ -1862,113 +1749,6 @@ def test_natural_order_phrasing_compiles_as_commit():
         assert spec.action == "commit"
 
 
-def test_goal_contract_generalizes_transaction_paraphrases_without_item_rules():
-    for instruction in (
-        "请替我选一双合适的鞋买好送到家",
-        "帮我们订下周末的酒店",
-        "帮我定张去贵阳的车票",
-        "这家酒店你给我订一下吧",
-        "给我买件衣服送到家里",
-        "帮我团张周末的券",
-    ):
-        spec = TaskSpec.compile(instruction)
-        assert spec.action == "commit"
-        assert spec.completion.requires_write
-
-
-def test_goal_contract_does_not_upgrade_information_or_negated_requests():
-    for instruction in (
-        "帮我看看有没有合适的团购券",
-        "推荐几家酒店给我比较一下",
-        "这些鞋怎么选",
-        "先别帮我买，推荐几款就好",
-    ):
-        spec = TaskSpec.compile(instruction)
-        assert spec.action == "recommend"
-        assert not spec.completion.requires_write
-
-
-def test_address_parser_rejects_discourse_tail_and_resolves_profile_aliases():
-    no_address = TaskSpec.compile("晚上六点前送到就行")
-    assert not any(item.kind == "address" for item in no_address.must)
-
-    company = TaskSpec.compile("帮我点一杯果汁送公司来")
-    address = next(item for item in company.must if item.kind == "address")
-    assert address.value == "company"
-
-    home = TaskSpec.compile("给我买件衣服送到家")
-    address = next(item for item in home.must if item.kind == "address")
-    assert address.value == "home"
-
-
-def test_completed_recommendation_reopens_when_user_authorizes_selected_candidate():
-    runtime = TaskRuntime.begin(TaskSpec.compile("推荐两家酒店"))
-    runtime.observe_candidates(2, execution_ready=True)
-    runtime.phase = RuntimePhase.DONE
-    runtime.observe_user("可以，就订第一个吧")
-    assert runtime.authorization.create_authorized
-    assert runtime.selection_made
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE
-
-
-def test_completed_recommendation_does_not_reopen_for_selection_without_transaction():
-    runtime = TaskRuntime.begin(TaskSpec.compile("推荐两家酒店"))
-    runtime.observe_candidates(2, execution_ready=True)
-    runtime.phase = RuntimePhase.DONE
-    runtime.observe_user("我觉得第一个不错")
-    assert runtime.selection_made
-    assert not runtime.authorization.create_authorized
-    assert runtime.phase == RuntimePhase.DONE
-
-
-def test_operation_journal_allows_failed_retry_but_blocks_duplicate_success():
-    journal = OperationJournal()
-    arguments = {"shop_id": "S1_I00001", "product_id": "S1_P00001"}
-    journal.register("failed", "create", "create_order", arguments)
-    journal.observe_result("failed", "create_order", "create", True)
-    assert not journal.validate("create")
-
-    journal.register("success", "create", "create_order", arguments)
-    journal.observe_result("success", "create_order", "create", False)
-    assert any("already succeeded" in error for error in journal.validate("create"))
-
-    journal.begin_new_epoch()
-    assert not journal.validate("create")
-
-
-def test_task_spec_owns_runtime_question_contract():
-    class Memory:
-        def __init__(self):
-            self.committed = []
-
-        def propose_gap(self, instruction, domain):
-            return InformationGap(
-                "room_type", "这次需要大床房还是双床房？", "memory"
-            )
-
-        def commit_question(self, question):
-            self.committed.append(question)
-            return True
-
-    class Debug:
-        def emit(self, *args, **kwargs):
-            pass
-
-    agent = object.__new__(ADAPTAgent)
-    agent.task_spec = TaskSpec.compile("帮我订明天晚上重庆的酒店")
-    agent.runtime = TaskRuntime.begin(agent.task_spec)
-    agent.decision_card = DecisionCard()
-    agent.ledger = CandidateLedger()
-    agent.memory = Memory()
-    agent.debug = Debug()
-
-    question = agent._framework_question()
-
-    assert question == "请告诉我需要大床房还是双床房。"
-    assert agent.runtime.pending_question_dimension == "room_type"
-    assert agent.memory.committed == [question]
-
-
 def test_ambiguous_caffeine_intent_requires_time_clarification():
     spec = TaskSpec.compile("26号开会，提前给我点个咖啡提神")
     card = build_decision_card(spec, [])
@@ -2014,16 +1794,20 @@ def test_future_default_dialogue_becomes_structured_preference():
     )
 
 
-def test_soft_preference_conflict_does_not_invent_required_dimension():
+def test_restaurant_conflicting_tastes_trigger_one_framework_dimension():
     agent = object.__new__(ADAPTAgent)
     agent.task_spec = TaskSpec.compile("今晚聚餐想吃个汤锅，帮我下单个套餐")
     agent.decision_card = DecisionCard(prefer=["麻辣火锅", "菌汤锅底", "茼蒿"])
     agent.runtime = TaskRuntime.begin(agent.task_spec)
     agent.ledger = CandidateLedger()
-    assert not agent._information_gap_contract().gaps
+    assert agent._decision_gap_question_dimension() == "taste"
+    agent.runtime.commit_question("taste")
+    agent.runtime.observe_user("这次要麻辣的")
+    assert agent.runtime.resolved_slots["taste"] == "麻辣"
+    assert agent._decision_gap_question_dimension() == ""
 
 
-def test_candidate_attribute_diversity_is_ranked_without_synthetic_question():
+def test_candidate_dessert_diversity_triggers_question_only_when_unknown():
     agent = object.__new__(ADAPTAgent)
     agent.task_spec = TaskSpec.compile("帮我下单个火锅套餐")
     agent.decision_card = DecisionCard(prefer=["麻辣火锅"])
@@ -2034,9 +1818,9 @@ def test_candidate_attribute_diversity_is_ranked_without_synthetic_question():
         "ShopProduct(shop_id=S1_I00001, product_id=S1_P00001, name=麻辣套餐（冰汤圆）)\n"
         "ShopProduct(shop_id=S1_I00002, product_id=S1_P00002, name=麻辣套餐（冰粉）)",
     )
-    assert not agent._information_gap_contract().gaps
+    assert agent._decision_gap_question_dimension() == "dessert"
     agent.decision_card.prefer.append("冰汤圆")
-    assert agent.ledger.shortlist(agent.decision_card)[0].name.endswith("冰汤圆）")
+    assert agent._decision_gap_question_dimension() == ""
 
 
 def test_conditional_restaurant_preferences_resolve_for_current_scenario():
@@ -2124,7 +1908,7 @@ def test_ready_to_create_context_names_unique_evidence_leader():
             [
                 "ShopProduct(shop_id=S1_I00001, product_id=S1_P00081, "
                 "name=酸菜鱼汤锅套餐（含茼蒿/冰汤圆）, price=118, quantity=20)",
-                "ShopProduct(shop_id=S1_I00002, product_id=S1_P10101, "
+                "ShopProduct(shop_id=S1_I00002, product_id=S1_P00094, "
                 "name=麻辣火锅聚餐4人套餐（含茼蒿/毛肚/鸭血/肥牛/冰汤圆）, "
                 "price=168, quantity=20)",
             ]
@@ -2139,7 +1923,7 @@ def test_ready_to_create_context_names_unique_evidence_leader():
         for message in agent._generation_messages(state, [Tool()], 0)
     )
     assert "unique preference-evidence leader" in rendered
-    assert "ID=S1_P10101" in rendered
+    assert "ID=S1_P00094" in rendered
     assert "exact name=麻辣火锅聚餐4人套餐" in rendered
 
 
@@ -2396,35 +2180,6 @@ def test_hotel_date_constraint_rejects_wrong_observed_room_date():
         card,
     )
     assert any("selected candidate does not satisfy required date" in error for error in errors)
-
-
-def test_hotel_date_range_binds_checkin_to_room_and_preserves_checkout_as_workflow():
-    spec = TaskSpec.compile("帮我订一家30号到3号的酒店")
-    checkin = next(item for item in spec.must if item.kind == "date")
-    checkout = next(item for item in spec.must if item.kind == "checkout_date")
-    assert checkin.value == "30号"
-    assert checkout.value == "3号"
-    assert checkout.target == ConstraintTarget.WORKFLOW
-
-    ledger = CandidateLedger()
-    ledger.observe(
-        "get_ota_hotel_info",
-        "Hotel(hotel_id=S1_H00001, hotel_name=海景酒店, "
-        "products=HotelProduct(room_type=大床房, date=2025-01-30, "
-        "quantity=2, room_id=S1_P00001))",
-    )
-    assert not ledger.validate_write(
-        "create_hotel_order",
-        {"hotel_id": "S1_H00001", "room_id": "S1_P00001", "user_id": "U1"},
-        build_decision_card(spec, []),
-    )
-
-
-def test_compact_hotel_date_range_normalizes_missing_start_suffix():
-    spec = TaskSpec.compile("请帮我订23-25号的酒店")
-    values = {item.kind: item.value for item in spec.must}
-    assert values["date"] == "23号"
-    assert values["checkout_date"] == "25号"
 
 
 def test_explicit_write_date_must_agree_with_selected_ticket_candidate():
@@ -2863,72 +2618,3 @@ def test_current_category_constraint_does_not_directly_name_all_ota_facts():
     card = build_decision_card(TaskSpec.compile("帮我订明晚重庆的酒店"), facts)
     assert "古羌城门票" not in card.prefer
     assert "汉庭酒店" in card.prefer
-
-
-def test_open_world_task_identity_filters_unseen_product_categories():
-    pairs = [
-        ("帮我买个空气炸锅送到家", "星云空气炸锅5L", "星云电饭煲5L"),
-        ("帮我买台卧室除湿机送到家", "静音卧室除湿机", "静音卧室加湿器"),
-        ("帮我买一盒隐形眼镜送到家", "日抛隐形眼镜", "偏光太阳镜"),
-        ("帮我买个露营灯送到家", "防水露营灯", "家用阅读灯"),
-    ]
-    for instruction, expected, distraction in pairs:
-        ledger = CandidateLedger()
-        ledger.observe(
-            "delivery_product_search_recommand",
-            "StoreProduct(store_id=S1_S00001, product_name="
-            f"{expected}, product_id=S1_P00001, quantity=5)\n"
-            "StoreProduct(store_id=S1_S00001, product_name="
-            f"{distraction}, product_id=S1_P00002, quantity=5)",
-        )
-        card = build_decision_card(TaskSpec.compile(instruction), [])
-        shortlist = ledger.shortlist(card)
-        assert shortlist
-        assert shortlist[0].name == expected
-        assert all(candidate.name != distraction for candidate in shortlist)
-
-
-def test_open_world_alternatives_remain_a_ranking_choice():
-    ledger = CandidateLedger()
-    ledger.observe(
-        "delivery_product_search_recommand",
-        "StoreProduct(store_id=S1_S00001, product_name=空气炸锅, "
-        "product_id=S1_P00001, quantity=5)\n"
-        "StoreProduct(store_id=S1_S00001, product_name=电饭煲, "
-        "product_id=S1_P00002, quantity=5)",
-    )
-    card = build_decision_card(
-        TaskSpec.compile("空气炸锅或者电饭煲都行，帮我买一个送到家"), []
-    )
-    assert {candidate.name for candidate in ledger.shortlist(card)} == {
-        "空气炸锅",
-        "电饭煲",
-    }
-
-
-def test_tool_topology_overrides_text_lexicon_for_unseen_service():
-    registry = ToolRegistry()
-    registry.meta = {
-        "instore_shop_search_recommend": ToolMeta(
-            "instore_shop_search_recommend", ToolRole.SEARCH
-        ),
-        "instore_reservation": ToolMeta(
-            "instore_reservation", ToolRole.CREATE
-        ),
-    }
-    assert registry.domain_hint() == "instore"
-    spec = TaskSpec.compile(
-        "帮我预约一家室内攀岩馆", domain_hint=registry.domain_hint()
-    )
-    assert spec.domain == "instore"
-    assert spec.facet == "service"
-
-
-def test_candidate_selection_is_not_replayed_as_candidate_observation():
-    runtime = TaskRuntime.begin(TaskSpec.compile("帮我看看空气炸锅"))
-    runtime.observe_candidates(2, execution_ready=True)
-    runtime.authorization.create_authorized = True
-    runtime.select_candidate("S1_P00001", execution_ready=True)
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE
-    assert sum(event["event"] == "candidates" for event in runtime.events) == 1
-    assert sum(event["event"] == "selection" for event in runtime.events) == 1

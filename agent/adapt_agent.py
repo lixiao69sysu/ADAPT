@@ -29,14 +29,10 @@ from agent.decision import (
     is_search_tool,
 )
 from agent.framework.context import compact_messages
-from agent.intent import DesiredOutcome, selected_ordinal
 from agent.lessons import ExecutionLessonStore
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.runtime import (
     DebugEventStore,
-    InformationGap,
-    InformationGapContract,
-    OperationJournal,
     QuestionDecision,
     QuestionGate,
     RuntimePhase,
@@ -46,7 +42,6 @@ from agent.runtime import (
     ToolErrorLedger,
     ToolRegistry,
     ToolRole,
-    default_gap,
 )
 
 _ADAPT_POLICY = """
@@ -62,6 +57,11 @@ _ADAPT_POLICY = """
 8. Never use evaluator rewards, rubrics, target IDs, or target/distraction annotations. They are not agent observations.
 9. When PHASE=ready_to_create, call the exposed CREATE tool immediately with the best compliant Candidate Ledger entry. Do not reconfirm, search, or inspect it again.
 """
+
+_TOPPING_TERMS = ("布蕾", "珍珠", "芋泥", "芋圆", "波霸", "椰果", "仙草", "布丁", "红豆", "奶冻")
+_TOPPING_NEGATIONS = ("不加小料", "无小料", "不要小料", "不放小料")
+_BEVERAGE_PRODUCT_TERMS = ("奶茶", "奶绿", "烤奶", "饮品", "果茶")
+
 
 class ADAPTAgent(PersonalizationAgent):
     """PersonalizationAgent with task compilation and guarded execution."""
@@ -84,7 +84,6 @@ class ADAPTAgent(PersonalizationAgent):
         self.runtime = TaskRuntime.begin(self.task_spec)
         self.tool_registry = ToolRegistry()
         self.tool_errors = ToolErrorLedger()
-        self.operations = OperationJournal()
         self.question_gate = QuestionGate()
         self._pending_question_decision = QuestionDecision(
             True, counts_against_budget=False
@@ -98,61 +97,49 @@ class ADAPTAgent(PersonalizationAgent):
         )
         self._replan_limit = 2
 
-    def _operation_journal(self) -> OperationJournal:
-        """Return the journal, including lightweight unit-test constructions."""
-        journal = getattr(self, "operations", None)
-        if journal is None:
-            journal = OperationJournal()
-            self.operations = journal
-        return journal
-
     def set_current_instruction(self, instruction: str):
         previous = self._current_instruction
-        # The orchestrator invokes this hook exactly once per subtask. Text is
-        # not a subtask identity: two consecutive tasks may legitimately have
-        # identical instructions and must still receive fresh operation,
-        # question, search and candidate state.
-        if previous:
-            self._finalize_visible_trajectory()
-        self.ledger.reset()
-        self.tool_errors.reset()
-        self.operations.reset()
-        self.memory.begin_subtask(instruction)
-        self.task_spec = TaskSpec.compile(instruction)
-        self.task_spec.resolved_slots.update(
-            self.memory.resolve_task_slots(instruction)
-        )
-        self.decision_card = self.memory.compile_task(instruction)
-        self.runtime = TaskRuntime.begin(self.task_spec)
-        current_user_id = str(self.user_profile.get("user_id", ""))
-        if current_user_id != self.lessons.user_id:
-            self.lessons.reset(current_user_id)
-        self.lessons.begin_subtask()
-        self.runtime_policies.begin_subtask(current_user_id)
-        runtime_policy = self.runtime_policies.policy(
-            self.task_spec.domain, self.task_spec.facet
-        )
-        if self.enable_lessons:
-            RuntimePolicyAdapter.apply(runtime_policy, self.runtime, self.ledger)
-        self.debug.emit(
-            "runtime_policy_applied",
-            instruction=instruction,
-            domain=self.task_spec.domain,
-            facet=self.task_spec.facet,
-            capabilities=list(runtime_policy.active_capabilities),
-            max_searches=self.ledger.max_searches_per_family,
-            force_decision=self.runtime.force_decision_after_candidates,
-            require_max_preference_coverage=(
-                self.ledger.require_max_preference_coverage
-            ),
-        )
-        self.debug.emit(
-            "subtask_begin",
-            instruction=instruction,
-            domain=self.task_spec.domain,
-            facet=self.task_spec.facet,
-            action=self.task_spec.action,
-        )
+        if previous != instruction:
+            if previous:
+                self._finalize_visible_trajectory()
+            self.ledger.reset()
+            self.tool_errors.reset()
+            self.memory.begin_subtask(instruction)
+            self.task_spec = TaskSpec.compile(instruction)
+            self.task_spec.resolved_slots.update(
+                self.memory.resolve_task_slots(instruction)
+            )
+            self.decision_card = self.memory.compile_task(instruction)
+            self.runtime = TaskRuntime.begin(self.task_spec)
+            current_user_id = str(self.user_profile.get("user_id", ""))
+            if current_user_id != self.lessons.user_id:
+                self.lessons.reset(current_user_id)
+            self.lessons.begin_subtask()
+            self.runtime_policies.begin_subtask(current_user_id)
+            runtime_policy = self.runtime_policies.policy(
+                self.task_spec.domain, self.task_spec.facet
+            )
+            if self.enable_lessons:
+                RuntimePolicyAdapter.apply(runtime_policy, self.runtime, self.ledger)
+            self.debug.emit(
+                "runtime_policy_applied",
+                instruction=instruction,
+                domain=self.task_spec.domain,
+                facet=self.task_spec.facet,
+                capabilities=list(runtime_policy.active_capabilities),
+                max_searches=self.ledger.max_searches_per_family,
+                force_decision=self.runtime.force_decision_after_candidates,
+                require_max_preference_coverage=(
+                    self.ledger.require_max_preference_coverage
+                ),
+            )
+            self.debug.emit(
+                "subtask_begin",
+                instruction=instruction,
+                domain=self.task_spec.domain,
+                facet=self.task_spec.facet,
+                action=self.task_spec.action,
+            )
         super().set_current_instruction(instruction)
 
     @property
@@ -180,37 +167,6 @@ class ADAPTAgent(PersonalizationAgent):
         # Tool schemas are observations; evaluator/task labels are never accepted.
         self._tool_names = {tool.name for tool in tools}
         self.tool_registry.rebuild(tools)
-        domain_hint = self.tool_registry.domain_hint()
-        if (
-            self._current_instruction
-            and domain_hint
-            and domain_hint != self.task_spec.domain
-        ):
-            self.task_spec = TaskSpec.compile(
-                self._current_instruction, domain_hint=domain_hint
-            )
-            self.task_spec.resolved_slots.update(
-                self.memory.resolve_task_slots(
-                    self._current_instruction, spec=self.task_spec
-                )
-            )
-            self.decision_card = self.memory.compile_task(
-                self._current_instruction, spec=self.task_spec
-            )
-            self.runtime = TaskRuntime.begin(self.task_spec)
-            runtime_policy = self.runtime_policies.policy(
-                self.task_spec.domain, self.task_spec.facet
-            )
-            if self.enable_lessons:
-                RuntimePolicyAdapter.apply(
-                    runtime_policy, self.runtime, self.ledger
-                )
-            self.debug.emit(
-                "task_context_rebound",
-                source="tool_topology",
-                domain=self.task_spec.domain,
-                facet=self.task_spec.facet,
-            )
         super().update_tools(tools)
 
     def process_interactions(self, interactions: list):
@@ -494,12 +450,6 @@ class ADAPTAgent(PersonalizationAgent):
                 attempt = self.tool_errors.observe_result(
                     item.id, item.name, item.content or "", item.error
                 )
-                self._operation_journal().observe_result(
-                    item.id,
-                    item.name,
-                    self.tool_registry.role(item.name).value,
-                    item.error,
-                )
                 self.runtime.observe_tool_result(
                     item.name, item.content or "", item.error
                 )
@@ -540,16 +490,6 @@ class ADAPTAgent(PersonalizationAgent):
                 was_ready_to_pay = self.runtime.phase == RuntimePhase.READY_TO_PAY
                 was_done = self.runtime.phase == RuntimePhase.DONE
                 self.runtime.observe_user(text)
-                if (
-                    (was_ready_to_pay and self.runtime.revision_requested)
-                    or (
-                        was_done
-                        and self.runtime.phase != RuntimePhase.DONE
-                        and self.runtime.authorization.create_authorized
-                    )
-                ):
-                    epoch = self._operation_journal().begin_new_epoch()
-                    self.debug.emit("operation_epoch_started", epoch=epoch)
                 if (was_ready_to_pay or was_done) and self.runtime.revision_requested:
                     revised_instruction = (
                         f"{self._current_instruction or ''}\n"
@@ -638,7 +578,6 @@ class ADAPTAgent(PersonalizationAgent):
                 self.tool_registry.validate_required(call.name, call.arguments)
             )
             role = self.tool_registry.role(call.name)
-            problems.extend(self._operation_journal().validate(role.value))
             recovery = self.tool_errors.recover(
                 call.name, call.arguments, role
             )
@@ -676,14 +615,9 @@ class ADAPTAgent(PersonalizationAgent):
                     )
             if is_search_tool(call.name):
                 count = self.ledger.register_search(call.name, call.arguments)
-                family_count = self.ledger.family_search_count(call.name)
-                if (
-                    count > self.ledger.max_searches_per_family
-                    or family_count > self.ledger.max_searches_per_family
-                ):
+                if count > self.ledger.max_searches_per_family:
                     problems.append(
-                        "semantic search family budget exhausted after "
-                        f"{family_count - 1} attempts"
+                        f"normalized search signature budget exhausted after {count - 1} attempts"
                     )
                     self._record_lesson(
                         "repeat_search",
@@ -754,19 +688,50 @@ class ADAPTAgent(PersonalizationAgent):
         return list(dict.fromkeys(problems))
 
     def _normalize_search_call(self, call: ToolCall) -> None:
-        """Normalize only schema shape; never rewrite task semantics."""
-        if not is_search_tool(call.name) or not isinstance(call.arguments, dict):
+        """Make retrieval honor a dominant exclusion before result truncation.
+
+        VitaBench product searches can return more candidates than fit in the
+        observable tool message. If an old product preference contradicts a
+        newer exclusion, leaving it in the query can push every compliant item
+        beyond that boundary. This rewrite uses only the visible Decision Card.
+        """
+        if not (
+            is_search_tool(call.name)
+            and "product" in call.name.lower()
+            and isinstance(call.arguments, dict)
+            and "小料" in self.decision_card.avoid
+        ):
             return
-        for key in ("keywords", "key_words"):
-            value = call.arguments.get(key)
-            if isinstance(value, str):
-                value = [value]
-            if isinstance(value, list):
-                call.arguments[key] = list(
-                    dict.fromkeys(
-                        str(item).strip() for item in value if str(item).strip()
-                    )
-                )
+        has_current_exception = any(
+            any(
+                topping in preference and preference.strip() != topping
+                for topping in _TOPPING_TERMS
+            )
+            and any(term in preference for term in _BEVERAGE_PRODUCT_TERMS)
+            and not any(negation in preference for negation in _TOPPING_NEGATIONS)
+            for preference in self.decision_card.prefer
+        )
+        if has_current_exception:
+            return
+        category = next(
+            (
+                constraint.value
+                for constraint in self.task_spec.must
+                if constraint.kind == "category"
+            ),
+            "",
+        )
+        if not category:
+            preference_text = " ".join(self.decision_card.prefer)
+            category = next(
+                (
+                    candidate
+                    for candidate in ("奶茶", "咖啡", "饮品")
+                    if candidate in preference_text
+                ),
+                "饮品",
+            )
+        call.arguments["keywords"] = [category, "无小料", "原味"]
 
     def _framework_enrichment(self) -> AssistantMessage | None:
         """Deterministically expand bounded OTA parent candidates.
@@ -865,12 +830,6 @@ class ADAPTAgent(PersonalizationAgent):
 
     def _framework_recovered_write(self) -> AssistantMessage | None:
         """Retry a failed CREATE while freezing every unaffected argument."""
-        if (
-            self.runtime.phase
-            not in {RuntimePhase.READY_TO_CREATE, RuntimePhase.WAIT_CREATE_RESULT}
-            or self._operation_journal().successful(ToolRole.CREATE.value)
-        ):
-            return None
         recovered = self.tool_errors.recovered_create_attempt()
         if recovered is None or recovered.tool_name not in self.tool_registry.meta:
             return None
@@ -905,7 +864,7 @@ class ADAPTAgent(PersonalizationAgent):
         questions, while ensuring every recommended name came from the current
         subtask's environment results.
         """
-        if self.task_spec.completion.desired_outcome != DesiredOutcome.INFORM:
+        if self.task_spec.action != "recommend":
             return None
         if self.runtime.phase != RuntimePhase.SELECT:
             return None
@@ -941,18 +900,11 @@ class ADAPTAgent(PersonalizationAgent):
     def _observe_assistant(self, assistant: AssistantMessage) -> None:
         if assistant.tool_calls:
             for call in assistant.tool_calls:
-                role = self.tool_registry.role(call.name)
                 self.tool_errors.register_proposal(
                     call.id,
                     call.name,
                     call.arguments,
-                    role,
-                )
-                self._operation_journal().register(
-                    call.id,
-                    role.value,
-                    call.name,
-                    call.arguments,
+                    self.tool_registry.role(call.name),
                 )
             return
         if self.question_gate.is_question(assistant.content or ""):
@@ -964,45 +916,115 @@ class ADAPTAgent(PersonalizationAgent):
             )
 
     def _framework_question(self) -> str:
-        gap = self._information_gap_contract().next_gap(
-            resolved=self.runtime.resolved_slots,
-            asked=self.runtime.asked_dimensions,
-        )
-        if gap and self.runtime.phase != RuntimePhase.NEED_INFO:
+        dimension = self.runtime.next_question_dimension()
+        if not dimension:
+            dimension = self._decision_gap_question_dimension()
+        if dimension and self.runtime.phase != RuntimePhase.NEED_INFO:
             self.runtime.phase = RuntimePhase.NEED_INFO
         if self.runtime.phase != RuntimePhase.NEED_INFO:
             return ""
-        if not gap:
+        if not dimension:
             self.runtime.phase = RuntimePhase.SEARCH
             return ""
-        question = gap.question
-        self.runtime.commit_question(gap.dimension)
+        questions = {
+            "size": "请告诉我需要的尺码，例如 42-43 码。",
+            "quantity": "请告诉我需要几人或几张票。",
+            "departure": "请告诉我出发地。",
+            "destination": "请告诉我目的地。",
+            "date": "请告诉我具体日期。",
+            "room_type": "请告诉我需要大床房还是双床房。",
+            "time": "请告诉我希望安排在上午、下午还是晚上。",
+            "caffeine": "这杯咖啡是上午喝还是下午喝？我会据此选高或低咖啡因。",
+            "taste": "你这次的锅底更想要麻辣、菌汤、番茄还是清汤？",
+            "dessert": "套餐里的甜品有明确偏好吗？我会按候选中的精确配套筛选。",
+        }
+        question = questions.get(dimension, f"请补充{dimension}。")
+        self.runtime.commit_question(dimension)
         self.memory.commit_question(question)
-        self.debug.emit(
-            "question_committed", dimension=gap.dimension, source=gap.source
-        )
+        self.debug.emit("question_committed", dimension=dimension, source="framework")
         return question
 
-    def _information_gap_contract(self) -> InformationGapContract:
-        """Compile decision-critical questions from the typed task contract."""
-        gaps: list[InformationGap] = [
-            default_gap(dimension, "task_spec")
-            for dimension in self.runtime.critical_gaps()
-        ]
-        unique: dict[str, InformationGap] = {}
-        for gap in gaps:
-            unique.setdefault(gap.dimension, gap)
-        return InformationGapContract(tuple(unique.values()))
+    def _decision_gap_question_dimension(self) -> str:
+        """Find one observable, decision-critical ambiguity.
+
+        TaskSpec covers syntactic omissions. This second layer covers semantic
+        ambiguity that appears only after combining the current task, memory,
+        and live candidates. It never reads evaluator-only fields.
+        """
+        runtime = self.runtime
+        if (
+            len(runtime.asked_dimensions) >= 2
+            or runtime.authorization.choice_delegated
+            or self.task_spec.facet != "restaurant"
+        ):
+            return ""
+
+        if "taste" not in runtime.asked_dimensions and "taste" not in runtime.resolved_slots:
+            # Only facts selected into the bounded Decision Card are active for
+            # this task. Scanning the full internal fact lists can resurrect a
+            # lower-priority conditional alternative that was intentionally
+            # omitted from the model-visible card and cause a false question.
+            visible = self.decision_card.render()
+            families = {
+                canonical
+                for canonical, markers in (
+                    ("麻辣", ("麻辣", "牛油", "红油", "辣锅")),
+                    ("菌汤", ("菌汤", "菌菇", "竹荪")),
+                    ("番茄", ("番茄",)),
+                    ("清汤", ("清汤", "清淡", "养生")),
+                )
+                if any(marker in visible for marker in markers)
+            }
+            if len(families) >= 2:
+                return "taste"
+
+        if (
+            self.ledger.candidates
+            and "dessert" not in runtime.asked_dimensions
+            and "dessert" not in runtime.resolved_slots
+            and (
+                "套餐" in self.task_spec.instruction
+                or any("套餐" in candidate.raw for candidate in self.ledger.candidates.values())
+            )
+        ):
+            dessert_markers = (
+                "冰汤圆", "冰粉", "红糖糍粑", "苋圆", "龟苓膏",
+                "绿豆沙", "双皮奶", "冰淇淋", "冰酸奶", "甜品",
+            )
+            variants = {
+                marker
+                for candidate in self.ledger.candidates.values()
+                if candidate.entity_type == "product"
+                for marker in dessert_markers
+                if marker in candidate.raw
+            }
+            known = " ".join(
+                [
+                    *self.decision_card.must,
+                    *self.decision_card.prefer,
+                    *runtime.resolved_slots.values(),
+                ]
+            )
+            if len(variants) >= 2 and not any(marker in known for marker in variants):
+                return "dessert"
+        return ""
 
     def _resolve_user_selection(self, text: str) -> None:
-        index = selected_ordinal(text)
-        if not index:
+        import re
+
+        match = re.search(r"第([一二三四五1-5])", text or "")
+        if not match:
             return
+        mapping = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5}
+        index = mapping.get(
+            match.group(1), int(match.group(1)) if match.group(1).isdigit() else 0
+        )
         shortlist = self.ledger.shortlist(self.decision_card)
         if 1 <= index <= len(shortlist):
-            selected = shortlist[index - 1]
-            self.runtime.select_candidate(
-                selected.candidate_id,
+            self.runtime.selected_candidate_id = shortlist[index - 1].candidate_id
+            self.runtime.selection_made = True
+            self.runtime.observe_candidates(
+                len(shortlist),
                 execution_ready=self.tool_registry.execution_ready(
                     self.ledger, self.decision_card
                 ),

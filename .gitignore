@@ -12,14 +12,7 @@ venv/
 data/
 results/
 evaluation/vitabench/data/
-# VitaBench is cloned as a read-only external dependency, not vendored into
-# ADAPT's Git history.
-evaluation/vitabench/
 
 # IDE
 .idea/
 .vscode/
-.claude/
-
-# Local one-off trace/debug artifacts
-C*Tempsub3_hint.txt

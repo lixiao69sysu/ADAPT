@@ -129,19 +129,15 @@ class ADAPTMemory(BaseMemory):
                 card.ask.insert(0, question)
         return card.render()
 
-    def compile_task(
-        self, instruction: str, *, spec: TaskSpec | None = None
-    ) -> DecisionCard:
+    def compile_task(self, instruction: str) -> DecisionCard:
         """Compile instruction and active facts into a bounded Decision Card."""
-        spec = spec or TaskSpec.compile(instruction)
+        spec = TaskSpec.compile(instruction)
         spec.resolved_slots.update(resolve_preference_slots(spec, self.facts))
         return build_decision_card(spec, self.facts)
 
-    def resolve_task_slots(
-        self, instruction: str, *, spec: TaskSpec | None = None
-    ) -> dict[str, str]:
+    def resolve_task_slots(self, instruction: str) -> dict[str, str]:
         """Return strong, unambiguous historical values for task-choice slots."""
-        spec = spec or TaskSpec.compile(instruction)
+        spec = TaskSpec.compile(instruction)
         return resolve_preference_slots(spec, self.facts)
 
     def storage_stats(self) -> dict[str, int | bool]:
@@ -238,10 +234,10 @@ class ADAPTMemory(BaseMemory):
 
     def begin_subtask(self, instruction: str) -> None:
         """Explicit state transition invoked by ADAPTAgent, never by read()."""
-        # Instruction text is not a unique subtask key; identical consecutive
-        # tasks still receive independent question budgets and pending state.
-        self._current_task_key = (instruction or "").strip()
-        self.proactive.reset_subtask()
+        task_key = (instruction or "").strip()
+        if task_key != self._current_task_key:
+            self._current_task_key = task_key
+            self.proactive.reset_subtask()
 
     def _read_base(self, query: str) -> str:
         """Retrieve and format memory facts in groundtruth-aligned categorical format."""
@@ -369,9 +365,13 @@ class ADAPTMemory(BaseMemory):
         in v3 (over-asking, no exploration). This is an informational nudge the
         agent can override when the instruction conflicts.
 
-        Domain-gated: drop events whose content clearly belongs to a different
-        environment, and avoid transferring concrete past entities across OTA
-        cities/subdomains. Only abstract compatible attributes may transfer.
+        v13: domain-gated. Drop events whose content clearly belongs to a
+        different domain than the query (e.g. 狗咖/外卖 in a hotel task), and
+        for OTA queries drop concrete past entities (brands, products, past
+        dates) that anchored the agent to the wrong city/subdomain in v12
+        (A891207 长春 hotel task surfaced 锦州喜来登 + 张门票 -> collapse).
+        Only abstract food/taste likes survive for OTA; v10 passed OTA subtasks
+        with no hint at all, so an empty OTA hint is the safe default.
         """
         if not query or not self.stream.events:
             return ""
@@ -424,9 +424,11 @@ class ADAPTMemory(BaseMemory):
                 prod_med.append(f"常点{obj}")
             elif p == "explicit_preference":
                 attr_med.append(obj)
-        # Reserve concrete product anchors before brands and attributes so a
-        # high-confidence completed order is not displaced by many generic
-        # attribute events in the bounded hint.
+        # v16a dimension extraction adds taste_preference events (冰饮/热饮/小料)
+        # that crowded 常点焦糖玛奇朵 out of B865629 sub3's hint (top_k=5 window),
+        # dropping the proactive coffee subtask 1.0 -> 0.0. Reserve concrete product
+        # anchors (常点X) before brands/tastes so a real past order can't be fully
+        # displaced by a generic attribute event.
         hints = (high + prod_med[:2] + brand_med + attr_med)[:4]
         if not hints:
             return ""
@@ -749,22 +751,18 @@ class ADAPTMemory(BaseMemory):
 
     def propose_question(self, instruction: str, domain: str | None = None) -> str | None:
         """Pure question proposal; does not consume the per-subtask budget."""
-        gap = self.propose_gap(instruction, domain)
-        return gap.question if gap else None
+        return self._suggest_question_inner(instruction, domain)
 
-    def propose_gap(self, instruction: str, domain: str | None = None):
-        """Return the same typed gap used by ADAPTAgent's runtime controller."""
+    def _suggest_question_inner(self, instruction: str, domain: str | None = None) -> str | None:
+        # Infer domain from the instruction if not given (e.g. read() path).
         if domain is None:
             domain = self.scorer.domain(instruction)
         memory_text = self._read_base(instruction)
         spec = TaskSpec.compile(instruction)
         known_slots = resolve_preference_slots(spec, self.facts)
-        return self.proactive.propose_gap(
+        return self.proactive.propose_question(
             instruction, memory_text, domain, known_slots=known_slots
         )
-
-    def _suggest_question_inner(self, instruction: str, domain: str | None = None) -> str | None:
-        return self.propose_question(instruction, domain)
 
     def commit_question(self, question: str) -> bool:
         """Record that ADAPTAgent actually sent ``question`` to the user."""

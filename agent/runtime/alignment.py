@@ -17,24 +17,6 @@ _DYNAMIC_KV_RE = re.compile(
 _TAG_RE = re.compile(r"tags\s*[=:]\s*(\[[^\]]*\])")
 _VALUE_SPLIT_RE = re.compile(r"[\s,，/|、（）()\[\]{};；]+")
 _NORMALIZE_RE = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9]+")
-_ALTERNATIVE_RE = re.compile(r"(?:或者|或是|任选|都行|均可|二选一)")
-_TASK_OVERLAP_STOP = {
-    "帮我",
-    "给我",
-    "一下",
-    "一个",
-    "一款",
-    "一种",
-    "商品",
-    "服务",
-    "适合",
-    "需要",
-    "想要",
-    "推荐",
-    "购买",
-    "下单",
-    "预约",
-}
 _TECHNICAL_KEYS = {
     "id", "user_id", "product_id", "product_ids", "store_id", "shop_id",
     "hotel_id", "room_id", "order_id", "quantity", "price", "date",
@@ -121,8 +103,6 @@ class CandidateAttributeMap:
             observed = _normalize(attribute.value)
             if observed == target or (
                 len(target) >= 2 and observed.startswith(target)
-            ) or (
-                len(target) >= 3 and target in observed
             ):
                 return True
         return False
@@ -280,34 +260,6 @@ class EvidenceAlignment:
                             evidence_types=combined_types,
                         )
                     matched_any = True
-            # Candidate names are often more specific than the user's open-
-            # world category phrase (for example a brand-prefixed appliance).
-            # When no exact candidate attribute grounded, recover the longest
-            # observable phrase shared by the instruction and one attribute.
-            # This is induced from the live candidate set, not a category list.
-            if not matched_any and "current_instruction" in evidence_types:
-                overlaps: list[tuple[int, str, str]] = []
-                for candidate_value in ordered_values:
-                    overlap = _longest_common_substring(normalized, candidate_value)
-                    if (
-                        len(overlap) >= 3
-                        and overlap not in _TASK_OVERLAP_STOP
-                        and not overlap.isdigit()
-                    ):
-                        key, _source, _observed_value = vocabulary[candidate_value]
-                        overlaps.append((len(overlap), key, overlap))
-                if overlaps:
-                    _, key, overlap = max(overlaps)
-                    atoms_by_identity[(key, overlap)] = PreferenceAtom(
-                        meta_type="task_identity",
-                        attribute_key=key,
-                        value=overlap,
-                        source_preference=preference,
-                        weight=weight,
-                        decisive=True,
-                        evidence_types=evidence_types,
-                    )
-                    matched_any = True
             if not matched_any and allow_legacy and _usable(preference):
                 identity = ("legacy_text", _normalize(preference))
                 previous = atoms_by_identity.get(identity)
@@ -323,44 +275,11 @@ class EvidenceAlignment:
                     )
         return tuple(atoms_by_identity.values())
 
-    def task_identity_atom(self) -> PreferenceAtom | None:
-        """Return one candidate-grounded identity anchor for an unseen task.
-
-        The anchor is used only when the typed compiler has no groundable
-        category/entity constraint.  Alternative requests stay a ranking
-        choice rather than becoming an impossible conjunction.
-        """
-        atoms = [
-            atom
-            for atom in self.atoms
-            if "current_instruction" in atom.evidence_types
-            and atom.attribute_key not in {
-                "legacy_text",
-                "store_name",
-                "shop_name",
-                "merchant_name",
-            }
-            and not _ALTERNATIVE_RE.search(atom.source_preference)
-        ]
-        if not atoms:
-            return None
-        frequencies = {
-            atom: sum(atom in self.matches(candidate) for candidate in self._candidates)
-            for atom in atoms
-        }
-        # A task category normally recurs across more candidates than a soft
-        # style/brand preference. Length then favors the most specific anchor.
-        return max(atoms, key=lambda atom: (frequencies[atom], len(_normalize(atom.value))))
-
-    def satisfies_task_identity(
-        self, candidate: Any, atom: PreferenceAtom | None
-    ) -> bool:
-        return atom is None or atom in self.matches(candidate)
-
     def matches(self, candidate: Any) -> tuple[PreferenceAtom, ...]:
         return self._matches.get(
             str(getattr(candidate, "candidate_id", "")), ()
         )
+
     def coverage(self, candidate: Any) -> int:
         return len(self.matches(candidate))
 
@@ -375,24 +294,3 @@ class EvidenceAlignment:
             candidate_id: tuple(atom.value for atom in atoms)
             for candidate_id, atoms in self._matches.items()
         }
-
-
-def _longest_common_substring(left: str, right: str) -> str:
-    """Return a deterministic longest contiguous overlap in O(n*m)."""
-    if not left or not right:
-        return ""
-    previous = [0] * (len(right) + 1)
-    best_length = 0
-    best_end = 0
-    for left_index, left_char in enumerate(left, start=1):
-        current = [0] * (len(right) + 1)
-        for right_index, right_char in enumerate(right, start=1):
-            if left_char != right_char:
-                continue
-            current[right_index] = previous[right_index - 1] + 1
-            length = current[right_index]
-            if length > best_length:
-                best_length = length
-                best_end = left_index
-        previous = current
-    return left[best_end - best_length : best_end]

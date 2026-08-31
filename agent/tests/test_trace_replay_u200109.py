@@ -1,10 +1,31 @@
-"""Synthetic cross-layer invariants distilled from observable trace classes."""
+"""Offline regression replay distilled from data/simulations/adapt_smoke_2u.json."""
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 from agent.decision import CandidateLedger, DecisionCard, TaskSpec
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.runtime import QuestionGate, RuntimePhase, RuntimePolicyStore, TaskRuntime
+
+
+TRACE_PATH = Path(__file__).parents[2] / "data" / "simulations" / "adapt_smoke_2u.json"
+
+
+def _user_turns() -> list[str]:
+    payload = json.loads(TRACE_PATH.read_text(encoding="utf-8"))
+    simulation = next(item for item in payload["simulations"] if item["task_id"] == "U200109")
+    return [message.get("content", "") for message in simulation["messages"] if message.get("role") == "user"]
+
+
+def test_replay_source_contains_delegation_payment_and_decline_events():
+    turns = _user_turns()
+    assert "想喝汤了，你帮我点个送到家里" in turns
+    assert "随便，你看着办吧。" in turns
+    assert "支付" in turns
+    assert "不用了，我自己付。" in turns
+
 
 def test_soup_delegation_transitions_to_create_without_reasking():
     runtime = TaskRuntime.begin(TaskSpec.compile("想喝汤了，你帮我点个送到家里"))
@@ -55,12 +76,12 @@ def test_ranker_excludes_zero_inventory_and_keeps_top_five():
 
 
 def test_execution_lesson_changes_runtime_policy_not_only_prompt():
-    policies = RuntimePolicyStore("synthetic-user")
-    policies.begin_subtask("synthetic-user")
+    policies = RuntimePolicyStore("U200109")
+    policies.begin_subtask("U200109")
     policies.observe("delivery", "retail", "missed_write")
     policies.observe("delivery", "retail", "repeat_search")
     policies.observe("delivery", "retail", "repeat_search")
-    policies.begin_subtask("synthetic-user")
+    policies.begin_subtask("U200109")
     policy = policies.policy("delivery", "retail")
     assert policy.force_decision_after_candidates
     assert policy.max_searches_per_family == 1

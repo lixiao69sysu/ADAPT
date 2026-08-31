@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from agent.intent import CompletionContract, DesiredOutcome, completion_contract
 from agent.memory.facts import PreferenceFact, infer_facet
 
 
@@ -30,10 +29,6 @@ class ConstraintOperator(str, Enum):
 _DATE_RE = re.compile(
     r"\b20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b|\d{1,2}月\d{1,2}日|\d{1,2}号"
 )
-_DATE_RANGE_RE = re.compile(
-    r"((?:\d{1,2}月)?\d{1,2}(?:日|号)?)\s*(?:到|至|[-~～—])\s*"
-    r"((?:\d{1,2}月)?\d{1,2}(?:日|号))"
-)
 _EXACT_ENTITY_RE = re.compile(
     r"(?:就选|指定|要的是|就)([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)(?:吧|[,，。!！?？]|$)"
 )
@@ -51,13 +46,7 @@ _GENERIC_ENTITY_FRAGMENTS = (
 )
 _ID_RE = re.compile(r"\b(?:S\d+_[A-Z]\d+|O[A-Z]?[A-Za-z0-9]+|B[A-Za-z0-9]{5,})\b")
 _FIELD_RE = re.compile(r"([A-Za-z_]+)=([^,)\n]+)")
-_PROFILE_ADDRESS_RE = re.compile(
-    r"(?:送|寄|配送)(?:到|去|来|至)?"
-    r"(家(?:里|中)?|公司(?:前台)?|单位|店里)(?:来)?"
-)
 _ADDRESS_RE = re.compile(r"(?:送到|送去)([^，。；;!！?？]{2,40})")
-_ADDRESS_TRAILING_RE = re.compile(r"(?:就行|即可|就可以|之前|为止|来)$")
-_INVALID_ADDRESS_VALUES = {"就行", "即可", "就可以", "来", "这里", "那里"}
 _PARTY_SIZE_RE = re.compile(r"([一二两三四五六七八九十\d]+)\s*(?:个)?人")
 _ROUTE_RE = re.compile(
     r"(?:从)([^，。；;!！?？]{1,24}?)(?:到|去)([^，。；;!！?？]{1,24})"
@@ -135,7 +124,7 @@ _TOPPING_VALUES = (
 )
 _TOPPING_NEGATIONS = ("不加小料", "无小料", "不要小料", "不放小料")
 _DOMAIN_MARKERS = {
-    "ota": ("酒店", "机票", "车票", "航班", "火车", "高铁", "门票", "景点", "打车", "住宿"),
+    "ota": ("酒店", "机票", "航班", "火车", "高铁", "门票", "景点", "打车", "住宿"),
     "instore": (
         "探店",
         "到店",
@@ -146,21 +135,12 @@ _DOMAIN_MARKERS = {
         "按摩",
         "电玩",
         "理发",
-        "洗头",
         "团个券",
-        "团张券",
-        "团份券",
         "团购券",
         "撸铁",
         "真人",
     ),
     "delivery": ("外卖", "配送", "送到", "送去", "下单", "闪购", "帮我点", "帮我买"),
-}
-_ALTERNATIVE_CHOICE_RE = re.compile(r"(?:或者|或是|任选|都行|均可|二选一)")
-_SINGLE_CATEGORY_PATTERNS = {
-    "鞋": re.compile(r"(?:买|要|想要|推荐|挑|选|一双|双)\s*[^，。]{0,6}?鞋(?:了|吧|呀|啊|，|。|$)"),
-    "饭": re.compile(r"(?:吃|点|来|买)\s*[^，。]{0,6}?饭(?:了|吧|呀|啊|，|。|$)"),
-    "汤": re.compile(r"(?:喝|点|来|买)\s*[^，。]{0,6}?汤(?:了|吧|呀|啊|，|。|$)"),
 }
 
 
@@ -182,7 +162,6 @@ class TaskSpec:
     domain: str
     facet: str
     action: str
-    completion: CompletionContract
     must: list[Constraint] = field(default_factory=list)
     avoid: list[Constraint] = field(default_factory=list)
     required_slots: list[str] = field(default_factory=list)
@@ -190,27 +169,46 @@ class TaskSpec:
     resolved_slots: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def compile(
-        cls, instruction: str, *, domain_hint: str | None = None
-    ) -> TaskSpec:
+    def compile(cls, instruction: str) -> TaskSpec:
         text = (instruction or "").strip()
-        domain = (
-            domain_hint
-            if domain_hint in {"delivery", "instore", "ota"}
-            else "delivery"
-        )
-        if domain_hint not in {"delivery", "instore", "ota"}:
-            for candidate, markers in _DOMAIN_MARKERS.items():
-                if any(marker in text for marker in markers):
-                    domain = candidate
-                    break
+        domain = "delivery"
+        for candidate, markers in _DOMAIN_MARKERS.items():
+            if any(marker in text for marker in markers):
+                domain = candidate
+                break
         facet = infer_facet(text, domain)
-        completion = completion_contract(text)
-        action = {
-            DesiredOutcome.TRANSACT: "commit",
-            DesiredOutcome.MODIFY: "modify",
-            DesiredOutcome.INFORM: "recommend",
-        }[completion.desired_outcome]
+        action = "recommend"
+        if any(
+            k in text
+            for k in (
+                "下单",
+                "帮我点",
+                "给我点",
+                "再点",
+                "再买",
+                "再订",
+                "再来杯",
+                "再来一杯",
+                "点个",
+                "来杯",
+                "来一杯",
+                "帮我买",
+                "帮我订",
+                "买一下",
+                "买个票",
+                "定个",
+                "订个",
+                "订一间",
+                "买一份",
+                "预定",
+                "预约",
+                "团个券",
+                "直接帮我团",
+            )
+        ):
+            action = "commit"
+        elif any(k in text for k in ("取消", "改签", "修改")):
+            action = "modify"
 
         must: list[Constraint] = []
         avoid: list[Constraint] = []
@@ -218,25 +216,10 @@ class TaskSpec:
             value = match.group(1).strip()
             if not any(fragment in value for fragment in _GENERIC_ENTITY_FRAGMENTS):
                 must.append(Constraint("entity", value, evidence_span=match.group(0)))
-        # The closed vocabulary is a high-precision compatibility path only.
-        # Single-character substrings (e.g. 饭 inside 电饭煲) and explicit
-        # alternatives are deferred to candidate-induced open-world grounding.
-        if not _ALTERNATIVE_CHOICE_RE.search(text):
-            category_added = False
-            for category in sorted(_PRODUCT_CATEGORIES, key=len, reverse=True):
-                if len(category) >= 2 and category in text:
-                    must.append(
-                        Constraint("category", category, evidence_span=category)
-                    )
-                    category_added = True
-                    break
-            if not category_added:
-                for category, pattern in _SINGLE_CATEGORY_PATTERNS.items():
-                    if pattern.search(text):
-                        must.append(
-                            Constraint("category", category, evidence_span=category)
-                        )
-                        break
+        for category in _PRODUCT_CATEGORIES:
+            if category in text:
+                must.append(Constraint("category", category, evidence_span=category))
+                break
         for term in _ATTRIBUTE_TERMS:
             if term in text:
                 must.append(Constraint("attribute", term, evidence_span=term))
@@ -251,50 +234,20 @@ class TaskSpec:
                         evidence_span=party_match.group(0),
                     )
                 )
-        date_range = _DATE_RANGE_RE.search(text)
-        if date_range:
-            start_date, end_date = date_range.groups()
-            if not start_date.endswith(("日", "号")):
-                start_date += "号" if end_date.endswith("号") else "日"
-            must.extend(
-                [
-                    Constraint(
-                        "date",
-                        start_date,
-                        ConstraintTarget.ARGUMENT,
-                        ConstraintOperator.EQUALS,
-                        evidence_span=date_range.group(0),
-                        argument_name="date",
-                    ),
-                    # VitaBench hotel CREATE binds the check-in date to the
-                    # observed room_id and has no checkout argument. Preserve
-                    # the requested end date in the contract/prompt without
-                    # demanding that one daily room candidate equal both ends.
-                    Constraint(
-                        "checkout_date",
-                        end_date,
-                        ConstraintTarget.WORKFLOW,
-                        ConstraintOperator.EQUALS,
-                        evidence_span=date_range.group(0),
-                    ),
-                ]
-            )
-        else:
-            for date in _DATE_RE.findall(text):
-                must.append(
-                    Constraint(
-                        "date",
-                        date,
-                        ConstraintTarget.ARGUMENT,
-                        ConstraintOperator.EQUALS,
-                        evidence_span=date,
-                        argument_name="date",
-                    )
+        for date in _DATE_RE.findall(text):
+            must.append(
+                Constraint(
+                    "date",
+                    date,
+                    ConstraintTarget.ARGUMENT,
+                    ConstraintOperator.EQUALS,
+                    evidence_span=date,
+                    argument_name="date",
                 )
-        address_match = _PROFILE_ADDRESS_RE.search(text) or _ADDRESS_RE.search(text)
+            )
+        address_match = _ADDRESS_RE.search(text)
         if address_match:
             raw_address = address_match.group(1).strip().rstrip("吧呀啊")
-            raw_address = _ADDRESS_TRAILING_RE.sub("", raw_address).strip()
             alias = (
                 "home"
                 if raw_address in {"家", "家里", "家中"}
@@ -304,19 +257,18 @@ class TaskSpec:
                     else raw_address
                 )
             )
-            if raw_address and raw_address not in _INVALID_ADDRESS_VALUES:
-                must.append(
-                    Constraint(
-                        "address",
-                        alias,
-                        ConstraintTarget.ARGUMENT,
-                        ConstraintOperator.RESOLVES_PROFILE
-                        if alias in {"home", "company"}
-                        else ConstraintOperator.CONTAINS,
-                        evidence_span=address_match.group(0),
-                        argument_name="address",
-                    )
+            must.append(
+                Constraint(
+                    "address",
+                    alias,
+                    ConstraintTarget.ARGUMENT,
+                    ConstraintOperator.RESOLVES_PROFILE
+                    if alias in {"home", "company"}
+                    else ConstraintOperator.CONTAINS,
+                    evidence_span=address_match.group(0),
+                    argument_name="address",
                 )
+            )
         route_match = _ROUTE_RE.search(text)
         if route_match:
             departure = route_match.group(1).strip()
@@ -388,7 +340,6 @@ class TaskSpec:
             domain,
             facet,
             action,
-            completion,
             _dedup_constraints(must),
             avoid,
             required,
@@ -888,9 +839,6 @@ class CandidateLedger:
         self.search_family_counts[family] = self.search_family_counts.get(family, 0) + 1
         return self.search_counts[signature]
 
-    def family_search_count(self, tool_name: str) -> int:
-        return self.search_family_counts.get(self.search_family(tool_name), 0)
-
     def register_enrichment_read(
         self, tool_name: str, arguments: dict[str, Any]
     ) -> int:
@@ -981,20 +929,11 @@ class CandidateLedger:
             return None
         ranker = CandidateRanker()
         score_by_id = ranker.decisive_preference_scores(ranked, card)
-        best_score = max(score_by_id.values(), default=0.0)
-        if best_score <= 0:
+        scores = [score_by_id.get(candidate.candidate_id, 0.0) for candidate in ranked]
+        if scores[0] <= 0:
             return None
-        leaders = [
-            candidate
-            for candidate in ranked
-            if score_by_id.get(candidate.candidate_id, 0.0) == best_score
-        ]
-        # Scalar ranking also contains presentation tie-breakers such as exact
-        # text, inventory, recency and price.  Those may order the shortlist,
-        # but they must not decide whether observable preference evidence has
-        # a unique leader.  Select the actual decisive-score maximum instead
-        # of assuming that it occupies shortlist position zero.
-        return leaders[0] if len(leaders) == 1 else None
+        runner_up = max(scores[1:], default=-1.0)
+        return ranked[0] if scores[0] > runner_up else None
 
     def preference_coverage_gap(
         self, arguments: dict[str, Any], card: DecisionCard
@@ -1324,8 +1263,6 @@ def _required_slots(domain: str, facet: str, action: str, text: str) -> list[str
         return slots
     if facet in {"train", "flight"}:
         return ["departure", "destination", "date", "quantity"]
-    if domain == "ota" and facet == "travel":
-        return ["transport", "departure", "destination", "date", "quantity"]
     if facet == "hotel":
         return ["city", "date", "room_type"]
     if domain == "instore":
@@ -1345,7 +1282,7 @@ def _slot_is_present(slot: str, text: str) -> bool:
         "date": ("今天", "明天", "后天", "下周", "周", "号", "日"),
         "quantity": ("一张", "两张", "一人", "两人", "个人", "位", "我们"),
         "city": ("去", "在", "市", "区"),
-        "room_type": ("大床", "双床", "标准间", "套房", "亲子房", "房型"),
+        "room_type": ("大床", "双床", "房", "酒店"),
         "shop_or_service": (
             "店",
             "餐厅",
@@ -1359,7 +1296,6 @@ def _slot_is_present(slot: str, text: str) -> bool:
         ),
         "time": ("今天", "明天", "后天", "周", "点", "上午", "下午", "晚上"),
         "caffeine": ("高咖啡因", "低咖啡因", "脱因", "上午", "早上", "早晨", "下午", "晚上", "晚间"),
-        "transport": ("高铁", "动车", "火车", "飞机", "航班", "机票", "车票"),
     }
     return any(marker in text for marker in markers.get(slot, ()))
 

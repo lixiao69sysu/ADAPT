@@ -73,18 +73,18 @@ def test_rule_declares_capability_and_contains_no_case_specific_evidence():
     assert payload["failure_cluster"]
     assert payload["proposed_change"]
     assert "user-a" not in rendered
-    assert "P99999" not in rendered
+    assert "P00094" not in rendered
     assert "target_product_ids" not in rendered
 
 
 def test_unknown_case_specific_scope_is_collapsed_to_general():
     store = RuntimePolicyStore("user-a")
     store.begin_subtask("user-a")
-    rule = store.observe("U999999", "P99999", "missed_write")
+    rule = store.observe("B865629", "P00094", "missed_write")
     assert rule.domain == "general"
     assert rule.facet == "general"
-    assert "U999999" not in repr(asdict(rule))
-    assert "P99999" not in repr(asdict(rule))
+    assert "B865629" not in repr(asdict(rule))
+    assert "P00094" not in repr(asdict(rule))
 
 
 def test_hidden_evaluator_payload_cannot_be_passed_to_learner():

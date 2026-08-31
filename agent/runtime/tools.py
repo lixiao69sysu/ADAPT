@@ -81,33 +81,6 @@ class ToolRegistry:
     def role(self, name: str) -> ToolRole:
         return self.meta.get(name, ToolMeta(name, ToolRole.READ)).role
 
-    def domain_hint(self) -> str:
-        """Infer the active environment from observable tool names.
-
-        Tool topology is a stronger signal than a product-word dictionary:
-        it correctly handles unseen services and goods without teaching the
-        runtime their category names.
-        """
-        names = {name.casefold() for name in self.meta}
-        if any("instore" in name for name in names):
-            return "instore"
-        if any(
-            marker in name
-            for name in names
-            for marker in (
-                "_ota_",
-                "hotel",
-                "flight",
-                "train",
-                "attraction",
-                "taxi",
-            )
-        ):
-            return "ota"
-        if any("delivery" in name for name in names):
-            return "delivery"
-        return ""
-
     def execution_ready(self, ledger: CandidateLedger, card=None) -> bool:
         """Whether CREATE has required IDs and a compliant candidate.
 

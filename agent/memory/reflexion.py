@@ -93,7 +93,7 @@ class ReflexionLesson:
 
     id: int
     domain: str                 # delivery / instore / ota (may be "")
-    subtask_id: str             # opaque local trajectory identifier
+    subtask_id: str             # e.g. "sub_B048564_3"
     instruction: str            # the failed instruction (truncated)
     lesson: str                 # one-sentence, actionable, 30-60 chars
     failure_mode: str = FAILURE_MODE_GENERIC

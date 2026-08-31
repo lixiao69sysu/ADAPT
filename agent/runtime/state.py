@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from agent.decision import TaskSpec
-from agent.intent import has_create_authorization, selected_ordinal
 
 
 class RuntimePhase(str, Enum):
@@ -139,10 +138,9 @@ class TaskRuntime:
         self.last_user_answer = content[:240]
         if any(marker in content for marker in _DELEGATION_MARKERS):
             self.authorization.choice_delegated = True
-        if any(marker in content for marker in _CREATE_MARKERS) or has_create_authorization(content):
+        if any(marker in content for marker in _CREATE_MARKERS):
             self.authorization.create_authorized = True
-            self.authorization.candidate_choice_authorized = True
-        if selected_ordinal(content) or re.search(r"就这个|选这个", content):
+        if re.search(r"第[一二三四五1-5](?:个|双|款|家|项)?|就这个|选这个", content):
             self.selection_made = True
         if any(marker in content for marker in _PAY_MARKERS):
             self.authorization.pay_authorized = True
@@ -174,16 +172,6 @@ class TaskRuntime:
                 self.phase = RuntimePhase.DONE
         else:
             self._advance_from_observation()
-        # A recommendation-only task may legitimately become a transaction
-        # after the user selects a currently visible candidate. Reopen the
-        # terminal state instead of repeating the recommendation forever.
-        if self.phase == RuntimePhase.DONE and not self.write_succeeded:
-            if self.selection_made and self.authorization.create_authorized:
-                self.phase = (
-                    RuntimePhase.READY_TO_CREATE
-                    if self.execution_ready
-                    else RuntimePhase.SELECT
-                )
         self.record(
             "user",
             text=content,
@@ -271,27 +259,6 @@ class TaskRuntime:
         self.record(
             "candidates",
             count=count,
-            execution_ready=execution_ready,
-            phase=self.phase.value,
-        )
-
-    def select_candidate(self, candidate_id: str, *, execution_ready: bool) -> None:
-        """Record a user's concrete choice without replaying SEARCH state.
-
-        Candidate discovery and candidate selection are different events.  A
-        selection may advance SELECT to READY_TO_CREATE, but must never emit a
-        second candidate-observation event or reopen search policy.
-        """
-        self.selected_candidate_id = candidate_id
-        self.selection_made = True
-        self.execution_ready = execution_ready
-        if self.authorization.create_authorized and execution_ready:
-            self.phase = RuntimePhase.READY_TO_CREATE
-        else:
-            self.phase = RuntimePhase.SELECT
-        self.record(
-            "selection",
-            candidate_id=candidate_id,
             execution_ready=execution_ready,
             phase=self.phase.value,
         )

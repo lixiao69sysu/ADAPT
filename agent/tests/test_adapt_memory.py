@@ -296,7 +296,7 @@ class TestDimensionExtraction:
     """v16a: temperature + topping dimensions must lift to taste_preference."""
 
     def test_iced_dimension_from_product_name(self):
-        """Chilled fruit names should project a reusable temperature dimension."""
+        """B048564 果切 case: 冰镇小番茄/冰镇荔枝 -> 冰镇 dimension."""
         m = ADAPTMemory(language="chinese")
         m.update([mock_interaction("2026-02-07", "order", {
             "tags": ["冰镇水果"],
@@ -309,7 +309,7 @@ class TestDimensionExtraction:
         assert "冰镇" in out
 
     def test_topping_and_temp_from_tags_and_name(self):
-        """Drink tags and variants should project topping and temperature."""
+        """B865629 奶茶 case: tags [奶茶,布蕾,热] + 黑糖布蕾奶茶（热/三分糖） -> 布蕾+热饮."""
         m = ADAPTMemory(language="chinese")
         m.update([mock_interaction("2026-05-22", "order", {
             "merchant_name": "古茗（射洪经开区店）",
@@ -321,7 +321,7 @@ class TestDimensionExtraction:
         assert "热饮" in out
 
     def test_heitao_not_extracted(self):
-        """A flavor word in a product name must not become a global dimension.
+        """黑糖 must NOT become a dimension — it caused over-anchoring in B865629 sub5.
         The product name (常点商品) may still mention 黑糖, but the 口味/规格偏好
         dimension line must not list it."""
         m = ADAPTMemory(language="chinese")
@@ -337,7 +337,7 @@ class TestDimensionExtraction:
         )
 
     def test_iced_drink_dimension_from_paren(self):
-        """A cold drink variant should project a temperature dimension."""
+        """B865629 sub8: 布蕾奶茶（冰）-> 冰饮 dimension."""
         m = ADAPTMemory(language="chinese")
         m.update([mock_interaction("2026-06-01", "order", {
             "tags": ["奶茶", "布蕾", "冰"],
@@ -398,7 +398,7 @@ class TestDomainDetection:
     """v13 generalization fix: short OTA queries like '帮我订个酒店' previously
     returned domain=None (1 keyword < 3-count threshold) -> no domain gating ->
     cross-domain noise (狗咖/锦州喜来登) leaked into hotel-task hints, collapsing
-    Strong-marker detection must recover these without broad false positives."""
+    A891207. Strong-marker detection must recover these WITHOUT false positives."""
 
     def _dom(self, q):
         from agent.memory.retrieval import RetrievalScorer, RetrievalConfig

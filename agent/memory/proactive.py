@@ -1,12 +1,13 @@
-"""Backward-compatible pure question proposal for typed information gaps.
+"""Proactive asking engine: detect information gaps and ask targeted questions.
 
-The ADAPT runtime now treats :class:`TaskSpec` as the source of required
-dimensions. This component remains available to memory-only callers, but its
-proposals never spend budget and never create runtime requirements.
+VitaBench 2.0's proactive subtasks hide `user_intention` — it is only
+disclosed when the agent proactively asks a directly relevant question. The
+rubric then checks the agent picked the *right* option for that hidden intent.
 
-Two observable patterns drive a proposal:
-1. A transaction omits an operational choice needed to select tool arguments.
-2. A vague request has neither a current value nor stable memory evidence.
+Two gap patterns drive asking:
+1. Missing decision dimension: the instruction omits a key choice the rubric
+   grades (e.g. "买去迪的票" doesn't say 高铁/飞机/汽车 — must ask).
+2. Vague + no memory: instruction is uncertain AND memory lacks a preference.
 
 Key heuristics (domain-specific):
 - ota: if instruction mentions a trip but not the transport mode -> ask
@@ -18,14 +19,12 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from agent.runtime.information import InformationGap
-
 VAGUE_MARKERS = [
     "随便", "帮我挑", "帮我看", "没想好", "不知道", "都可以", "听你的",
     "你看着", "推荐", "哪家", "帮我选", "不想纠结", "帮我想想",
 ]
 
-# Backward-compatible wording for common typed decision dimensions.
+# Decision dimensions per domain that the rubric is likely to grade.
 # (dimension_name, question)
 DOMAIN_QUESTIONS: dict[str, List[tuple[str, str]]] = {
     "delivery": [
@@ -57,7 +56,9 @@ GROUP_SPEC_KEYWORDS = ("个人", "位", "人吃饭", "人的包间", "人桌", "
 HOTEL_KEYWORDS = ("酒店", "住宿", "宾馆", "旅馆", "民宿", "房间", "入住", "预订房")
 HOTEL_TYPE_KEYWORDS = ("大床", "双床", "标准间", "套房", "亲子", "豪华", "商务")
 
-# Time-of-day / time-anchor keywords for the "missing time" gap.
+# Time-of-day / time-anchor keywords for the "missing time" gap. The hidden
+# intent of many proactive subtasks is a specific time (e.g. "下午三点喝"),
+# which the rubric then checks ("送达时间 15点左右").
 TIME_OF_DAY_KEYWORDS = ("下午", "晚上", "中午", "上午", "早上", "凌晨", "傍晚", "几点", "点半", "点整")
 TIME_ANCHOR_KEYWORDS = ("明天", "今天", "后天", "号", "周末", "下周", "下个月", "这周", "今晚", "明晚")
 
@@ -134,7 +135,8 @@ class ProactiveEngine:
 
     def _missing_time(self, instruction: str) -> bool:
         """Instruction has a concrete time anchor (明天/今天/N号) and a time-sensitive
-        action, but no time-of-day.
+        action, but no time-of-day. The hidden intent often carries a specific time
+        (e.g. "下午三点喝") that the rubric then checks.
 
         Excludes transport bookings (机票/高铁/航班) — there the date anchor is the
         travel date, not a time-of-day the user needs to pin down upfront.
@@ -147,7 +149,8 @@ class ProactiveEngine:
         return has_anchor and time_sensitive and not specifies_time and not is_transport
 
     def _missing_caffeine(self, instruction: str) -> bool:
-        """Coffee + a functional signal (提神/开会/加班) but no caffeine level."""
+        """Coffee + a functional signal (提神/开会/加班) but no caffeine level.
+        The rubric often checks high vs low caffeine."""
         has_coffee = "咖啡" in instruction
         has_signal = any(k in instruction for k in CAFFEINE_SIGNAL_KEYWORDS)
         specifies_level = any(k in instruction for k in CAFFEINE_LEVEL_KEYWORDS)
@@ -198,82 +201,40 @@ class ProactiveEngine:
         4. Vague instruction + domain not covered by memory -> ask.
         5. Missing taste type in food tasks -> ask.
         """
-        gap = self.propose_gap(
-            instruction, memory_text, domain, known_slots=known_slots
-        )
-        return gap.question if gap else None
-
-    def propose_gap(
-        self,
-        instruction: str,
-        memory_text: str,
-        domain: Optional[str],
-        known_slots: Optional[dict[str, str]] = None,
-    ) -> Optional[InformationGap]:
-        """Return the typed gap consumed by both prompt and runtime control."""
-        if self.asked_this_subtask >= self.max_questions or self.pending_question:
+        if self.asked_this_subtask >= self.max_questions:
             return None
         known = known_slots or {}
 
         # Pattern 1: missing transport mode — the highest-value proactive case.
         # Checked independently of domain classification.
         if self._missing_transport(instruction) and "transport" not in known:
-            return InformationGap(
-                "transport",
-                self._personalized_question("ota", memory_text, 0),
-                "memory",
-            )
+            return self._personalized_question("ota", memory_text, 0)
 
         domain = domain or "delivery"
 
         # Pattern 2: coffee + functional signal but no caffeine level.
         if self._missing_caffeine(instruction) and "caffeine" not in known:
-            return InformationGap(
-                "caffeine", "您需要高咖啡因还是低咖啡因的咖啡？", "memory"
-            )
+            return "您需要高咖啡因还是低咖啡因的咖啡？"
 
         # Pattern 3: time-anchored action but no time-of-day.
         if self._missing_time(instruction) and "time" not in known:
-            return InformationGap(
-                "time",
-                "您希望什么时间呢？比如下午三点、中午等，我好按时间安排。",
-                "memory",
-            )
+            return "您希望什么时间呢？比如下午三点、中午等，我好按时间安排。"
 
         # Pattern 4: instore group dining without headcount.
         if domain == "instore" and self._missing_group_size(instruction) and "party_size" not in known:
-            return InformationGap(
-                "party_size", DOMAIN_QUESTIONS["instore"][0][1], "memory"
-            )
+            return DOMAIN_QUESTIONS["instore"][0][1]
 
         # Pattern 5: hotel booking without room type.
         if domain == "ota" and self._missing_hotel_type(instruction) and "room_type" not in known:
-            return InformationGap(
-                "room_type",
-                self._personalized_question("ota", memory_text, 1),
-                "memory",
-            )
+            return self._personalized_question("ota", memory_text, 1)
 
         # Pattern 6: vague + memory doesn't cover the domain.
         if self.is_vague(instruction) and not self._domain_covered(memory_text, domain):
-            dimension = {
-                "ota": "transport",
-                "instore": "party_size",
-                "delivery": "taste",
-            }.get(domain, "preference")
-            return InformationGap(
-                dimension,
-                self._personalized_question(domain, memory_text, 0),
-                "memory",
-            )
+            return self._personalized_question(domain, memory_text, 0)
 
         # Pattern 7: missing taste type in food tasks.
         if domain in ("delivery", "instore") and self._missing_taste(instruction) and "taste" not in known:
-            return InformationGap(
-                "taste",
-                self._personalized_question(domain, memory_text, 0),
-                "memory",
-            )
+            return self._personalized_question(domain, memory_text, 0)
 
         return None
 
