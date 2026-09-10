@@ -96,6 +96,7 @@ class ADAPTAgent(PersonalizationAgent):
             {"user_id": str(self.user_profile.get("user_id", ""))}
         )
         self._replan_limit = 2
+        self._recommendation_delivered = False
 
     def set_current_instruction(self, instruction: str):
         previous = self._current_instruction
@@ -104,6 +105,7 @@ class ADAPTAgent(PersonalizationAgent):
                 self._finalize_visible_trajectory()
             self.ledger.reset()
             self.tool_errors.reset()
+            self._recommendation_delivered = False
             self.memory.begin_subtask(instruction)
             self.task_spec = TaskSpec.compile(instruction)
             self.task_spec.resolved_slots.update(
@@ -624,6 +626,24 @@ class ADAPTAgent(PersonalizationAgent):
                         f"{call.name} {call.arguments}",
                         "After two identical searches, decide from the Candidate Ledger or ask one focused question.",
                     )
+                budget_reason = self.ledger.search_budget_rejection(
+                    call.name, execution_ready=self.runtime.execution_ready
+                )
+                if budget_reason:
+                    problems.append(budget_reason)
+                    self.debug.emit(
+                        "search_budget_blocked",
+                        tool=call.name,
+                        reason=budget_reason,
+                        execution_ready=self.runtime.execution_ready,
+                    )
+                    self._record_lesson(
+                        "search_after_sufficient"
+                        if self.runtime.execution_ready
+                        else "search_family_budget",
+                        f"{call.name} {call.arguments}",
+                        "When the ledger already holds a compliant candidate, select and act instead of searching again.",
+                    )
             if self.enable_candidate_validation:
                 problems.extend(
                     self.ledger.validate_write(
@@ -863,10 +883,16 @@ class ADAPTAgent(PersonalizationAgent):
         This prevents keyword-changing search loops and trailing confirmation
         questions, while ensuring every recommended name came from the current
         subtask's environment results.
+
+        Emitted at most once per subtask: repeating an identical recommendation
+        cannot make progress, and a repeated framework message livelocks the
+        conversation until max_steps (E-032).
         """
         if self.task_spec.action != "recommend":
             return None
         if self.runtime.phase != RuntimePhase.SELECT:
+            return None
+        if self._recommendation_delivered:
             return None
         from agent.runtime.ranking import CandidateRanker
 
@@ -895,6 +921,7 @@ class ADAPTAgent(PersonalizationAgent):
             suffix = f"（{'，'.join(details)}）" if details else ""
             lines.append(f"{index}. {candidate.name}{suffix}")
         lines.append("首选为第 1 项，以上名称均来自当前实际候选结果。")
+        self._recommendation_delivered = True
         return AssistantMessage(role="assistant", content="\n".join(lines))
 
     def _observe_assistant(self, assistant: AssistantMessage) -> None:

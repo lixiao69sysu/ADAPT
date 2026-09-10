@@ -53,6 +53,13 @@ _CREATE_MARKERS = (
     "第一双",
 )
 _PAY_MARKERS = ("支付", "付款", "帮我付", "直接付", "买票", "购票")
+# General completion-style purchase phrasings ("帮我团一张", "订个", "来一份").
+# A bare "帮我看看有没有团购券" must NOT authorize a write, so the pattern
+# requires the action verb to be followed by a quantity/unit.
+_CREATE_INTENT_RE = re.compile(
+    r"(?:帮我|给我|替我|麻烦)?(?:团|买|订|下|来)"
+    r"(?:一|两|二|三|\d+)?(?:张|个|份|单|杯|碗|套)"
+)
 _PAY_DECLINE_MARKERS = ("自己付", "不用付", "不要支付", "不需要支付")
 _REVISION_MARKERS = (
     "换个",
@@ -138,7 +145,9 @@ class TaskRuntime:
         self.last_user_answer = content[:240]
         if any(marker in content for marker in _DELEGATION_MARKERS):
             self.authorization.choice_delegated = True
-        if any(marker in content for marker in _CREATE_MARKERS):
+        if any(marker in content for marker in _CREATE_MARKERS) or _CREATE_INTENT_RE.search(
+            content
+        ):
             self.authorization.create_authorized = True
         if re.search(r"第[一二三四五1-5](?:个|双|款|家|项)?|就这个|选这个", content):
             self.selection_made = True

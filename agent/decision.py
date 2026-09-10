@@ -722,13 +722,22 @@ class Candidate:
 class CandidateLedger:
     """Typed, per-subtask observations and semantic search budgets."""
 
-    def __init__(self, max_searches_per_family: int = 2) -> None:
+    def __init__(
+        self,
+        max_searches_per_family: int = 2,
+        max_family_searches: int = 4,
+    ) -> None:
         self.candidates: dict[str, Candidate] = {}
         self.search_counts: dict[str, int] = {}
         self.search_family_counts: dict[str, int] = {}
         self.enrichment_read_counts: dict[str, int] = {}
         self.pending_payment_ids: set[str] = set()
         self.max_searches_per_family = max_searches_per_family
+        # Per-subtask cap across *distinct* queries inside one tool family.
+        # Identical signatures are already capped by max_searches_per_family;
+        # this bounds keyword-variant thrashing (E-031: never-solved subtasks
+        # issue 2.8x the searches of always-solved ones).
+        self.max_family_searches = max_family_searches
         self.require_max_preference_coverage = False
         self._turn = 0
 
@@ -852,6 +861,41 @@ class CandidateLedger:
         # Arguments are not known while building the tool list. Keep the search
         # tool available and enforce the normalized signature in preflight.
         return True
+
+    def search_budget_rejection(
+        self, tool_name: str, *, execution_ready: bool
+    ) -> str | None:
+        """Deterministic gate for a proposed search call in this subtask.
+
+        Two general rules, both structural (no user, task or candidate
+        specifics):
+
+        1. Distinct-query budget per tool family - stops keyword-variant
+           thrashing inside one family (identical signatures are already
+           capped by ``max_searches_per_family``).
+        2. Sufficiency stop - once the ledger already holds a compliant
+           candidate that CREATE could use, searching again cannot improve the
+           outcome of this subtask; the agent must select and act instead.
+
+        Returns a rejection reason, or ``None`` when the search is allowed.
+        Callers must register the search attempt before calling this so that
+        counts include the current proposal, matching the signature budget.
+        """
+        family = self.search_family(tool_name)
+        family_count = self.search_family_counts.get(family, 0)
+        if family_count > self.max_family_searches:
+            return (
+                f"{family} search budget exhausted after "
+                f"{family_count - 1} distinct attempts in this subtask; "
+                "work with the candidates already in the ledger"
+            )
+        if execution_ready and self.candidates:
+            return (
+                "the candidate ledger already contains a compliant candidate "
+                "for this subtask; do not search again - select it and proceed "
+                "to the create/pay action"
+            )
+        return None
 
     def selected_candidates(self, arguments: dict[str, Any]) -> list[Candidate]:
         selected: list[Candidate] = []
