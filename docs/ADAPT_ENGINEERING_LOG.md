@@ -449,14 +449,14 @@
 ## E-034：下单措辞未覆盖，把"帮我定张车票"编译成推荐任务
 
 - **日期**：2026-09-10
-- **状态**：PARTIAL
+- **状态**：VERIFIED
 - **通用性判定**：`GENERAL-EMPIRICAL`。语料来自可观察的用户指令与框架事件，不含任何评测标注。
 - **难点**：同一句下单指令，规范层判定为"推荐"、运行时层也没有授权写入，于是框架直接以"推荐完成"结束该子任务；用户随后再次表达成交意愿时，框架回复"操作已成功完成。"，而整个子任务**没有任何写工具调用**。
 - **证据**：`data/simulations/smoke_fix2.jsonl`：该子任务仅有 `read`/`search` 类 `tool_proposal`，`recommendation_finalized` 后 phase=done，随后一次 `runtime_completed`。可观察指令为"周六要去绵阳找朋友，帮我定张车票"。
 - **根因**：规范层（`TaskSpec.compile` 的 commit 关键词表）与运行时层（`_CREATE_MARKERS` + `_CREATE_INTENT_RE`）是两张独立的字面量表，都没有覆盖"定＋量词＋名词"等常见说法，两者逐渐漂移。
 - **有效方案**：新增 `agent/intent.py` 作为唯一词表：`TRANSACTION_MARKERS`（明示交易短语）与 `COMPLETION_INTENT_RE`（动词＋量词/单位/名词）。三层口径统一由它派生。为避免"订单状态"这类复合名词误判，纯单位不足以成立，必须是 量词＋单位／单位＋名词／名词 三种形态之一；"就选第一个""推荐一个采摘园"明确不匹配。
 - **尝试过但无效的方案**：只在 `TaskRuntime` 里继续加关键词——规范层仍是 recommend，框架照样会抢先以推荐结束。
-- **验证**：`agent/tests/test_order_intent.py` 20 个正负例；全量 268 单测通过。smoke 复跑待确认（见"后续风险"）。
+- **验证**：`agent/tests/test_order_intent.py` 20 个正负例；全量 277 单测通过。smoke 复跑确认：同一子任务由"无写操作 + 框架回复已成功完成"变为 `train_ticket_search` → `get_ota_train_info` → `create_train_order`（订单落库，未付款），且不再出现虚假完成语。机制层达标；**具体车次是否正确属于候选质量议题，不在本条目内**。
 - **附带修正**：未真正写入成功时不再回复"操作已成功完成。"；DONE 状态下收到新的成交请求或候选认可时重新进入 SEARCH（避免框架终态吞掉后续下单）。
 - **适用边界**：词表只做"是否要求执行交易"的二分类，不判断具体商品；量词表是封闭集合，罕见说法仍会漏判，需要靠 trace 继续扩充。
 - **后续风险/下一步**：需要在 smoke 中确认该子任务确实进入 CREATE 分支；同时评估"定／订"扩表是否引入误授权（负例测试已覆盖常见信息型请求）。
@@ -465,14 +465,14 @@
 ## E-035：execution_ready 只看"任一 CREATE 可用"，模型用记忆里的 product_id 下单
 
 - **日期**：2026-09-10
-- **状态**：PARTIAL
+- **状态**：VERIFIED
 - **通用性判定**：`GENERAL-MECHANISM`（按工具 schema 的必需实体类型定义，不涉及具体用户/任务/候选）。
 - **难点**：商家搜索之后，模型直接用一个**来自长期记忆、本次未由任何工具返回**的 `product_id` 去下单，连续 3 次被确定性校验拒绝，随后以终局拒绝结束；整个子任务没有发生一次商品级搜索。
 - **证据**：`data/simulations/smoke_fix2.jsonl` 中 3 次 `preflight_rejected`，内容为"`product_id=… was not returned by a tool in this subtask`"；同子任务的 `tool_proposal` 只有商家搜索。
 - **根因**：三层叠加。(1) `ToolRegistry.execution_ready` 的语义是"存在某个 CREATE 工具、其必需 ID 实体都已观察"——到店域里 `instore_reservation` 只需要 `shop_id`，于是商品完全没观察也会判定 ready；(2) `READY_TO_CREATE` 把**所有** CREATE 工具都暴露给模型；(3) 没有任何机制去补一次缺失实体类型的搜索。
 - **有效方案**：(1) 新增 `create_gaps`／`usable_create_tools`，按**每个** CREATE 工具计算缺失实体类型（`room/ticket/seat` 归一为 `product`）；(2) `READY_TO_CREATE` 只暴露必需实体齐备的 CREATE 工具，缺失实体的工具保持隐藏（校验器仍是最后一道闸）；(3) 框架新增一次有界的"缺失实体搜索"：仅当任务确实指向商品级对象（可观察词表）且域内存在名字包含该实体类型的搜索工具时触发，关键词只取可观察来源——当前指令的 MUST 原子与自己上一次搜索用过的 keywords，每个子任务每个搜索工具最多一次，并照常计入候选级搜索预算。
 - **尝试过但无效的方案**：第一版只判断"存在缺失实体"就发起搜索，没有要求"该 CREATE 的其它必需实体已观察"。结果在 ota 子任务里，任何搜索都还没发生时框架就替模型去调用 `hotel_search_recommand`／`attractions_search_recommend` 等（参数不全，全部报 `unexpected keyword argument`／`missing required argument`），连续 9 次把搜索预算烧光，原本能正常下单的酒店子任务直接崩掉。修正后收紧为三条同时成立：ledger 已有候选、该 CREATE 的**其它**必需实体全部已观察、缺失实体恰好只剩一种；并在发出前用 `validate_required` 自检参数，避免框架自己制造无效调用。
-- **验证**：`agent/tests/test_entity_gap_search.py` 11 个单测（缺实体、按工具就绪、READY_TO_CREATE 可见性、关键词来源、只触发一次、未授权不触发、空 ledger 不触发、缺失多种实体不触发、参数不全不触发）。
+- **验证**：`agent/tests/test_entity_gap_search.py` 11 个单测（缺实体、按工具就绪、READY_TO_CREATE 可见性、关键词来源、只触发一次、未授权不触发、空 ledger 不触发、缺失多种实体不触发、参数不全不触发）。smoke 复跑确认：`entity_gap_search` 事件恰好触发一次（`missing=["product"]`），随后模型用**本次工具返回的** product id 成功下单，不再出现"product_id 未由工具返回"的拒绝。
 - **适用边界**：仅当域内存在"名称包含缺失实体类型"的搜索工具时才触发（delivery/instore 有商品级搜索；ota 酒店/机票没有，仍走既有的父候选展开路径）。只做一次，不会变成新的搜索 thrash。
 - **后续风险/下一步**：需要在 smoke 中确认商品搜索返回后能进入真实写操作，并观察是否出现"该搜索反而拉入无关商品"的副作用。
 - **能力抽象**：execution / bounded exploration。
@@ -480,13 +480,13 @@
 ## E-036：SELECT 阶段认可候选后，唯一的合法动作（确认执行）被 gate 拒绝
 
 - **日期**：2026-09-10
-- **状态**：PARTIAL
+- **状态**：VERIFIED
 - **通用性判定**：`GENERAL-MECHANISM`（由阶段与授权状态决定，不涉及具体用户/任务）。
 - **难点**：框架已经给出推荐列表，用户认可其中一项；此时运行时停在 SELECT，写入未获授权，模型想确认"是否需要我帮你预订？"却被 question gate 以"questions are not allowed in phase select"连续拒绝 3 次，最后输出终局拒绝文本。用户看到的是"推荐之后莫名其妙拒绝服务"。
 - **证据**：`data/simulations/smoke_fix2.jsonl` 中 3 次 `preflight_rejected`（`question gate: questions are not allowed in phase select`），随后一条 `现有候选无法满足硬约束，我没有执行下单。`
 - **根因**：question gate 只在"尚未选择"时允许候选选择类提问；一旦 `selection_made` 为真且没有成交授权，gate 落到底部"该阶段禁止提问"，而该阶段又不暴露任何 CREATE 工具——模型没有任何合法动作，终局拒绝成为唯一出口。
 - **有效方案**：新增一个受预算约束的提问维度 `execution_confirmation`：当 `phase == SELECT` 且 `selection_made` 且未授权写入时，允许**一次**执行确认提问；该提问通过 `QuestionGate.commit` 置位 `execution_confirmation_pending`，下一轮用户回复只要不含拒绝词就视为成交授权（`create_authorized = True`），随后由 E-033 的提升条件进入 READY_TO_CREATE。
-- **验证**：单测 `test_execution_confirmation_is_allowed_once_after_endorsement`、`test_confirmation_answer_authorizes_execution_and_promotes`、`test_declining_the_confirmation_does_not_authorize_execution`、`test_finalized_recommendation_reopens_for_a_follow_up_order`。
+- **验证**：`agent/tests/test_execution_confirmation_is_allowed_once_after_endorsement`、`test_confirmation_answer_authorizes_execution_and_promotes`、`test_declining_the_confirmation_does_not_authorize_execution`、`test_finalized_recommendation_reopens_for_a_follow_up_order`。smoke 复跑确认：推荐 → 用户认可 → 框架提一次"要不要预约" → 用户答"周六下午吧，你看着办" → `instore_reservation` 落库并输出完成语，全程无终局拒绝。
 - **尝试过但无效的方案**：只放开提问、不把回复接成授权。smoke 中模型确实问了"你想预约周六还是周日"，用户回答"周六下午吧，你看着办"之后，`choice_delegated` 分支又把提问全部拒掉，而 SELECT 阶段仍不暴露 CREATE —— 仍然以终局拒绝结束。提问与授权必须成对接地。
 - **适用边界**：只在"用户明确认可了某个候选、但尚未要求交易"时生效；已授权成交或用户委托选择时，既有分支仍然禁止重复确认。拒绝词表要短且明确（不用/不要/算了/取消…），避免把"周六下午"这类回答误判为拒绝。
 - **后续风险/下一步**：确认它不会演变成"每次都要多问一轮"；若确实多问，应在已有成交授权时保持沉默。
@@ -507,6 +507,23 @@
 - **适用边界**：只对 evaluator 的输出解析生效，不改变评分标准；若 evaluator 返回的确实是无法解析的内容，仍会如实记录为 `evaluation_failed` 而不是伪造 reward。
 - **后续风险/下一步**：确认在线运行中不再出现 `evaluation_failed`；同时保留 `--no-normalize-extracter` 以便必要时复现原始错误。
 - **能力抽象**：evaluation validity。
+
+---
+
+## 本轮开发 smoke 记录（2026-09-10，4 个 instore/ota 子任务）
+
+固定同样 4 个子任务（E941775 酒店 + 采摘园推荐、P722245 动车票 + 团购券），
+逐轮加入确定性控制后观察**可观察行为**的变化。reward 仍为 0，因为这些单元
+失分点是"选哪个候选"而非"有没有动作"；下表的意义在于把**流程性失败**逐条消掉。
+
+| 轮次 | 加入的机制 | E941775 酒店 | E941775 采摘园推荐 | P722245 动车票 | P722245 团购券 |
+| --- | --- | --- | --- | --- | --- |
+| fix2 | E-032/E-033 | 建单成功、可评分 | 推荐后认可 → 3 次提问被拒 → 终局拒绝 | 编译成推荐 + 虚假完成语，无写操作 | 用记忆里的 product_id → 3 次拒绝 → 终局拒绝 |
+| fix4 | E-034/E-035/E-036 | 建单成功，但 evaluator 抛错 → `evaluation_failed` | 允许一次确认提问，第二轮仍终局拒绝 | **真实 `create_train_order` 落库** | **`entity_gap_search` 补商品搜索 → 用真实 product_id 下单成功** |
+| fix5 | 确认回复接成授权 + E-037 | 建单成功、正常评分 | **确认 → `instore_reservation` 落库**、无拒绝 | 同上（正常评分） | 同上（正常评分） |
+
+结论：4 个子任务的**流程性失败**（无动作、活锁、终局拒绝、虚假完成、评估崩溃）
+在本轮全部消除；剩余 0.0 来自候选质量（车次类型、商家距离/评分、期望的中间动作）。
 
 ---
 
