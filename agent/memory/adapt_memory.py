@@ -801,6 +801,23 @@ class ADAPTMemory(BaseMemory):
         """
         return self.propose_question(instruction) or ""
 
+    @is_tool(ToolType.READ)
+    def query_preference_memory(self, query: str) -> str:
+        """根据具体问题查询用户偏好记忆，返回与该问题相关的偏好条目。
+
+        在挑选候选、生成搜索关键词或说明推荐理由之前调用，
+        可以得到该用户在此情境下的偏好证据，而不是仅依赖固定卡片。
+
+        Args:
+            query: 当前情境或需求，例如"垃圾桶 家居用品 购买偏好"。
+        """
+        return self.read(query)
+
+    @is_tool(ToolType.READ)
+    def read_preference_memory(self) -> str:
+        """读取用户偏好记忆的整体视图（包含任务相关的偏好与待确认问题）。"""
+        return self.read()
+
     @is_tool(ToolType.WRITE)
     def record_preference_answer(self, answer: str, question: str = "") -> str:
         """记录用户对主动询问的回答，供该用户后续子任务使用。

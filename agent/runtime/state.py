@@ -211,6 +211,11 @@ class TaskRuntime:
         # back into SEARCH: that phase forbids the create tool and the model has
         # no legal action left (E-033 livelock). Promote immediately instead of
         # waiting for another search round.
+        #
+        # Once a write has succeeded in this subtask the promotion must NOT
+        # re-arm: the trace showed a completion-style task recreating the same
+        # order on every user turn (14 duplicate orders), because each turn
+        # pushed the runtime back into READY_TO_CREATE (E-042).
         if (
             self.authorization.create_authorized
             and (
@@ -221,6 +226,7 @@ class TaskRuntime:
             )
             and self.execution_ready
             and self.candidates_seen
+            and not self.write_succeeded
         ):
             self.phase = RuntimePhase.READY_TO_CREATE
         self.record(
@@ -306,7 +312,7 @@ class TaskRuntime:
                 or self.authorization.candidate_choice_authorized
                 or self.selection_made
                 or self.force_decision_after_candidates
-            ) and self.authorization.create_authorized and execution_ready:
+            ) and self.authorization.create_authorized and execution_ready and not self.write_succeeded:
                 self.phase = RuntimePhase.READY_TO_CREATE
         self.record(
             "candidates",
@@ -332,7 +338,10 @@ class TaskRuntime:
             self.phase = (
                 RuntimePhase.READY_TO_PAY if ("unpaid" in text) else RuntimePhase.DONE
             )
-            self.payment_question_sent = False
+            # Do NOT reset payment_question_sent here: a successful CREATE used
+            # to re-arm the framework payment question every turn, which looped
+            # the conversation and re-created the same order (E-042). One
+            # payment question per subtask is enough.
         elif tool_name.startswith("pay_") and (
             "successful" in text.lower() or "成功" in text
         ):

@@ -602,6 +602,26 @@
 
 ---
 
+## E-042：ADAPT 相对 stock 净负，根因是控制层"替代"了模型的能力（自伤性退化）
+
+- **日期**：2026-09-10
+- **状态**：OPEN（修复已实现并单测通过，A/B 验证进行中）
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自同 8 用户、同模型、同端点下的**配对轨迹对比**（ADAPT 1 trial vs stock 4 trial 均值），只用可观察的工具调用/消息/终止原因，不读 rubric、不用 reward 作学习信号。
+- **难点**：本轮修复了 E-032…E-041 十类"必然失败"之后，ADAPT 在已完成的 3 个用户上仍显著落后：**27 个单元 ADAPT 0.1111 vs stock 0.2870（同单元）**，形态是"stock 偶尔做对、ADAPT 从不做对"（LOST 7 : GAINED 1）。用户级：E057330 1/13（stock 3.75/13）、E941775 2/14（stock 4/14）、J365414 1/3 起（stock 4.5/11）。
+- **证据**（`data/simulations/adapt_avg1_8u.json` vs `stock_avg4_8u.json`，同一批用户）：
+  1. **重复下单**：某单元把同一订单创建 **14 次**；框架 `payment_question` 事件 58 次/27 单元。机制：CREATE 成功 → `observe_tool_result` 重置 `payment_question_sent` → 框架每轮再问支付 → 用户回一句话 → `observe_user` 回落到 SEARCH → **E-033 的提升条件再次成立** → READY_TO_CREATE → 模型再 CREATE。E-033 缺少"写入成功后不得再次提升"的不变量。
+  2. **记忆查询能力被移除**：stock 在同批单元调用 `query_preference_memory` **30 次**（常作为第一步，用来生成搜索词与推荐理由），ADAPT **0 次**——`ToolRegistry` 把 MEMORY 角色工具视为框架内部而不暴露。
+  3. **探索被压死**：ADAPT 每单元搜索 **1.00 次**（最大 2），stock **3.11 次**（最大 50）；`search_budget_rejection` 的"存在合规候选即停"在第一次搜索后就阻断后续关键词族探索。
+  4. **"先说话再动手"被短路**：stock 在 108 个单元中有 **9 个零写操作拿满分**（推荐+理由本身就满足评测）；ADAPT 在 `action=commit` 任务里直接搜索→下单，偏好推理从未出现在对话中，而框架的"推荐定稿"只在 `action=recommend` 时触发且仅列出店名。
+- **根因**：控制层的设计取向是"框架替模型决策"（充分性停搜、框架推荐定稿、按阶段裁剪工具、隐藏记忆工具），在 27B 模型上净负：它用规则替代了模型本来就具备、且在 stock 下被证明有效的能力（按需查记忆、多关键词族探索、先解释后执行）。
+- **有效方案（"护栏而非治理"）**：(1) `observe_user`/`observe_candidates` 的提升条件加入 `not write_succeeded`；(2) `observe_tool_result` 不再重置支付追问标记，且 `_preflight` 用 `attempt_signature` 拒绝**完全相同的已成功写入**；(3) 恢复 `query_preference_memory`/`read_preference_memory` 为可被模型调用的 READ 工具（ADAPTMemory 新增对应 `@is_tool`）；(4) 探索额度从"存在候选即停"改为"族内已用 >3 次不同查询才停"，族预算 2→3、族上限 4→6；(5) 框架推荐降级为兜底（模型在 SELECT 先有 2 轮机会），并在推荐里附上命中的偏好证据；READY_TO_CREATE 指令要求"先用一句话说明选了什么、满足了哪条偏好，再下单"。
+- **验证**：`agent/tests/test_no_self_inflicted_loops.py` 7 个单测（不再提升、支付仅一次、重复写入被拒、不同写入仍允许、记忆读工具可见而记忆写工具仍内部、记忆查询返回有界读取、推荐兜底延后）；全量 327 单测通过。A/B（E057330 1 trial，对照其上一版 1/13 与 stock 3.75/13）进行中。
+- **适用边界**：这些改动只撤销"框架替代模型"的部分，保留全部写前校验、实体义务、日期算术与完整性护栏；探索额度仍受族预算约束，不会回到 E-031 的搜索 thrash。
+- **后续风险/下一步**：A/B 若仍低于 stock，则按"护栏化"继续下探（例如把阶段裁剪改为全工具暴露+写前校验），并按 P1/P2 的顺序做带开关的消融。
+- **能力抽象**：preference utilization / execution / long-horizon consistency。
+
+---
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

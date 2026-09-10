@@ -78,10 +78,15 @@ class ToolRegistry:
             role = ToolRole.CANCEL
         elif "modify" in name or "change" in name:
             role = ToolRole.MODIFY
+        elif name in {"query_preference_memory", "read_preference_memory"}:
+            # Memory *reads* stay available to the policy model. The stock agent
+            # has them and uses them to ground a choice before searching; hiding
+            # them (as this registry did) removed an observable capability and
+            # left the model with only the fixed Decision Card (E-042).
+            role = ToolRole.READ
         elif name in {
             "suggest_question_tool",
             "record_preference_answer",
-            "query_preference_memory",
         }:
             role = ToolRole.MEMORY
         elif is_search_tool(name):

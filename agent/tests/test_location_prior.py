@@ -228,6 +228,7 @@ def build_recommender(ledger: CandidateLedger, card: DecisionCard):
     agent.runtime = TaskRuntime.begin(agent.task_spec)
     agent.runtime.phase = RuntimePhase.SELECT
     agent._recommendation_delivered = False
+    agent._select_turns = 2
     agent.home_tokens = home_tokens(PROFILE)
     agent.debug = _Debug()
     return agent

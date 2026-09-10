@@ -718,12 +718,17 @@ class CandidateLedger:
 
     def __init__(
         self,
-        max_searches_per_family: int = 2,
-        max_family_searches: int = 4,
+        max_searches_per_family: int = 3,
+        max_family_searches: int = 6,
     ) -> None:
         self.candidates: dict[str, Candidate] = {}
         self.search_counts: dict[str, int] = {}
         self.search_family_counts: dict[str, int] = {}
+        # Distinct queries a family may spend before the sufficiency stop takes
+        # over. Exploration is a capability, not waste: the stock agent averages
+        # 3.1 searches per subtask, and units it solves use several keyword
+        # families before choosing (E-042).
+        self.exploration_allowance = 3
         # Observable query terms of the most recent search per family. The
         # framework reuses these when it must fill an unobserved entity kind
         # (E-035) instead of inventing new keywords.
@@ -877,8 +882,16 @@ class CandidateLedger:
            thrashing inside one family (identical signatures are already
            capped by ``max_searches_per_family``).
         2. Sufficiency stop - once the ledger already holds a compliant
-           candidate that CREATE could use, searching again cannot improve the
-           outcome of this subtask; the agent must select and act instead.
+           candidate that CREATE could use *and* the agent has already explored
+           the family, searching again cannot improve the outcome of this
+           subtask; the agent must select and act instead.
+
+        The sufficiency stop deliberately does **not** fire on the first
+        candidate set. Trace comparison against the stock agent showed that
+        firing it immediately cost the model the multi-keyword exploration it
+        uses to ground a choice (ADAPT searched 1.0 times per subtask against
+        stock's 3.1, and lost units where stock searched several keyword
+        families before choosing) (E-042).
 
         Returns a rejection reason, or ``None`` when the search is allowed.
         Callers must register the search attempt before calling this so that
@@ -892,7 +905,11 @@ class CandidateLedger:
                 f"{family_count - 1} distinct attempts in this subtask; "
                 "work with the candidates already in the ledger"
             )
-        if execution_ready and self.candidates:
+        if (
+            execution_ready
+            and self.candidates
+            and family_count > self.exploration_allowance
+        ):
             return (
                 "the candidate ledger already contains a compliant candidate "
                 "for this subtask; do not search again - select it and proceed "

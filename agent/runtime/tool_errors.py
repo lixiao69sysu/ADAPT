@@ -33,6 +33,11 @@ def _signature(tool_name: str, arguments: dict[str, Any]) -> str:
     return f"{tool_name}:{payload}"
 
 
+def attempt_signature(tool_name: str, arguments: dict[str, Any]) -> str:
+    """Public wrapper so callers can match a proposal against past attempts."""
+    return _signature(tool_name, arguments or {})
+
+
 def _error_class(content: str) -> str:
     text = (content or "").lower()
     if "longitude and latitude not found for address" in text:

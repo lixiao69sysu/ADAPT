@@ -58,10 +58,22 @@ def test_identical_queries_do_not_consume_the_distinct_query_budget():
     assert ledger.search_budget_rejection(PRODUCT_SEARCH, execution_ready=False) is None
 
 
-def test_sufficiency_stop_blocks_search_when_executable_candidate_exists():
+def test_sufficiency_stop_allows_exploration_before_it_applies():
+    """E-042: the stop must not fire on the first candidate set.
+
+    Trace comparison with the stock agent showed that stopping immediately cost
+    the model the multi-keyword exploration it uses to ground a choice.
+    """
     ledger = CandidateLedger()
     _observe_compliant_candidate(ledger)
-    ledger.register_search(PRODUCT_SEARCH, {"keywords": ["奶茶"]})
+    # Three distinct queries may still be spent while a compliant candidate
+    # already exists.
+    for keyword in ("奶茶", "乌龙", "果茶"):
+        ledger.register_search(PRODUCT_SEARCH, {"keywords": [keyword]})
+        assert (
+            ledger.search_budget_rejection(PRODUCT_SEARCH, execution_ready=True) is None
+        ), keyword
+    ledger.register_search(PRODUCT_SEARCH, {"keywords": ["轻乳茶"]})
     reason = ledger.search_budget_rejection(PRODUCT_SEARCH, execution_ready=True)
     assert reason is not None
     assert "compliant candidate" in reason

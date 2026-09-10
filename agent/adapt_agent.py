@@ -50,6 +50,7 @@ from agent.runtime.location import (
     location_rank,
 )
 from agent.runtime.schedule import parse_agent_time, resolve_relative_date
+from agent.runtime.tool_errors import attempt_signature
 
 _ADAPT_POLICY = """
 
@@ -110,6 +111,8 @@ class ADAPTAgent(PersonalizationAgent):
         self._recommendation_delivered = False
         self._gap_search_tool = ""
         self._date_grounded = False
+        self._succeeded_writes: set[str] = set()
+        self._select_turns = 0
 
     def _resolve_instruction_date(self, instruction: str) -> None:
         """Publish one grounded absolute date for a relative instruction.
@@ -178,6 +181,8 @@ class ADAPTAgent(PersonalizationAgent):
             self._recommendation_delivered = False
             self._gap_search_tool = ""
             self._date_grounded = False
+            self._succeeded_writes = set()
+            self._select_turns = 0
             self.memory.begin_subtask(instruction)
             self.task_spec = TaskSpec.compile(instruction)
             self.task_spec.resolved_slots.update(
@@ -356,6 +361,11 @@ class ADAPTAgent(PersonalizationAgent):
             state.messages.append(assistant)
             return assistant, state
 
+        if self.runtime.phase == RuntimePhase.SELECT:
+            # Count the model's own turns in SELECT so the framework
+            # recommendation stays a fallback rather than the first word.
+            self._select_turns += 1
+
         for attempt in range(self._replan_limit + 1):
             self._refresh_system_message(state)
             compact_messages(state.messages)
@@ -466,7 +476,11 @@ class ADAPTAgent(PersonalizationAgent):
             )
         action = (
             "Call exactly one exposed CREATE tool now using the best compliant "
-            f"Candidate Ledger IDs and all required arguments.{candidate_directive}"
+            "Candidate Ledger IDs and all required arguments. In the same message, "
+            "state in one short sentence which candidate you chose and which "
+            "observed preference of the user it satisfies - the user must be able "
+            "to see the choice before the order exists."
+            f"{candidate_directive}"
             if self.runtime.phase == RuntimePhase.READY_TO_CREATE
             else "Call the exposed PAY tool now using the pending observed order ID."
         )
@@ -523,6 +537,24 @@ class ADAPTAgent(PersonalizationAgent):
         self.decision_card.must.insert(0, value)
         self.decision_card.constraints.insert(0, constraint)
 
+    def _write_signature(self, tool_name: str, arguments) -> str:
+        """Signature of a write proposal, matching the tool-error ledger."""
+        return attempt_signature(tool_name, arguments or {})
+
+    def _record_succeeded_write(self, attempt, item: ToolMessage) -> None:
+        """Remember the exact write that already succeeded in this subtask.
+
+        The conversation looped a completion-style task into creating the same
+        order 14 times; the phase gate alone cannot see that the *arguments*
+        are identical, so the guard needs the signature of what already
+        happened (E-042).
+        """
+        if item.error or attempt is None:
+            return
+        if getattr(attempt, "role", None) != ToolRole.CREATE:
+            return
+        self._succeeded_writes.add(attempt.signature)
+
     def _refresh_system_message(self, state: LLMAgentState) -> None:
         content = self.system_prompt
         if state.system_messages:
@@ -545,6 +577,7 @@ class ADAPTAgent(PersonalizationAgent):
                 self.runtime.observe_tool_result(
                     item.name, item.content or "", item.error
                 )
+                self._record_succeeded_write(attempt, item)
                 self.debug.emit(
                     "tool_result",
                     tool=item.name,
@@ -666,6 +699,23 @@ class ADAPTAgent(PersonalizationAgent):
                     f"tool {call.name} is not allowed in phase {self.runtime.phase.value}"
                 )
                 continue
+            if self.tool_registry.role(call.name) == ToolRole.CREATE:
+                signature = self._write_signature(call.name, call.arguments)
+                if signature in getattr(self, "_succeeded_writes", ()):
+                    problems.append(
+                        "this exact order was already created in this subtask; "
+                        "do not recreate it - report the existing order or ask "
+                        "the user what to change"
+                    )
+                    self.debug.emit(
+                        "duplicate_write_blocked", tool=call.name, signature=signature
+                    )
+                    self._record_lesson(
+                        "duplicate_write",
+                        f"{call.name} {call.arguments}",
+                        "A write that already succeeded must not be repeated; continue with payment or ask what to change.",
+                    )
+                    continue
             problems.extend(
                 self.tool_registry.validate_required(call.name, call.arguments)
             )
@@ -1073,6 +1123,13 @@ class ADAPTAgent(PersonalizationAgent):
             return None
         if self._recommendation_delivered:
             return None
+        # Give the policy model its own turn first: the stock agent's advantage
+        # on recommendation subtasks is the *reasoning* it puts in front of the
+        # user (naming the preference it satisfied), which this fallback cannot
+        # produce. The fallback only steps in when the model has had two turns
+        # in SELECT without settling the subtask (E-042).
+        if getattr(self, "_select_turns", 0) < 2:
+            return None
         from agent.runtime.ranking import CandidateRanker
 
         ranker = CandidateRanker()
@@ -1083,6 +1140,7 @@ class ADAPTAgent(PersonalizationAgent):
         ]
         evidence_counts = ranker.preference_match_counts(ranked, self.decision_card)
         decisive_counts = ranker.decisive_preference_scores(ranked, self.decision_card)
+        alignment = ranker.preference_alignment(ranked, self.decision_card)
         best_decisive = max(decisive_counts.values(), default=0.0)
         if best_decisive > 0:
             shortlist = [
@@ -1123,8 +1181,12 @@ class ADAPTAgent(PersonalizationAgent):
                 details.append(f"¥{candidate.price:g}")
             if candidate.inventory is not None:
                 details.append(f"库存{candidate.inventory}")
+            matched = [
+                atom.value for atom in alignment.matches(candidate) if atom.value
+            ][:2]
             suffix = f"（{'，'.join(details)}）" if details else ""
-            lines.append(f"{index}. {candidate.name}{suffix}")
+            reason = f"｜符合：{'、'.join(matched)}" if matched else ""
+            lines.append(f"{index}. {candidate.name}{suffix}{reason}")
         lines.append("首选为第 1 项，以上名称均来自当前实际候选结果。")
         self._recommendation_delivered = True
         return AssistantMessage(role="assistant", content="\n".join(lines))
