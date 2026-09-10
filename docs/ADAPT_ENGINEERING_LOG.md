@@ -524,12 +524,15 @@
 | fix5 | 确认回复接成授权 + E-037 | 建单成功、正常评分 | **确认 → `instore_reservation` 落库**、无拒绝 | 同上（正常评分） | 同上（正常评分） |
 | fix9 | E-038 距离/评分先验 | 建单成功 | 推荐 + 预约落库（商家仍非期望） | 下单 G2054（车次类型错） | 下对目标商品（仍 0 分） |
 | fix10 | E-039 相对日期 | 建单成功（2025-01-18） | 预约 2025-11-08 落库 | 下单 2024-05-25（日期正确） | 先确认 2024-12-25 再下单 |
+| fix11 | E-040 订单品类标签 | — | — | 选到 D 车次，但车次详情里二等座售罄 → 退到一等座 | — |
+| fix12/13 | E-041 票务词表 | 建单成功 | 推荐 + 预约落库 | **`D1835 / 二等座 / 2024-05-25 / 数量1` → reward 1.0** | 下对目标商品（仍 0 分） |
 
 最终一轮（fix10）在**世界状态**层面的逐项对照（`states.new_states`，仅离线分析）：
 
 - 车票：订单为 `G2054 / 二等座 / 2024-05-25 / 成都→绵阳 / 数量 1` —— 日期、座位、起止、数量全部符合，**唯一失败项是"车次类型"**（应为动车 D）。
 - 团购券：订单为 `通络堂养生按摩(南湖西路店) I00021 + 全身经络舒缓按摩90分钟团购券 ¥188 × 1` —— **正是该子任务期望的商品**，且写作前已确认 2024-12-25 是工作日；剩余失败项与"以文本形式把选定的商家讲给用户"有关。
 - 酒店 / 采摘园：写入成功、日期正确，失败项在**商家选择**（哪家酒店、以及"离用户近、评分高"这一维度）。
+- 车票子任务在 fix12/fix13 两轮独立运行中稳定拿到 **1.0**，机制链可观察：词表修正让 `domain=ota, facet=train` → `hierarchical_enrichment count=3` 展开 3 个父车次 → 记忆里的"动车/二等座"接地后把 D 车次与二等座座位排到前面 → 写入 `D1835 / 二等座`。这是本轮第一个从"4/4 全错"变为"稳定通过"的单元。
 
 ---
 
@@ -565,6 +568,37 @@
 - **适用边界**：只做"相对→绝对"的确定性与一次确认，**不**包含"哪一天适合做什么"的业务判断（例如某类券是否只在工作日可用）；解析失败时保持原状，不猜测。
 - **后续风险/下一步**：需要 smoke 确认钩子确实在选品之前发出、且不会与模型自发的日期查询重复；若某域没有 `get_date_holiday_info` 则自动跳过。
 - **能力抽象**：proactiveness / execution grounding。
+
+---
+
+## E-040：订单历史里的"品类/等级"标签被丢弃，用户的乘车习惯对候选排序不可见
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-EMPIRICAL`。只用 agent 本来就能拿到的 `interactions`（订单行为记录）中的 `tags`；不读 evaluator、rubric、target，也不读基准刻意不提供给 agent 的字段（见下"边界"）。
+- **难点**：同一位用户的订单历史里明确写着 `tags: ["动车", "二等座"]`（商品名 `D2372 成都东-黄山北 二等座`），但候选里既有 `G…`（tags `['高铁',…]`）也有 `D…`（tags `['动车',…]`）时，框架看到的"偏好证据"完全相同，模型于是随手选了 G 车次。
+- **证据**：`data/simulations/adapt_smoke_fix10.json` 的世界状态里，该子任务订单为 `G2054 / 二等座 / 2024-05-25 / 成都→绵阳 / 数量 1`——日期、座位、起止、数量全部符合评测期望，**唯一不符的是车次类型**；而该用户的可观察行为记录中确实存在动车+二等座的订单标签。
+- **边界（重要）**：VitaBench 另有一份结构化档案（形如 `"出行方式倾向": ["动车"]`），但它**只在 `GroundtruthMemory` 基线下注入**，且 vendored 代码明确注释 `get_user_historical_behaviors removed — leaks ground-truth preference_memory to agent, bypassing memory module`。因此本条目**不**使用该字段：那等于直接读取被刻意保留的答案，会让 ADAPT 与 stock 的比较失去意义。这里只用 `interactions` 里人人可见的订单标签。
+- **根因**：`agent/memory/signals.py` 只把订单 `tags` 映射到两张手写白名单（`TASTE_DIMENSIONS`／`SERVICE_ATTRIBUTE_DIMENSIONS`，覆盖口味、温度、甜度、少量服务属性）。"动车/二等座/免费停车/景区附近"这类**品类与等级**标签不在白名单里，于是被整条丢弃，从不进入事实库。
+- **有效方案**：新增 `_extract_order_class_tags`：把订单 `tags` 中"短（2–8 字）、不是商家名（不重复 `merchant_name`）、非纯数字/营业时间"的标签提升为 `attribute_preference` 信号；下游仍由 `ground_facts_to_candidates` 把关——只有能落到**当前实际候选**字段上的事实才会进入 Decision Card，因此无关历史保持惰性。
+- **验证**：`agent/tests/test_order_class_signals.py` 8 个单测（标签提升、商家名不提升、数字/营业时间跳过、白名单不重复、仅对活跃候选接地、"二等座"在无座位候选时不接地、接地后排序把 D 车次排到 G 之前、事实库里保留该值）；全量 320 单测通过。smoke 复跑确认：同一子任务订单由 `G2054` 变为 `D1835 / 二等座 / 2024-05-25 / 数量 1`，**reward 由 0.0 变为 1.0**（`data/simulations/adapt_smoke_fix12.json`）。
+- **适用边界**：只提升订单标签这一层，不引入任何域词典；标签必须能被当前候选字段接住才生效，所以不会把"某次买过某店"变成跨域偏好。
+- **后续风险/下一步**：新标签原子是否会挤占 Decision Card 的 8 条/1200 字上限，需要在聚合运行后复查 `decision_card_refreshed` 的 must/avoid/prefer 计数。
+- **能力抽象**：preference extraction / utilization。
+
+## E-041：票务类词表缺失，车票请求被编译成 delivery/retail，父候选展开从不发生
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-INVARIANT`。只补词表（"车票/火车票/高铁票/动车票/民宿/客栈…"），不涉及任何用户、任务或候选标识。
+- **难点**：`周六要去绵阳找朋友，帮我定张车票` 被编译成 `domain=delivery, facet=retail`。框架的父候选有界展开（`_framework_enrichment`）按 facet 取工具映射，facet 不在映射里就整段跳过——于是整条轨迹只展开**一个**车次的座位，而那个车次的二等座恰好售罄，模型只能退到一等座，与用户"二等座"的历史偏好冲突。
+- **证据**：`data/simulations/smoke_fix11.jsonl` 的 `runtime_policy_applied` 事件显示 `domain="delivery", facet="retail"`，且整轮没有任何 `hierarchical_enrichment` 事件；同轮订单为 `D1783 / 一等座`，而该车次详情里 `二等座 quantity=0`。
+- **根因**：`_DOMAIN_MARKERS["ota"]` 与 `_FACET_MARKERS` 都只收"高铁/火车/动车/机票/酒店"等词，**没有收"车票"**这一最常用的说法；两者都缺失时回落到 delivery 默认值。
+- **有效方案**：把可观察的票务/住宿说法补进两张词表（ota 域：车票、火车票、高铁票、动车、航空、民宿、客栈、宾馆、度假村、出行；train facet：车票、火车票、高铁票、动车票、列车、车站；hotel facet：住宿、客栈；flight facet：航空）。词表补全后 `_framework_enrichment` 按既有预算展开 3 个父候选。
+- **验证**：`agent/tests/test_order_intent.py::test_ticket_vocabulary_compiles_to_the_right_domain` 覆盖 6 种说法；smoke 复跑（`data/simulations/smoke_fix12.json`）中 `runtime_policy_applied` 变为 `domain="ota", facet="train"`、`hierarchical_enrichment count=3`，订单为 `D1835 / 二等座`，**reward 1.0**。
+- **适用边界**：只影响规范编译的分类与框架展开预算的适用性；不改变任何写入校验规则。
+- **后续风险/下一步**：需要复查其它域是否也存在"常用说法缺词表"的同类问题（例如到综的"团券/搓背/养生"、delivery 的"闪购/跑腿"），可以用同样的可观察词表补齐方式处理。
+- **能力抽象**：execution grounding / long-horizon consistency。
 
 ---
 

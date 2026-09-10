@@ -17,6 +17,7 @@ timestamp). Different interaction types carry different information density:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
@@ -349,9 +350,59 @@ class SignalParser:
         # Generalize product specs / tags into taste dimensions (少糖/多冰/重口味…)
         signals.extend(self._extract_taste_dimensions(content, ts, importance))
         signals.extend(self._extract_service_attributes(content, ts, importance))
+        signals.extend(self._extract_order_class_tags(content, ts, importance))
 
         if not signals:
             signals.append(self._raw_signal(text, ts=ts, importance=importance, itype="order"))
+        return signals
+
+    def _extract_order_class_tags(self, content, ts, importance) -> List[Signal]:
+        """Lift the class of what was ordered, not only product identity.
+
+        VitaBench orders carry a short tag list describing the class of purchase
+        ("动车", "二等座", "免费停车", "景区附近"). The dimension whitelists above
+        cover taste and a few service attributes, so tags like the travel class
+        were dropped entirely: the user's own order history said they buy 动车
+        and 二等座 tickets, yet the candidate set offered no observable
+        difference between a D train and a G train (E-040).
+
+        Only short, non-merchant, non-numeric tags are lifted, and each one is
+        grounded against live candidates before it can reach the Decision Card,
+        so unrelated history stays inert.
+        """
+        tags = self._dig_list(content, "tags", "tag")
+        if not tags:
+            return []
+        merchant = (
+            self._dig(content, "merchant_name", "store_name", "store", "merchant") or ""
+        )
+        covered = {
+            canonical
+            for canonical, _ in (*TASTE_DIMENSIONS, *SERVICE_ATTRIBUTE_DIMENSIONS)
+        }
+        signals: List[Signal] = []
+        for tag in tags:
+            value = (tag or "").strip()
+            if not 2 <= len(value) <= 8 or value in covered:
+                continue
+            if value in merchant:
+                # The tag just repeats the merchant's own name.
+                continue
+            if re.fullmatch(r"[0-9\s.\-~元次张份个]+", value):
+                continue
+            if "营业时间" in value:
+                continue
+            signals.append(
+                Signal(
+                    "attribute_preference",
+                    value,
+                    0.65,
+                    ts,
+                    "order",
+                    raw=json.dumps(content, ensure_ascii=False),
+                    importance=importance,
+                )
+            )
         return signals
 
     def _extract_service_attributes(self, content, ts, importance) -> List[Signal]:

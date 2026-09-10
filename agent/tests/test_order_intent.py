@@ -163,3 +163,26 @@ def test_finalized_recommendation_reopens_for_a_follow_up_order():
     runtime.observe_user("那就帮我订一张吧")
     assert runtime.authorization.create_authorized
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
+
+
+@pytest.mark.parametrize(
+    "instruction,facet",
+    [
+        ("周六要去绵阳找朋友，帮我定张车票", "train"),
+        ("帮我订两张回家的火车票", "train"),
+        ("订一张去北京的高铁票", "train"),
+        ("帮我买张去上海的机票", "flight"),
+        ("帮我订个普吉岛的酒店", "hotel"),
+        ("下周末去成都玩，帮我订个民宿", "hotel"),
+    ],
+)
+def test_ticket_vocabulary_compiles_to_the_right_domain(instruction, facet):
+    """A ticket request must not fall through to the delivery default.
+
+    The framework only expands parent candidates for the facet it inferred, so
+    a misclassified ticket request never sees the seats or rooms it needs.
+    """
+    spec = TaskSpec.compile(instruction)
+    assert spec.domain == "ota"
+    assert spec.facet == facet
+    assert spec.action == "commit"
