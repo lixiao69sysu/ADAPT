@@ -179,3 +179,81 @@ def test_recommendation_fallback_waits_for_the_model():
     message = agent._framework_recommendation()
     assert message is not None
     assert "推荐" in message.content
+
+
+def test_home_address_is_filled_instead_of_rejected():
+    from agent.decision import Constraint, ConstraintOperator, ConstraintTarget
+
+    agent = build_agent()
+    agent.user_profile = {"常住住址": "河南省郑州市金水区沙门安置小区2栋302"}
+    agent.decision_card = DecisionCard(
+        constraints=[
+            Constraint(
+                "address",
+                "home",
+                ConstraintTarget.ARGUMENT,
+                ConstraintOperator.RESOLVES_PROFILE,
+            )
+        ]
+    )
+    call = ToolCall(
+        id="a1",
+        name="create_delivery_order",
+        arguments={"address": "家", "product_ids": ["P1"], "user_id": "U1"},
+    )
+    agent._normalize_address_call(call)
+    assert call.arguments["address"] == "河南省郑州市金水区沙门安置小区2栋302"
+    assert any(
+        event["event"] == "address_argument_repaired" for event in agent.debug.events
+    )
+
+
+def test_a_literal_address_in_the_instruction_is_filled_in():
+    from agent.decision import Constraint, ConstraintOperator, ConstraintTarget
+
+    agent = build_agent()
+    agent.decision_card = DecisionCard(
+        constraints=[
+            Constraint(
+                "address",
+                "河南省郑州市金水区沙门安置小区2栋302",
+                ConstraintTarget.ARGUMENT,
+                ConstraintOperator.CONTAINS,
+            )
+        ]
+    )
+    call = ToolCall(
+        id="a2",
+        name="create_delivery_order",
+        arguments={"address": "家", "product_ids": ["P1"], "user_id": "U1"},
+    )
+    agent._normalize_address_call(call)
+    assert call.arguments["address"] == "河南省郑州市金水区沙门安置小区2栋302"
+
+
+def test_a_correct_address_is_left_alone():
+    from agent.decision import Constraint, ConstraintOperator, ConstraintTarget
+
+    agent = build_agent()
+    address = "河南省郑州市金水区沙门安置小区2栋302"
+    agent.user_profile = {"常住住址": address}
+    agent.decision_card = DecisionCard(
+        constraints=[
+            Constraint(
+                "address",
+                "home",
+                ConstraintTarget.ARGUMENT,
+                ConstraintOperator.RESOLVES_PROFILE,
+            )
+        ]
+    )
+    call = ToolCall(
+        id="a3",
+        name="create_delivery_order",
+        arguments={"address": address, "product_ids": ["P1"], "user_id": "U1"},
+    )
+    agent._normalize_address_call(call)
+    assert call.arguments["address"] == address
+    assert not any(
+        event["event"] == "address_argument_repaired" for event in agent.debug.events
+    )

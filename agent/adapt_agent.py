@@ -27,6 +27,7 @@ from agent.decision import (
     DecisionCard,
     TaskSpec,
     is_search_tool,
+    profile_address,
 )
 from agent.framework.context import compact_messages
 from agent.lessons import ExecutionLessonStore
@@ -541,6 +542,56 @@ class ADAPTAgent(PersonalizationAgent):
         """Signature of a write proposal, matching the tool-error ledger."""
         return attempt_signature(tool_name, arguments or {})
 
+    def _normalize_address_call(self, call: ToolCall) -> None:
+        """Fill a write's address argument from the task's own address contract.
+
+        The validator used to *reject* a write whose address did not equal the
+        registered address, which ended the subtask with nothing (the trace
+        showed nine such rejections for one user, each followed by the terminal
+        "no compliant candidate" refusal). An address the task already pins -
+        the user's home/company alias or a literal address in the instruction -
+        is known observable data, so the framework repairs the argument instead
+        of blocking the action (E-042).
+        """
+        if self.tool_registry.role(call.name) != ToolRole.CREATE:
+            return
+        constraints = [
+            constraint
+            for constraint in getattr(self.decision_card, "constraints", [])
+            if getattr(constraint, "kind", "") == "address"
+        ]
+        if not constraints:
+            return
+        for constraint in constraints:
+            operator = getattr(getattr(constraint, "operator", None), "value", "")
+            if operator == "resolves_profile":
+                expected = profile_address(
+                    self.user_profile or {}, str(constraint.value or "")
+                )
+            else:
+                expected = str(constraint.value or "")
+            if not expected:
+                continue
+            for key in ("address", "location", "destination", "delivery_address"):
+                if key not in call.arguments:
+                    continue
+                current = str(call.arguments.get(key) or "")
+                if expected in current or current in expected:
+                    continue
+                call.arguments[key] = expected
+                self.debug.emit(
+                    "address_argument_repaired",
+                    tool=call.name,
+                    argument=key,
+                    replaced=current[:60],
+                )
+                self._record_lesson(
+                    "address_argument_repaired",
+                    f"{key}: {current[:40]} -> {expected[:40]}",
+                    "Use the address the task pinned (registered home or the address named in the instruction) verbatim.",
+                )
+            return
+
     def _record_succeeded_write(self, attempt, item: ToolMessage) -> None:
         """Remember the exact write that already succeeded in this subtask.
 
@@ -694,6 +745,7 @@ class ADAPTAgent(PersonalizationAgent):
         allowed_names = {tool.name for tool in (allowed_tools or [])}
         for call in calls:
             self._normalize_search_call(call)
+            self._normalize_address_call(call)
             if call.name not in allowed_names:
                 problems.append(
                     f"tool {call.name} is not allowed in phase {self.runtime.phase.value}"

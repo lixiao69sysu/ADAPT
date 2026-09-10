@@ -1460,6 +1460,11 @@ def _candidate_bound_values(kind: str, selected_text: str) -> list[str]:
     )
 
 
+def profile_address(profile: dict[str, Any], alias: str) -> str:
+    """Public accessor for the user's registered address behind an alias."""
+    return _profile_address(profile, alias)
+
+
 def _profile_address(profile: dict[str, Any], alias: str) -> str:
     markers = (
         ("home", "家", "家庭", "常住")
