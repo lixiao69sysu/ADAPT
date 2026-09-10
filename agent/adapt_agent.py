@@ -49,6 +49,7 @@ from agent.runtime.location import (
     home_tokens,
     location_rank,
 )
+from agent.runtime.schedule import parse_agent_time, resolve_relative_date
 
 _ADAPT_POLICY = """
 
@@ -108,6 +109,63 @@ class ADAPTAgent(PersonalizationAgent):
         self._replan_limit = 2
         self._recommendation_delivered = False
         self._gap_search_tool = ""
+        self._date_grounded = False
+
+    def _resolve_instruction_date(self, instruction: str) -> None:
+        """Publish one grounded absolute date for a relative instruction.
+
+        The environment already gives the agent its clock; converting "明天" or
+        "周末" is pure date arithmetic and must not depend on the policy model.
+        """
+        resolution = resolve_relative_date(
+            instruction, parse_agent_time(getattr(self, "time", "") or "")
+        )
+        if resolution is None:
+            return
+        self.runtime.resolved_date = resolution.date
+        self.runtime.date_evidence = resolution.evidence
+        self.runtime.date_time_hint = resolution.time_hint
+        self.task_spec.resolved_slots.setdefault("date", resolution.date)
+        self.debug.emit(
+            "instruction_date_resolved",
+            date=resolution.date,
+            evidence=resolution.evidence,
+            is_weekend=resolution.is_weekend,
+            time_hint=resolution.time_hint,
+        )
+
+    def _framework_date_grounding(self) -> AssistantMessage | None:
+        """Confirm the resolved calendar day with the environment once.
+
+        A time-relative request must not lead straight to a time-sensitive
+        write: the framework asks the environment which day it is, and the
+        answer stays in the transcript for the model to use.
+        """
+        if self._date_grounded or not self.runtime.resolved_date:
+            return None
+        if "get_date_holiday_info" not in self.tool_registry.meta:
+            return None
+        if self.runtime.phase not in {
+            RuntimePhase.START,
+            RuntimePhase.SEARCH,
+            RuntimePhase.SELECT,
+        }:
+            return None
+        arguments = {"date": self.runtime.resolved_date}
+        if self.tool_registry.validate_required("get_date_holiday_info", arguments):
+            return None
+        self._date_grounded = True
+        call = ToolCall(
+            id=f"adapt-date-grounding-{self.ledger._turn}",
+            name="get_date_holiday_info",
+            arguments=arguments,
+        )
+        self.debug.emit(
+            "date_grounding_call",
+            date=self.runtime.resolved_date,
+            evidence=self.runtime.date_evidence,
+        )
+        return AssistantMessage(role="assistant", tool_calls=[call])
 
     def set_current_instruction(self, instruction: str):
         previous = self._current_instruction
@@ -119,6 +177,7 @@ class ADAPTAgent(PersonalizationAgent):
             self.tool_errors.reset()
             self._recommendation_delivered = False
             self._gap_search_tool = ""
+            self._date_grounded = False
             self.memory.begin_subtask(instruction)
             self.task_spec = TaskSpec.compile(instruction)
             self.task_spec.resolved_slots.update(
@@ -126,6 +185,7 @@ class ADAPTAgent(PersonalizationAgent):
             )
             self.decision_card = self.memory.compile_task(instruction)
             self.runtime = TaskRuntime.begin(self.task_spec)
+            self._resolve_instruction_date(instruction)
             current_user_id = str(self.user_profile.get("user_id", ""))
             if current_user_id != self.lessons.user_id:
                 self.lessons.reset(current_user_id)
@@ -236,6 +296,12 @@ class ADAPTAgent(PersonalizationAgent):
             state.messages.append(completion)
             self.debug.emit("runtime_completed", facet=self.task_spec.facet)
             return completion, state
+
+        date_grounding = self._framework_date_grounding()
+        if date_grounding:
+            state.messages.append(date_grounding)
+            self._observe_assistant(date_grounding)
+            return date_grounding, state
 
         payment_question = self._framework_payment_question()
         if payment_question:

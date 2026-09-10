@@ -94,6 +94,11 @@ class TaskRuntime:
     forbid_question_with_tool: bool = False
     last_user_answer: str = ""
     last_tool_error: str = ""
+    # Absolute date derived deterministically from a relative expression in the
+    # current instruction ("明天", "周末", "下周三").
+    resolved_date: str = ""
+    date_evidence: str = ""
+    date_time_hint: str = ""
     revision_requested: bool = False
     execution_ready: bool = False
     candidates_seen: int = 0
@@ -373,6 +378,10 @@ class TaskRuntime:
             f"PAY_AUTHORIZED={auth.pay_authorized}\n"
             f"PAY_DECLINED={auth.pay_declined}\n"
             f"CRITICAL_GAPS={','.join(gaps) or 'none'}\n"
+            f"RESOLVED_DATE="
+            f"{self.resolved_date or 'none'}"
+            f"{f' (from {self.date_evidence})' if self.date_evidence else ''}"
+            f"{f' time-of-day: {self.date_time_hint}' if self.date_time_hint else ''}\n"
             f"RECENT_USER_ANSWER={self.last_user_answer or 'none'}\n"
             f"LAST_TOOL_ERROR={self.last_tool_error or 'none'}\n"
             "Obey the phase and use only the tools exposed in this call."
