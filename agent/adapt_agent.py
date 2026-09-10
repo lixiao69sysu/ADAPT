@@ -846,6 +846,24 @@ class ADAPTAgent(PersonalizationAgent):
                     )
                 )
                 if role == ToolRole.CREATE:
+                    # The evidence leader is advisory, not a gate. Trace
+                    # comparison showed the blocking form costing replans and,
+                    # in some units, a terminal refusal, because it forced a
+                    # candidate the model had deliberately not chosen on noisy
+                    # atom counts (E-045). Hard constraints and an explicit
+                    # user selection are still enforced.
+                    leader = self.ledger.unique_evidence_leader(self.decision_card)
+                    chosen = self.ledger.constraint_candidates(call.arguments)
+                    if (
+                        leader is not None
+                        and chosen
+                        and chosen[0].candidate_id != leader.candidate_id
+                    ):
+                        self.debug.emit(
+                            "preference_leader_diverged",
+                            chosen=chosen[0].candidate_id,
+                            leader=leader.candidate_id,
+                        )
                     problems.extend(
                         self.ledger.validate_ranked_choice(
                             call.arguments,

@@ -39,7 +39,7 @@ class QuestionGate:
                     "selection; expand required details or commit without reconfirming"
                 ),
             )
-        if runtime.authorization.choice_delegated:
+        if runtime.authorization.choice_delegated and runtime.phase != RuntimePhase.SELECT:
             return QuestionDecision(
                 False,
                 reason="the user delegated the choice; select a compliant candidate",
@@ -64,10 +64,13 @@ class QuestionGate:
             if len(runtime.asked_dimensions) >= 2:
                 return QuestionDecision(False, reason="question budget exhausted")
             return QuestionDecision(True, "candidate_choice")
-        if runtime.phase == RuntimePhase.SELECT and runtime.selection_made:
-            # The user endorsed a specific candidate without asking for a
-            # transaction. Asking once whether to proceed is the only legal way
-            # forward; blocking it forced a terminal refusal (E-035).
+        if runtime.phase == RuntimePhase.SELECT and (
+            runtime.selection_made or runtime.authorization.choice_delegated
+        ):
+            # The user endorsed a candidate, or delegated the choice outright,
+            # without asking for a transaction. Asking once whether to proceed is
+            # the only legal way forward; blocking it forced a terminal refusal
+            # (E-036, extended to delegation in E-045).
             if "execution_confirmation" in runtime.asked_dimensions:
                 return QuestionDecision(
                     False, reason="execution confirmation was already asked"

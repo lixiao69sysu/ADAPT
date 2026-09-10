@@ -181,7 +181,13 @@ def test_write_can_choose_within_shortlist_but_respects_explicit_selection():
     assert any("explicitly selected" in error for error in errors)
 
 
-def test_unique_preference_evidence_leader_is_locked_for_write():
+def test_unique_preference_evidence_leader_is_advisory_not_a_gate():
+    """E-045: a leading preference score must not veto the model's choice.
+
+    The leader is still computed (it drives the framework directive and the
+    preflight divergence event), but blocking a write over noisy atom counts
+    cost replans and ended units in a refusal, so it no longer rejects.
+    """
     ledger = CandidateLedger()
     ledger.observe(
         "instore_product_search_recommend",
@@ -199,12 +205,17 @@ def test_unique_preference_evidence_leader_is_locked_for_write():
     leader = ledger.unique_evidence_leader(card)
     assert leader is not None
     assert leader.candidate_id == "S1_P00094"
-    errors = ledger.validate_ranked_choice(
+    assert not ledger.validate_ranked_choice(
         {"shop_id": "S1_I00001", "product_id": "S1_P00081"}, card
     )
-    assert any("uniquely leads to S1_P00094" in error for error in errors)
     assert not ledger.validate_ranked_choice(
         {"shop_id": "S1_I00002", "product_id": "S1_P00094"}, card
+    )
+    # An explicit user selection is still enforced.
+    assert ledger.validate_ranked_choice(
+        {"shop_id": "S1_I00001", "product_id": "S1_P00081"},
+        card,
+        selected_candidate_id="S1_P00094",
     )
 
 

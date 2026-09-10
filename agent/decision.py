@@ -1049,10 +1049,12 @@ class CandidateLedger:
     ) -> list[str]:
         """Keep WRITE inside the compliant shortlist without taking over choice.
 
-        Ranking is normally a retrieval aid, not an oracle. The policy model
-        may choose any compliant shortlisted candidate when evidence ties. An
-        explicit user selection always locks execution; otherwise a unique,
-        strictly preference-evidence-leading candidate is locked as well.
+        Ranking is a retrieval aid, not an oracle: the policy model may choose
+        any compliant shortlisted candidate. An explicit user selection is a
+        real constraint and is enforced. A merely *leading* preference score is
+        not: trace comparison showed the blocking form wasting replans and, in
+        some units, ending the subtask in a refusal over noisy atom counts, so
+        the framework now only records the divergence (E-045).
         """
         chosen = self.constraint_candidates(arguments)
         if not chosen:
@@ -1067,13 +1069,6 @@ class CandidateLedger:
             ]
         if selected_candidate_id:
             return []
-        evidence_leader = self.unique_evidence_leader(card)
-        if evidence_leader and chosen_id != evidence_leader.candidate_id:
-            return [
-                f"selected {chosen_id}, but current observable preference evidence "
-                f"uniquely leads to {evidence_leader.candidate_id} "
-                f"({evidence_leader.name}); use that exact ID"
-            ]
         compliant_ids = {
             candidate.candidate_id for candidate in self.shortlist(card, limit=8)
         }
