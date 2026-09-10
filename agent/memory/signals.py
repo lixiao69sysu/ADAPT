@@ -95,6 +95,78 @@ SERVICE_ATTRIBUTE_DIMENSIONS: List[tuple[str, List[str]]] = [
 ]
 
 
+_AVOIDANCE_LEAD_WORDS = (
+    "才知道",
+    "知道",
+    "发现",
+    "原来",
+    "其实",
+    "最近",
+    "前几天",
+    "每次",
+    "自己",
+    "真的",
+    "好像",
+    "感觉",
+    "应该",
+    "可能",
+    "居然",
+    "竟然",
+    "就是",
+    "现在",
+    "以后",
+)
+# Single function-word characters that can survive a word-level strip when the
+# regex started mid-word (…"知道自己哈密瓜过敏" → "道自己哈密瓜").
+_AVOIDANCE_LEAD_CHARS = "才知道了自己每次说为什么我你他她它的是还真感觉现在后原来其实应该可能居然竟然就也都当然要想吃想喝爱对跟和与在"
+_AVOIDANCE_PUNCTUATION = "。，,．.！!？?；;：:、 \t\n"
+
+
+def _strip_avoidance_lead(value: str) -> str:
+    """Drop pronouns and verbs captured in front of the avoided item."""
+    text = (value or "").strip().strip("。，,．.！!？?；;：:、 ")
+    changed = True
+    while changed and text:
+        changed = False
+        for word in _AVOIDANCE_LEAD_WORDS:
+            if text.startswith(word) and len(text) > len(word) + 1:
+                text = text[len(word) :]
+                changed = True
+                break
+        if changed:
+            continue
+        if len(text) > 2 and text[0] in _AVOIDANCE_LEAD_CHARS:
+            text = text[1:]
+            changed = True
+    return text
+
+
+def _is_item_like(value: str) -> bool:
+    """Whether a captured span plausibly names an item rather than a clause.
+
+    A mid-sentence verb ("…让我去查过敏源" → 让我去查) must not become a
+    durable safety constraint, so any function word or punctuation inside the
+    span disqualifies it.
+    """
+    text = value or ""
+    if not text or any(char in text for char in _AVOIDANCE_PUNCTUATION):
+        return False
+    return not any(char in text for char in _AVOIDANCE_LEAD_CHARS)
+
+
+def _clean_avoidance_object(raw: str) -> str:
+    """Normalize a captured avoidance object; empty means "not usable"."""
+    text = raw or ""
+    for index, char in enumerate(text):
+        if char in _AVOIDANCE_PUNCTUATION:
+            text = text[:index]
+            break
+    text = _strip_avoidance_lead(text)
+    if not text or len(text) > 6 or not _is_item_like(text):
+        return ""
+    return text
+
+
 @dataclass
 class Signal:
     """A single structured preference signal extracted from an interaction."""
@@ -223,16 +295,34 @@ class SignalParser:
         import re
 
         # --- DISLIKE / avoidance (highest confidence — negative signals are durable) ---
+        # Forward-looking markers only: "不吃X", "不能吃X", "忌口X". "过敏" is
+        # deliberately absent here — it usually follows the item ("哈密瓜过敏"),
+        # and matching it forwards captured the rest of the sentence instead of
+        # the item.
         dislike_patterns = [
-            r"(?:我?不吃|不要|别放|不加|不能吃|过敏|讨厌|忌口|排斥|不碰)(.{2,12})",
+            r"(?:我?不吃|不要|别放|不加|不能吃|讨厌|排斥|不碰)(.{2,12})",
             r"(.{2,12})(?:我不喜欢|我讨厌|吃不了|受不了)",
+        ]
+        # Chinese also states the item *before* the avoidance word ("哈密瓜过敏",
+        # "海鲜忌口"). Without these postfix patterns a durable safety fact in
+        # the user's own history was never extracted, so the agent could not
+        # avoid it (E-044).
+        dislike_postfix_patterns = [
+            r"(?:对)?([\u4e00-\u9fff]{2,6})(?:过敏|忌口|不能吃|吃不了|受不了|不碰)",
         ]
         for pat in dislike_patterns:
             for m in re.finditer(pat, text):
-                obj = (m.group(1) or "").strip().rstrip("的了啊呢嗯哦")
-                if obj and 2 <= len(obj) <= 12:
+                obj = _clean_avoidance_object(m.group(1))
+                if obj:
                     signals.append(Signal("avoids_food", obj, 0.85, ts, "conversation",
                                           text, importance=7.0))
+        for pat in dislike_postfix_patterns:
+            for m in re.finditer(pat, text):
+                obj = _clean_avoidance_object(m.group(1))
+                if obj:
+                    # An allergy is a safety constraint, not a taste preference.
+                    signals.append(Signal("avoids_food", obj, 0.9, ts, "conversation",
+                                          text, importance=9.0))
 
         # --- LIKE / preference ---
         like_patterns = [
