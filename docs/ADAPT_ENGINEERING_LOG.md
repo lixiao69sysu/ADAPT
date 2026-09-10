@@ -37,6 +37,20 @@
 
 这五个用户已经参与架构调试，只能作为 development evidence。当前目标 0.3 应表述为 Dev Avg@1 目标。
 
+## 当前可复现基线（2026-09-10 更新）
+
+记录日期：2026-09-10。权威产物 `data/simulations/stock_avg4_8u.json`（8 用户 × 4 trial = 32 次，全部可评分）。
+
+- VitaBench 边界：`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
+- stock（`PersonalizationAgent` + `RewriteMemory`）官方 subtask 级指标：**Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000**（评估单元 100 个「用户×子任务」）；task 级 Pass 为 0（官方 `is_successful` 要求 reward == 1.0）。
+- 逐用户 Avg@4：J365414 0.409、P722245 0.364、Q089190 0.304、U000828 0.304、E057330 0.288、E941775 0.286、M793481 0.273、O309411 0.125。
+- 官方 skill split：personalize 0.3198（n=344）、proactive 0.125（n=56）。
+- 非功能指标：`tool_errors` 11、`incomplete_payments` 25、agent 上下文守卫裁剪 147+ 次（0 次 agent 崩溃）。
+- 指标口径：一律用官方 `vita.metrics.agent_metrics.compute_metrics`（见 E-030）；`agent/trace_metrics.py` 只作开发期粗筛。
+- 评测完整性：12 条 evaluation_failed 轨迹经 ADAPT 侧补丁重评全部恢复（见 E-018 之后的归一化补丁与 `agent/reevaluate_guarded.py`）。
+
+更早的 v5 五用户证据（0.2108 等）保留在下方历史段落，仅作 development evidence。
+
 ---
 
 ## E-001：修改 VitaBench 会破坏 Agent 评测边界
@@ -378,6 +392,31 @@
 - **验证**：新增单测覆盖 520 实体硬上限、小 hotel facet 不被大 retail 桶挤光、feature flag 回退和多弱证据精确聚合。全量 `198 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
 - **下一步**：保持默认开启，不立即为个别用户或实体调整；下一个里程碑 dev 评测时按聚合错误类对比开关，如果 reward 或 candidate-to-action 指标回归，直接用回退开关做同 cohort 归因。
 - **能力抽象**：preference updating / long-horizon consistency / preference-to-candidate grounding。
+
+## E-030：自建指标口径与官方不一致，导致 Pass@4/Pass^4 被误报为 0
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **难点**：8 用户 × 4 trial 的 dev 基线跑完后，自写工具 `agent/trace_metrics.py` 报出 `pass_at_4 = 0`，而官方论文表格中同类任务存在非零 Pass 值，容易被误读为"agent 完全没通过任何任务"。
+- **证据**：`data/simulations/stock_avg4_8u.json`（32 次模拟全部可评分）。`trace_metrics._pass_at_four` 按**用户级**分组，仅当 4 次 trial 的 reward 全部 ≥ 1.0 时判定通过；该数据单次 trial 最高 0.4545，从未达到 1.0，故通过数恒为 0。
+- **根因**：口径与粒度双重不一致。(1) 粒度：官方 personalization 指标以 `(task_id, subtask_index)` 为评估单元，`trace_metrics` 以整个用户为单元；(2) 实现：官方 `vita.metrics.agent_metrics` 使用无偏估计 `pass@k = 1 - C(n-c,k)/C(n,k)` 与 `pass^k = C(c,k)/C(n,k)`，`trace_metrics` 用简化布尔。
+- **有效方案**：对外汇报一律走官方入口 `vita.metrics.agent_metrics.compute_metrics(results)`（构造原生 `Results` 对象），并明确标注 task 级 / subtask 级；`trace_metrics` 降级为开发期粗筛工具，不用于最终指标。
+- **验证**：同一次运行的两条独立路径数值一致——直接调用 `_compute_subtask_pass_metrics` 与官方完整 `compute_metrics` 均得 subtask 级 Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000（100 个单元）；task 级 Pass 为 0。
+- **适用边界**：官方 task 级 pass 同样要求 reward == 1.0，在本任务形态下长期接近 0，不应作为主指标；对外汇报必须写明粒度，避免"全是 0"式误读。
+- **能力抽象**：evaluation validity / metric reporting。
+
+## E-031：stock 基线的系统性失败集中在"搜索→落地"断链，而非支付或参数错误
+
+- **日期**：2026-09-10
+- **状态**：OPEN
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自固定 8 用户的聚合可观察轨迹，并设 20 个"4/4 全对"单元作对照组；只使用工具调用名、工具返回状态、错误标记、对话长度与终止原因等可观察事件，不读取 rubric、不把 evaluator reward 作为学习信号，也不使用 target/distraction 标注。
+- **难点**：stock 在同配置下的 8 用户 Avg@4 仅 0.2925；100 个子任务单元中 60 个"4 次全错"、仅 20 个"4 次全对"，失败呈**系统性**（不是采样抖动）。因此提升必须靠确定性控制，而不是靠重采样。
+- **证据**：`data/simulations/stock_avg4_8u.json` 与 `scripts/_t2_cluster.py`。永错组 vs 全对组（每 trial 均值）：搜索 4.99 vs 1.80（2.8×）、写操作 0.87 vs 1.24（−30%）、对话长度 19.6 vs 15.0。按域：delivery 58 单元（29 永错 / 18 全对）、instore 26（19 / 1）、ota 16（12 / 1）；搜索:写 比为 delivery 3.5、instore 10.1、ota 6.9。
+- **已排除**：不是工具报错（永错 0.02 vs 全对 0.00）；**不是"下单未付款"**——全对组的 unpaid 比例（0.562）反而高于永错组（0.342），说明子任务级的"未付"不必然失分；提问次数亦无判别力（永错 2.35 vs 全对 2.77，方向相反），因此"问太多"不能作为本批的主因结论。
+- **根因假设**：在多步/层级工具形态（instore 服务预约、ota 酒店/机票/景点）下，缺少"候选已足够即应落地下单"的确定性迁移控制，模型倾向继续搜索；长对话又强化继续搜索的锚定（与 E-007、E-008 同类）。
+- **候选方案**：(1) 生成前的确定性 next-action 路由：候选完备即禁止继续搜索，授权已给即禁止再问；(2) 候选级搜索预算与父→子候选的有界展开（呼应 E-026）；(3) 支付闭环降级为次级项，并在**用户级**（而非子任务级）单独验证其影响。
+- **有效性要求**：先在 instore/ota 上做 1–2 用户 smoke，再跑同 8 用户 × 4 trial 的 paired 对比；要求搜索:写 比下降、永错单元数下降、官方 Avg@4 提升，且不得为具体用户、子任务或候选写规则。
+- **能力抽象**：bounded exploration / action routing / preference-to-action grounding。
 
 ---
 
