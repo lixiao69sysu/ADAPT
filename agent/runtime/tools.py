@@ -4,10 +4,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Iterable
 
 from agent.decision import CandidateLedger, is_search_tool
 from agent.runtime.state import RuntimePhase, TaskRuntime
+
+# Observable item vocabulary that means the task is about a purchasable good
+# rather than a venue-level booking. Used only to decide whether a missing
+# ``product`` entity is worth one bounded search (E-035).
+PRODUCT_LEVEL_TERMS = (
+    "券",
+    "套餐",
+    "商品",
+    "外卖",
+    "票",
+    "房型",
+    "房",
+    "杯",
+    "份",
+    "餐",
+    "按摩",
+    "保洁",
+)
+
+
+def requires_product_entity(instruction: str, atoms: Iterable[str] = ()) -> bool:
+    """Whether the current task is about an item rather than only a venue."""
+    texts = [instruction or "", *[str(atom) for atom in atoms or ()]]
+    return any(
+        term in text for text in texts for term in PRODUCT_LEVEL_TERMS
+    )
+
 
 
 class ToolRole(str, Enum):
@@ -81,48 +108,101 @@ class ToolRegistry:
     def role(self, name: str) -> ToolRole:
         return self.meta.get(name, ToolMeta(name, ToolRole.READ)).role
 
+    # Entity aliases: the same observed product satisfies a room, ticket or seat
+    # argument. Unknown kinds fall back to their own name.
+    _ENTITY_ALIASES = {
+        "room": "product",
+        "ticket": "product",
+        "seat": "product",
+    }
+
+    def _required_entity_types(self, meta: ToolMeta) -> set[str]:
+        return {
+            self._ENTITY_ALIASES.get(kind, kind)
+            for argument, kind in meta.id_arguments.items()
+            if argument in meta.required_arguments and argument != "user_id"
+        }
+
+    def required_entity_types(self, tool_name: str) -> set[str]:
+        meta = self.meta.get(tool_name)
+        return self._required_entity_types(meta) if meta else set()
+
+    def create_gaps(self, ledger: CandidateLedger) -> dict[str, list[str]]:
+        """Entity kinds each CREATE tool needs but has not observed yet.
+
+        Obligations are per create tool. A shop-only reservation tool must not
+        make a coupon order look executable: that exposed
+        ``create_instore_product_order`` while no product had been observed and
+        the policy model filled ``product_id`` from memory (E-035).
+        """
+        observed = {
+            candidate.entity_type for candidate in ledger.candidates.values()
+        }
+        gaps: dict[str, list[str]] = {}
+        for meta in self.meta.values():
+            if meta.role != ToolRole.CREATE:
+                continue
+            missing = self._required_entity_types(meta) - observed
+            if missing:
+                gaps[meta.name] = sorted(missing)
+        return gaps
+
+    def usable_create_tools(self, ledger: CandidateLedger) -> set[str]:
+        observed = {
+            candidate.entity_type for candidate in ledger.candidates.values()
+        }
+        usable: set[str] = set()
+        for meta in self.meta.values():
+            if meta.role != ToolRole.CREATE:
+                continue
+            # A tool whose schema exposes no entity argument cannot be checked
+            # here; the ledger still rejects any unobserved ID at preflight.
+            if not (self._required_entity_types(meta) - observed):
+                usable.add(meta.name)
+        return usable
+
+    def search_tool_for(self, kind: str) -> str:
+        """The search tool that can observe ``kind``, by name convention."""
+        for name, meta in sorted(self.meta.items()):
+            if meta.role == ToolRole.SEARCH and kind in name:
+                return name
+        return ""
+
     def execution_ready(self, ledger: CandidateLedger, card=None) -> bool:
-        """Whether CREATE has required IDs and a compliant candidate.
+        """Whether some CREATE tool can legally run with observed entities.
 
         Observing an ID is insufficient when every visible candidate violates
         a MUST/AVOID constraint. Keep SELECT open for a bounded second search
         until the deterministic shortlist contains a usable candidate.
+
+        Readiness is per create tool: a tool whose required entity kinds are
+        all observed may run, while a tool that still misses one kind may not
+        (E-035).
         """
         if card is not None and not ledger.shortlist(card, limit=1):
             return False
-        semantic_types = {
-            "room": "product",
-            "ticket": "product",
-            "seat": "product",
-        }
-        observed_types = {candidate.entity_type for candidate in ledger.candidates.values()}
-        for meta in self.meta.values():
-            if meta.role != ToolRole.CREATE:
-                continue
-            required_id_types = {
-                semantic_types.get(kind, kind)
-                for argument, kind in meta.id_arguments.items()
-                if argument in meta.required_arguments and argument != "user_id"
+        usable = self.usable_create_tools(ledger)
+        if not usable:
+            return False
+        for name in usable:
+            if "hotel" not in name:
+                return True
+            hotels = {
+                candidate.candidate_id
+                for candidate in ledger.candidates.values()
+                if candidate.entity_type == "hotel"
             }
-            if required_id_types and required_id_types.issubset(observed_types):
-                if "hotel" in meta.name:
-                    hotels = {
-                        candidate.candidate_id
-                        for candidate in ledger.candidates.values()
-                        if candidate.entity_type == "hotel"
-                    }
-                    expanded_hotels = {
-                        parent_id
-                        for candidate in ledger.candidates.values()
-                        if candidate.entity_type == "product"
-                        for parent_id in candidate.parent_ids
-                        if parent_id in hotels
-                    }
-                    # A single hotel's rooms cannot establish the best match
-                    # across brand/location/style preferences. Expand a bounded
-                    # set of parent hotels before exposing CREATE.
-                    if len(expanded_hotels) < min(6, len(hotels)):
-                        continue
+            expanded_hotels = {
+                parent_id
+                for candidate in ledger.candidates.values()
+                if candidate.entity_type == "product"
+                for parent_id in candidate.parent_ids
+                if parent_id in hotels
+            }
+            # A single hotel's rooms cannot establish the best match across
+            # brand/location/style preferences. Expand a bounded set of parent
+            # hotels before exposing CREATE.
+            if len(expanded_hotels) >= min(6, len(hotels)):
                 return True
         return False
 
@@ -153,10 +233,13 @@ class ToolRegistry:
             if runtime.phase == RuntimePhase.READY_TO_CREATE:
                 # A usable shortlist already exists and execution is
                 # authorized. Observation tools here only reopen a settled
-                # decision and let the policy model loop.
+                # decision and let the policy model loop. A create tool whose
+                # required entities are still unobserved stays hidden so the
+                # model cannot fill an ID from memory (E-035).
                 if (
                     meta.role == ToolRole.CREATE
                     and runtime.authorization.create_authorized
+                    and tool.name in self.usable_create_tools(ledger)
                 ):
                     allowed.append(tool)
                 continue

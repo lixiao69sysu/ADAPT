@@ -11,7 +11,7 @@ from agent.runtime.evolution import (
 from agent.runtime.question_gate import QuestionDecision, QuestionGate
 from agent.runtime.state import AuthorizationState, RuntimePhase, TaskRuntime
 from agent.runtime.tool_errors import ParameterRecovery, ToolErrorLedger
-from agent.runtime.tools import ToolRegistry, ToolRole
+from agent.runtime.tools import ToolRegistry, ToolRole, requires_product_entity
 
 __all__ = [
     "AuthorizationState",
@@ -29,4 +29,5 @@ __all__ = [
     "ToolRegistry",
     "ToolErrorLedger",
     "ToolRole",
+    "requires_product_entity",
 ]

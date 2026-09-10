@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from agent.decision import TaskSpec
+from agent.intent import is_completion_style_request, is_transaction_request
 
 
 class RuntimePhase(str, Enum):
@@ -40,27 +41,21 @@ _DELEGATION_MARKERS = (
     "不太清楚",
     "你决定",
 )
-_CREATE_MARKERS = (
-    "下单",
-    "直接买",
-    "帮我买",
-    "帮我点",
-    "帮我订",
-    "预定",
-    "预约",
-    "团个券",
-    "就这个",
-    "第一双",
-)
 _PAY_MARKERS = ("支付", "付款", "帮我付", "直接付", "买票", "购票")
-# General completion-style purchase phrasings ("帮我团一张", "订个", "来一份").
-# A bare "帮我看看有没有团购券" must NOT authorize a write, so the pattern
-# requires the action verb to be followed by a quantity/unit.
-_CREATE_INTENT_RE = re.compile(
-    r"(?:帮我|给我|替我|麻烦)?(?:团|买|订|下|来)"
-    r"(?:一|两|二|三|\d+)?(?:张|个|份|单|杯|碗|套)"
-)
 _PAY_DECLINE_MARKERS = ("自己付", "不用付", "不要支付", "不需要支付")
+# Refusals to a "shall I proceed?" question. Anything else counts as consent.
+_DECLINE_MARKERS = (
+    "不用",
+    "不要",
+    "不需要",
+    "不必",
+    "算了",
+    "先不",
+    "暂时不",
+    "取消",
+    "改天",
+    "不去",
+)
 _REVISION_MARKERS = (
     "换个",
     "换成",
@@ -101,8 +96,13 @@ class TaskRuntime:
     last_tool_error: str = ""
     revision_requested: bool = False
     execution_ready: bool = False
+    candidates_seen: int = 0
     payment_question_sent: bool = False
     write_succeeded: bool = False
+    # Set when the agent asked whether to execute an endorsed candidate and the
+    # user has not answered yet. A non-declining answer authorizes the write,
+    # otherwise the runtime has no legal action left (E-036).
+    execution_confirmation_pending: bool = False
     events: list[dict] = field(default_factory=list)
 
     @classmethod
@@ -143,12 +143,22 @@ class TaskRuntime:
     def observe_user(self, text: str) -> None:
         content = (text or "").strip()
         self.last_user_answer = content[:240]
+        if self.execution_confirmation_pending:
+            self.execution_confirmation_pending = False
+            # The agent asked "shall I proceed?" about an endorsed candidate.
+            # Anything short of a refusal is that authorization; without it the
+            # SELECT phase exposes no CREATE tool and the subtask dead-ends.
+            if not any(marker in content for marker in _DECLINE_MARKERS):
+                self.authorization.create_authorized = True
         if any(marker in content for marker in _DELEGATION_MARKERS):
             self.authorization.choice_delegated = True
-        if any(marker in content for marker in _CREATE_MARKERS) or _CREATE_INTENT_RE.search(
-            content
-        ):
+        if is_transaction_request(content):
             self.authorization.create_authorized = True
+            # A completion-style purchase request ("帮我团一张") also delegates
+            # the concrete candidate choice: the user asked to be served, not
+            # to pick an option.
+            if is_completion_style_request(content):
+                self.authorization.candidate_choice_authorized = True
         if re.search(r"第[一二三四五1-5](?:个|双|款|家|项)?|就这个|选这个", content):
             self.selection_made = True
         if any(marker in content for marker in _PAY_MARKERS):
@@ -180,7 +190,34 @@ class TaskRuntime:
             if self.authorization.pay_declined:
                 self.phase = RuntimePhase.DONE
         else:
+            if (
+                self.phase == RuntimePhase.DONE
+                and not self.write_succeeded
+                and (
+                    self.authorization.create_authorized or self.selection_made
+                )
+            ):
+                # A finalized recommendation or consultation must not swallow a
+                # follow-up order request: the user endorsed a candidate or
+                # asked for a transaction in this turn (E-035).
+                self.phase = RuntimePhase.SEARCH
             self._advance_from_observation()
+        # An authorized write with an executable candidate must not be pushed
+        # back into SEARCH: that phase forbids the create tool and the model has
+        # no legal action left (E-033 livelock). Promote immediately instead of
+        # waiting for another search round.
+        if (
+            self.authorization.create_authorized
+            and (
+                self.authorization.choice_delegated
+                or self.authorization.candidate_choice_authorized
+                or self.selection_made
+                or self.force_decision_after_candidates
+            )
+            and self.execution_ready
+            and self.candidates_seen
+        ):
+            self.phase = RuntimePhase.READY_TO_CREATE
         self.record(
             "user",
             text=content,
@@ -256,6 +293,7 @@ class TaskRuntime:
 
     def observe_candidates(self, count: int, execution_ready: bool = True) -> None:
         self.execution_ready = execution_ready
+        self.candidates_seen = max(self.candidates_seen, int(count or 0))
         if count:
             self.phase = RuntimePhase.SELECT
             if (

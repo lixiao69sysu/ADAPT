@@ -116,3 +116,24 @@ def test_selection_after_recommendation_reaches_write_phase():
     assert runtime.selection_made
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
+
+def test_explicit_purchase_request_promotes_without_another_search():
+    """E-033: an authorized write must not fall back to SEARCH (create blocked)."""
+    runtime = TaskRuntime.begin(TaskSpec.compile("帮我找个养生休闲的地方"))
+    runtime.observe_candidates(30, execution_ready=True)
+    assert runtime.phase == RuntimePhase.SELECT
+    # The user never names an ordinal; they ask to be served directly.
+    runtime.observe_user("那不行，你赶紧给我团一张啊，我都说好了。")
+    assert runtime.authorization.create_authorized
+    assert runtime.authorization.candidate_choice_authorized
+    assert runtime.phase == RuntimePhase.READY_TO_CREATE, runtime.phase
+
+
+def test_user_turn_without_purchase_intent_does_not_promote():
+    runtime = TaskRuntime.begin(TaskSpec.compile("帮我找个养生休闲的地方"))
+    runtime.observe_candidates(30, execution_ready=True)
+    runtime.observe_user("这个看起来不错，还有别的吗？")
+    assert not runtime.authorization.create_authorized
+    assert runtime.phase != RuntimePhase.READY_TO_CREATE
+
+

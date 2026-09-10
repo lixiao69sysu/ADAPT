@@ -420,6 +420,96 @@
 
 ---
 
+## E-032：框架级推荐消息重复发送，把对话活锁到 max_steps
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-MECHANISM`。由框架自身的发送条件缺失导致，与用户、任务、候选无关。
+- **难点**：某个 instore 子任务出现 101 条消息、termination=`max_steps`，但模型并没有报错——是框架每轮重复发送同一条推荐文本，用户端反复收到同一句话后停止响应。
+- **证据**：`data/simulations/adapt_smoke_search_budget.json` 中该子任务的消息数与终止原因；debug 事件流中 `recommendation_finalized` 出现 58 次。
+- **根因**：`_framework_recommendation` 只判断 `action == "recommend"` 与 `phase == SELECT`，没有"本子任务已发送"标记。重复的推荐既不能带来新信息，也不会改变 phase，于是每一轮都满足发送条件。
+- **有效方案**：新增 `self._recommendation_delivered`，在 `set_current_instruction` 中按子任务重置，保证每个子任务最多发送一次。
+- **验证**：单测覆盖"第二次调用返回 None"；smoke 复跑同一子任务消息数从 101 降到 8，无 `max_steps`。
+- **适用边界**：只约束框架自身的兜底消息，不影响模型正常输出；模型仍可在收到用户新答复后继续对话。
+- **能力抽象**：long-horizon consistency / loop safety。
+
+## E-033：用户直接要求成交时 phase 被推回 SEARCH，CREATE 工具全部不可用
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-MECHANISM`（按授权状态与阶段迁移定义，不涉及具体用户/任务）。
+- **难点**：用户已明确要求下单，运行时却回到 SEARCH；SEARCH 阶段不暴露任何 CREATE 工具，模型无合法动作，只能反复尝试被拒绝，最终以终局拒绝结束。
+- **证据**：debug 事件 `preflight_rejected`：`tool create_instore_product_order is not allowed in phase search`（同一子任务连续 3 次）。
+- **根因**：`observe_user` 的 `_advance_from_observation()` 无条件把非终态阶段拉回 SEARCH，而"完成型下单请求（如"给我团一张"）"在语义上已经同时满足"成交授权 + 由框架选择候选"。
+- **有效方案**：在 `observe_user`／`observe_candidates` 内做确定性提升：当 `create_authorized` 且（用户委托选择 或 完成型请求授权候选 或 已选择 或 学习到的强制决策）且 `execution_ready` 且已观察到候选时，直接进入 `READY_TO_CREATE`，不再等待下一轮搜索。
+- **验证**：单测 `test_explicit_purchase_request_promotes_without_another_search`、`test_user_turn_without_purchase_intent_does_not_promote`；smoke 复跑中该子任务不再出现"phase search 拒绝 CREATE"事件。
+- **适用边界**：不覆盖"用户只是询问/浏览"的轮次；缺少成交授权或候选未观察时提升条件不成立，仍停留在 SELECT/SEARCH。
+- **能力抽象**：execution / action routing。
+
+## E-034：下单措辞未覆盖，把"帮我定张车票"编译成推荐任务
+
+- **日期**：2026-09-10
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-EMPIRICAL`。语料来自可观察的用户指令与框架事件，不含任何评测标注。
+- **难点**：同一句下单指令，规范层判定为"推荐"、运行时层也没有授权写入，于是框架直接以"推荐完成"结束该子任务；用户随后再次表达成交意愿时，框架回复"操作已成功完成。"，而整个子任务**没有任何写工具调用**。
+- **证据**：`data/simulations/smoke_fix2.jsonl`：该子任务仅有 `read`/`search` 类 `tool_proposal`，`recommendation_finalized` 后 phase=done，随后一次 `runtime_completed`。可观察指令为"周六要去绵阳找朋友，帮我定张车票"。
+- **根因**：规范层（`TaskSpec.compile` 的 commit 关键词表）与运行时层（`_CREATE_MARKERS` + `_CREATE_INTENT_RE`）是两张独立的字面量表，都没有覆盖"定＋量词＋名词"等常见说法，两者逐渐漂移。
+- **有效方案**：新增 `agent/intent.py` 作为唯一词表：`TRANSACTION_MARKERS`（明示交易短语）与 `COMPLETION_INTENT_RE`（动词＋量词/单位/名词）。三层口径统一由它派生。为避免"订单状态"这类复合名词误判，纯单位不足以成立，必须是 量词＋单位／单位＋名词／名词 三种形态之一；"就选第一个""推荐一个采摘园"明确不匹配。
+- **尝试过但无效的方案**：只在 `TaskRuntime` 里继续加关键词——规范层仍是 recommend，框架照样会抢先以推荐结束。
+- **验证**：`agent/tests/test_order_intent.py` 20 个正负例；全量 268 单测通过。smoke 复跑待确认（见"后续风险"）。
+- **附带修正**：未真正写入成功时不再回复"操作已成功完成。"；DONE 状态下收到新的成交请求或候选认可时重新进入 SEARCH（避免框架终态吞掉后续下单）。
+- **适用边界**：词表只做"是否要求执行交易"的二分类，不判断具体商品；量词表是封闭集合，罕见说法仍会漏判，需要靠 trace 继续扩充。
+- **后续风险/下一步**：需要在 smoke 中确认该子任务确实进入 CREATE 分支；同时评估"定／订"扩表是否引入误授权（负例测试已覆盖常见信息型请求）。
+- **能力抽象**：preference-to-action grounding / execution。
+
+## E-035：execution_ready 只看"任一 CREATE 可用"，模型用记忆里的 product_id 下单
+
+- **日期**：2026-09-10
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-MECHANISM`（按工具 schema 的必需实体类型定义，不涉及具体用户/任务/候选）。
+- **难点**：商家搜索之后，模型直接用一个**来自长期记忆、本次未由任何工具返回**的 `product_id` 去下单，连续 3 次被确定性校验拒绝，随后以终局拒绝结束；整个子任务没有发生一次商品级搜索。
+- **证据**：`data/simulations/smoke_fix2.jsonl` 中 3 次 `preflight_rejected`，内容为"`product_id=… was not returned by a tool in this subtask`"；同子任务的 `tool_proposal` 只有商家搜索。
+- **根因**：三层叠加。(1) `ToolRegistry.execution_ready` 的语义是"存在某个 CREATE 工具、其必需 ID 实体都已观察"——到店域里 `instore_reservation` 只需要 `shop_id`，于是商品完全没观察也会判定 ready；(2) `READY_TO_CREATE` 把**所有** CREATE 工具都暴露给模型；(3) 没有任何机制去补一次缺失实体类型的搜索。
+- **有效方案**：(1) 新增 `create_gaps`／`usable_create_tools`，按**每个** CREATE 工具计算缺失实体类型（`room/ticket/seat` 归一为 `product`）；(2) `READY_TO_CREATE` 只暴露必需实体齐备的 CREATE 工具，缺失实体的工具保持隐藏（校验器仍是最后一道闸）；(3) 框架新增一次有界的"缺失实体搜索"：仅当任务确实指向商品级对象（可观察词表）且域内存在名字包含该实体类型的搜索工具时触发，关键词只取可观察来源——当前指令的 MUST 原子与自己上一次搜索用过的 keywords，每个子任务每个搜索工具最多一次，并照常计入候选级搜索预算。
+- **尝试过但无效的方案**：第一版只判断"存在缺失实体"就发起搜索，没有要求"该 CREATE 的其它必需实体已观察"。结果在 ota 子任务里，任何搜索都还没发生时框架就替模型去调用 `hotel_search_recommand`／`attractions_search_recommend` 等（参数不全，全部报 `unexpected keyword argument`／`missing required argument`），连续 9 次把搜索预算烧光，原本能正常下单的酒店子任务直接崩掉。修正后收紧为三条同时成立：ledger 已有候选、该 CREATE 的**其它**必需实体全部已观察、缺失实体恰好只剩一种；并在发出前用 `validate_required` 自检参数，避免框架自己制造无效调用。
+- **验证**：`agent/tests/test_entity_gap_search.py` 11 个单测（缺实体、按工具就绪、READY_TO_CREATE 可见性、关键词来源、只触发一次、未授权不触发、空 ledger 不触发、缺失多种实体不触发、参数不全不触发）。
+- **适用边界**：仅当域内存在"名称包含缺失实体类型"的搜索工具时才触发（delivery/instore 有商品级搜索；ota 酒店/机票没有，仍走既有的父候选展开路径）。只做一次，不会变成新的搜索 thrash。
+- **后续风险/下一步**：需要在 smoke 中确认商品搜索返回后能进入真实写操作，并观察是否出现"该搜索反而拉入无关商品"的副作用。
+- **能力抽象**：execution / bounded exploration。
+
+## E-036：SELECT 阶段认可候选后，唯一的合法动作（确认执行）被 gate 拒绝
+
+- **日期**：2026-09-10
+- **状态**：PARTIAL
+- **通用性判定**：`GENERAL-MECHANISM`（由阶段与授权状态决定，不涉及具体用户/任务）。
+- **难点**：框架已经给出推荐列表，用户认可其中一项；此时运行时停在 SELECT，写入未获授权，模型想确认"是否需要我帮你预订？"却被 question gate 以"questions are not allowed in phase select"连续拒绝 3 次，最后输出终局拒绝文本。用户看到的是"推荐之后莫名其妙拒绝服务"。
+- **证据**：`data/simulations/smoke_fix2.jsonl` 中 3 次 `preflight_rejected`（`question gate: questions are not allowed in phase select`），随后一条 `现有候选无法满足硬约束，我没有执行下单。`
+- **根因**：question gate 只在"尚未选择"时允许候选选择类提问；一旦 `selection_made` 为真且没有成交授权，gate 落到底部"该阶段禁止提问"，而该阶段又不暴露任何 CREATE 工具——模型没有任何合法动作，终局拒绝成为唯一出口。
+- **有效方案**：新增一个受预算约束的提问维度 `execution_confirmation`：当 `phase == SELECT` 且 `selection_made` 且未授权写入时，允许**一次**执行确认提问；该提问通过 `QuestionGate.commit` 置位 `execution_confirmation_pending`，下一轮用户回复只要不含拒绝词就视为成交授权（`create_authorized = True`），随后由 E-033 的提升条件进入 READY_TO_CREATE。
+- **验证**：单测 `test_execution_confirmation_is_allowed_once_after_endorsement`、`test_confirmation_answer_authorizes_execution_and_promotes`、`test_declining_the_confirmation_does_not_authorize_execution`、`test_finalized_recommendation_reopens_for_a_follow_up_order`。
+- **尝试过但无效的方案**：只放开提问、不把回复接成授权。smoke 中模型确实问了"你想预约周六还是周日"，用户回答"周六下午吧，你看着办"之后，`choice_delegated` 分支又把提问全部拒掉，而 SELECT 阶段仍不暴露 CREATE —— 仍然以终局拒绝结束。提问与授权必须成对接地。
+- **适用边界**：只在"用户明确认可了某个候选、但尚未要求交易"时生效；已授权成交或用户委托选择时，既有分支仍然禁止重复确认。拒绝词表要短且明确（不用/不要/算了/取消…），避免把"周六下午"这类回答误判为拒绝。
+- **后续风险/下一步**：确认它不会演变成"每次都要多问一轮"；若确实多问，应在已有成交授权时保持沉默。
+- **能力抽象**：proactiveness / execution。
+
+---
+
+## E-037：evaluator 输出归一化只在离线重评路径生效，在线运行把可评分子任务记成 evaluation_failed
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-MECHANISM`。与用户、任务、候选无关，是框架接线问题。
+- **难点**：肉眼可见已经正确完成的子任务（搜索 → 创建订单 → 进入待支付）在运行结果里 reward 恒为 0.0，并被标记 `evaluation_status: evaluation_failed`；同一批里其它子任务评分正常，容易误判成"agent 做错了"。
+- **证据**：`data/simulations/adapt_smoke_fix4.json`（可复现）：某 ota 子任务 3 次评估尝试全部以 `Evaluation error: 'list' object has no attribute 'get'` 失败，`evaluation_attempts: 3`。
+- **根因**：`normalize_evaluator_result` / `patch_evaluator_extracter` 只被 `agent/reevaluate_guarded.py` 调用（`--normalize-extracter`），`agent/vitabench_runner.py` 从未安装它。evaluator 偶尔返回"嵌套列表 + 夹杂标量"的 JSON，vendored `_evaluate_window` 直接对非 dict 项调用 `.get`，于是整窗抛错、重试三次后放弃，子任务被判为不可评分。
+- **有效方案**：在 runner 的 `main()` 里默认安装 `patch_evaluator_extracter()`（同时 patch `vita.utils.utils` 与 `vita.evaluator.evaluator_traj` 两处绑定），并新增 `--no-normalize-extracter` 作为对照开关。归一化只改变 evaluator 载荷的**形状**（递归收集 dict、丢弃标量、`"true"/"false"` 归一为布尔、剔除非法 `meetExpectation`），不动 rubric 文本与 reward 语义，因此不违反配置对齐。
+- **验证**：`agent/tests/test_evaluator_normalize.py` 覆盖各形状；离线路径此前已用同一归一化把 12 个失败 trial 全部恢复为可评分。在线 smoke 复跑待确认（见"后续风险"）。
+- **适用边界**：只对 evaluator 的输出解析生效，不改变评分标准；若 evaluator 返回的确实是无法解析的内容，仍会如实记录为 `evaluation_failed` 而不是伪造 reward。
+- **后续风险/下一步**：确认在线运行中不再出现 `evaluation_failed`；同时保留 `--no-normalize-extracter` 以便必要时复现原始错误。
+- **能力抽象**：evaluation validity。
+
+---
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

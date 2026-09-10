@@ -37,7 +37,10 @@ import vita.memory.rewrite_memory as rewrite_memory_module
 import vita.utils.llm_utils as llm_utils
 
 from agent.adapt_agent import ADAPTAgent
-from agent.evaluation_integrity import IntegrityPersonalizationOrchestrator
+from agent.evaluation_integrity import (
+    IntegrityPersonalizationOrchestrator,
+    patch_evaluator_extracter,
+)
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.v2 import ADAPTV2, HybridMemory, V2FeatureFlags
 
@@ -771,12 +774,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug-to", type=Path, help="append ADAPT-visible events as JSONL"
     )
+    parser.add_argument(
+        "--no-normalize-extracter",
+        action="store_true",
+        help=(
+            "disable the evaluator-output normalizer (nested list payloads "
+            "otherwise raise 'list' object has no attribute 'get' and the "
+            "subtask is recorded as evaluation_failed)"
+        ),
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
     flags = V2FeatureFlags.from_names(args.v2_features)
+    if not args.no_normalize_extracter:
+        # Config-parity neutral: only the shape of the evaluator payload is
+        # normalized; rubric text and reward semantics are untouched.
+        patch_evaluator_extracter()
     run_selected(
         agent_kind=args.agent,
         cohort=args.cohort,

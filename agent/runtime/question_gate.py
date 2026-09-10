@@ -64,6 +64,17 @@ class QuestionGate:
             if len(runtime.asked_dimensions) >= 2:
                 return QuestionDecision(False, reason="question budget exhausted")
             return QuestionDecision(True, "candidate_choice")
+        if runtime.phase == RuntimePhase.SELECT and runtime.selection_made:
+            # The user endorsed a specific candidate without asking for a
+            # transaction. Asking once whether to proceed is the only legal way
+            # forward; blocking it forced a terminal refusal (E-035).
+            if "execution_confirmation" in runtime.asked_dimensions:
+                return QuestionDecision(
+                    False, reason="execution confirmation was already asked"
+                )
+            if len(runtime.asked_dimensions) >= 2:
+                return QuestionDecision(False, reason="question budget exhausted")
+            return QuestionDecision(True, "execution_confirmation")
         return QuestionDecision(
             False, reason=f"questions are not allowed in phase {runtime.phase.value}"
         )
@@ -74,3 +85,7 @@ class QuestionGate:
             runtime.commit_question(decision.dimension)
             if decision.dimension == "candidate_choice":
                 runtime.phase = RuntimePhase.SELECT
+            if decision.dimension == "execution_confirmation":
+                # The next user turn answers "shall I proceed?"; a
+                # non-declining answer authorizes the write (E-036).
+                runtime.execution_confirmation_pending = True

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from agent.intent import is_transaction_request
 from agent.memory.facts import PreferenceFact, infer_facet
 
 
@@ -178,34 +179,7 @@ class TaskSpec:
                 break
         facet = infer_facet(text, domain)
         action = "recommend"
-        if any(
-            k in text
-            for k in (
-                "下单",
-                "帮我点",
-                "给我点",
-                "再点",
-                "再买",
-                "再订",
-                "再来杯",
-                "再来一杯",
-                "点个",
-                "来杯",
-                "来一杯",
-                "帮我买",
-                "帮我订",
-                "买一下",
-                "买个票",
-                "定个",
-                "订个",
-                "订一间",
-                "买一份",
-                "预定",
-                "预约",
-                "团个券",
-                "直接帮我团",
-            )
-        ):
+        if is_transaction_request(text):
             action = "commit"
         elif any(k in text for k in ("取消", "改签", "修改")):
             action = "modify"
@@ -730,6 +704,10 @@ class CandidateLedger:
         self.candidates: dict[str, Candidate] = {}
         self.search_counts: dict[str, int] = {}
         self.search_family_counts: dict[str, int] = {}
+        # Observable query terms of the most recent search per family. The
+        # framework reuses these when it must fill an unobserved entity kind
+        # (E-035) instead of inventing new keywords.
+        self.last_search_arguments: dict[str, dict[str, Any]] = {}
         self.enrichment_read_counts: dict[str, int] = {}
         self.pending_payment_ids: set[str] = set()
         self.max_searches_per_family = max_searches_per_family
@@ -745,6 +723,7 @@ class CandidateLedger:
         self.candidates.clear()
         self.search_counts.clear()
         self.search_family_counts.clear()
+        self.last_search_arguments.clear()
         self.enrichment_read_counts.clear()
         self.pending_payment_ids.clear()
         self.require_max_preference_coverage = False
@@ -846,6 +825,7 @@ class CandidateLedger:
         family = self.search_family(tool_name)
         self.search_counts[signature] = self.search_counts.get(signature, 0) + 1
         self.search_family_counts[family] = self.search_family_counts.get(family, 0) + 1
+        self.last_search_arguments[family] = dict(arguments)
         return self.search_counts[signature]
 
     def register_enrichment_read(

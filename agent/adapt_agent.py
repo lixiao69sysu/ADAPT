@@ -42,6 +42,7 @@ from agent.runtime import (
     ToolErrorLedger,
     ToolRegistry,
     ToolRole,
+    requires_product_entity,
 )
 
 _ADAPT_POLICY = """
@@ -97,6 +98,7 @@ class ADAPTAgent(PersonalizationAgent):
         )
         self._replan_limit = 2
         self._recommendation_delivered = False
+        self._gap_search_tool = ""
 
     def set_current_instruction(self, instruction: str):
         previous = self._current_instruction
@@ -106,6 +108,7 @@ class ADAPTAgent(PersonalizationAgent):
             self.ledger.reset()
             self.tool_errors.reset()
             self._recommendation_delivered = False
+            self._gap_search_tool = ""
             self.memory.begin_subtask(instruction)
             self.task_spec = TaskSpec.compile(instruction)
             self.task_spec.resolved_slots.update(
@@ -213,7 +216,12 @@ class ADAPTAgent(PersonalizationAgent):
 
         if self.runtime.phase == RuntimePhase.DONE:
             completion = AssistantMessage(
-                role="assistant", content="操作已成功完成。"
+                role="assistant",
+                content=(
+                    "操作已成功完成。"
+                    if self.runtime.write_succeeded
+                    else "当前需求已处理完毕，如需继续操作请告诉我。"
+                ),
             )
             state.messages.append(completion)
             self.debug.emit("runtime_completed", facet=self.task_spec.facet)
@@ -248,6 +256,12 @@ class ADAPTAgent(PersonalizationAgent):
                 facet=self.task_spec.facet,
             )
             return enrichment, state
+
+        gap_search = self._framework_entity_gap_search()
+        if gap_search:
+            state.messages.append(gap_search)
+            self._observe_assistant(gap_search)
+            return gap_search, state
 
         recommendation = self._framework_recommendation()
         if recommendation:
@@ -876,6 +890,95 @@ class ADAPTAgent(PersonalizationAgent):
             recovered_value=recovered.recovery.recovered_value,
         )
         return assistant
+
+    def _framework_entity_gap_search(self) -> AssistantMessage | None:
+        """Search for the last entity kind a nearly-ready CREATE still misses.
+
+        A shop-level search can leave ``product_id`` unobserved while the
+        policy model invents a name from memory; the deterministic validator
+        then rejects every attempt and the subtask ends with no order (E-035).
+
+        The hook is deliberately narrow: it only fires for a create tool whose
+        *other* required entities are already observed, so it never replaces
+        the normal venue-level search and cannot cascade across every create
+        tool in a domain. Keywords come from observable terms only: the
+        instruction's task atoms and the agent's own previous search query.
+        """
+        if not self.runtime.authorization.create_authorized:
+            return None
+        if self.runtime.phase not in {
+            RuntimePhase.SEARCH,
+            RuntimePhase.SELECT,
+            RuntimePhase.READY_TO_CREATE,
+        }:
+            return None
+        observed = {
+            candidate.entity_type for candidate in self.ledger.candidates.values()
+        }
+        if not observed:
+            return None
+        product_needed = requires_product_entity(
+            self.task_spec.instruction, self.decision_card.must
+        )
+        for tool_name, kinds in sorted(
+            self.tool_registry.create_gaps(self.ledger).items()
+        ):
+            missing = set(kinds)
+            if len(missing) != 1:
+                continue
+            witnessed = self.tool_registry.required_entity_types(tool_name) & observed
+            if not witnessed:
+                continue
+            kind = next(iter(missing))
+            if kind == "product" and not product_needed:
+                continue
+            search_tool = self.tool_registry.search_tool_for(kind)
+            if not search_tool or search_tool == self._gap_search_tool:
+                continue
+            if not self.ledger.search_allowed(search_tool):
+                continue
+            arguments = {"keywords": self._entity_gap_keywords()}
+            if not arguments["keywords"]:
+                continue
+            if self.tool_registry.validate_required(search_tool, arguments):
+                continue
+            count = self.ledger.register_search(search_tool, arguments)
+            if count > self.ledger.max_searches_per_family:
+                continue
+            self._gap_search_tool = search_tool
+            call = ToolCall(
+                id=f"adapt-gap-search-{self.ledger._turn}",
+                name=search_tool,
+                arguments=arguments,
+            )
+            self.debug.emit(
+                "entity_gap_search",
+                tool=search_tool,
+                for_tool=tool_name,
+                missing=sorted(missing),
+            )
+            return AssistantMessage(role="assistant", tool_calls=[call])
+        return None
+
+    def _entity_gap_keywords(self, limit: int = 4) -> list[str]:
+        """Observable query terms for a missing-entity search."""
+        terms: list[str] = []
+        for arguments in self.ledger.last_search_arguments.values():
+            value = arguments.get("keywords") or arguments.get("key_words")
+            if isinstance(value, str):
+                value = [value]
+            for item in value or []:
+                text = str(item).strip()
+                if text and text not in terms:
+                    terms.append(text)
+        if not terms:
+            for atom in (*self.decision_card.must, *self.decision_card.prefer):
+                text = str(atom).strip()
+                if 1 < len(text) <= 8 and text not in terms:
+                    terms.append(text)
+                if len(terms) >= limit:
+                    break
+        return terms[:limit]
 
     def _framework_recommendation(self) -> AssistantMessage | None:
         """Finish recommendation tasks directly from observed candidates.
