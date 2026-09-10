@@ -708,6 +708,9 @@ class CandidateLedger:
         # framework reuses these when it must fill an unobserved entity kind
         # (E-035) instead of inventing new keywords.
         self.last_search_arguments: dict[str, dict[str, Any]] = {}
+        # Administrative units of the user's own registered address, supplied by
+        # the owning agent. Used only as an observable proximity tie-break.
+        self.home_tokens: list[str] = []
         self.enrichment_read_counts: dict[str, int] = {}
         self.pending_payment_ids: set[str] = set()
         self.max_searches_per_family = max_searches_per_family
@@ -933,9 +936,21 @@ class CandidateLedger:
             if typed:
                 candidates = typed
                 break
+        from agent.runtime.location import location_rank
         from agent.runtime.ranking import CandidateRanker
 
-        return CandidateRanker().rank(candidates, card, limit)
+        parent_ranks = {
+            candidate.candidate_id: location_rank(candidate, self.home_tokens)
+            for candidate in self.candidates.values()
+            if candidate.entity_type in {"shop", "store", "hotel"}
+        }
+        return CandidateRanker().rank(
+            candidates,
+            card,
+            limit,
+            location_tokens=self.home_tokens,
+            parent_ranks=parent_ranks,
+        )
 
     def unique_evidence_leader(self, card: DecisionCard) -> Candidate | None:
         """Return a candidate only when observable preference evidence is decisive.

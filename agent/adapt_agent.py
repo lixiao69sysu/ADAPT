@@ -44,6 +44,11 @@ from agent.runtime import (
     ToolRole,
     requires_product_entity,
 )
+from agent.runtime.location import (
+    candidate_rating,
+    home_tokens,
+    location_rank,
+)
 
 _ADAPT_POLICY = """
 
@@ -82,6 +87,10 @@ class ADAPTAgent(PersonalizationAgent):
         self.task_spec = TaskSpec.compile("")
         self.decision_card = DecisionCard()
         self.ledger = CandidateLedger()
+        # Observable proximity context: the administrative units of the user's
+        # own registered address, used only to break ranking ties.
+        self.home_tokens = home_tokens(self.user_profile)
+        self.ledger.home_tokens = list(self.home_tokens)
         self.runtime = TaskRuntime.begin(self.task_spec)
         self.tool_registry = ToolRegistry()
         self.tool_errors = ToolErrorLedger()
@@ -106,6 +115,7 @@ class ADAPTAgent(PersonalizationAgent):
             if previous:
                 self._finalize_visible_trajectory()
             self.ledger.reset()
+            self.ledger.home_tokens = list(self.home_tokens)
             self.tool_errors.reset()
             self._recommendation_delivered = False
             self._gap_search_tool = ""
@@ -1006,14 +1016,40 @@ class ADAPTAgent(PersonalizationAgent):
             if candidate.name
         ]
         evidence_counts = ranker.preference_match_counts(ranked, self.decision_card)
-        best_evidence = max(evidence_counts.values(), default=0)
-        shortlist = [
-            candidate
-            for candidate in ranked
-            if evidence_counts.get(candidate.candidate_id, 0) == best_evidence
-        ][:3]
+        decisive_counts = ranker.decisive_preference_scores(ranked, self.decision_card)
+        best_decisive = max(decisive_counts.values(), default=0.0)
+        if best_decisive > 0:
+            shortlist = [
+                candidate
+                for candidate in ranked
+                if decisive_counts.get(candidate.candidate_id, 0.0) == best_decisive
+            ][:3]
+        else:
+            # No decisive preference separates these candidates. Present the
+            # ranking order instead of narrowing on fuzzy coverage: the order
+            # already prefers proximity to the user's registered address and
+            # the published rating, while an incidental substring match must
+            # not hide a nearer, better-rated option (E-038).
+            shortlist = ranked[:3]
         if not shortlist:
             return None
+        # Observable ranking diagnostics: which candidates were considered, on
+        # what evidence, and how close each one is to the user's own address.
+        self.debug.emit(
+            "recommendation_ranking",
+            considered=[
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "evidence": evidence_counts.get(candidate.candidate_id, 0),
+                    "decisive": decisive_counts.get(candidate.candidate_id, 0.0),
+                    "proximity": location_rank(candidate, self.home_tokens),
+                    "rating": candidate_rating(candidate),
+                }
+                for candidate in ranked
+            ],
+            best_decisive=best_decisive,
+            home_tokens=list(self.home_tokens),
+        )
         lines = ["根据当前需求和你的偏好，我的推荐是："]
         for index, candidate in enumerate(shortlist, 1):
             details = []

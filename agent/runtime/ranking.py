@@ -59,7 +59,39 @@ class CandidateRanker:
             for candidate in candidates
         }
 
-    def rank(self, candidates: list[Any], card: Any, limit: int = 5) -> list[Any]:
+    def rank(
+        self,
+        candidates: list[Any],
+        card: Any,
+        limit: int = 5,
+        location_tokens: list[str] | None = None,
+        parent_ranks: dict[str, int] | None = None,
+    ) -> list[Any]:
+        """Order compliant candidates, then break ties observably.
+
+        Evidence score stays primary. Equal scores are broken by proximity to
+        the user's registered home (district, then city), then by the rating the
+        tool result published, then by recency and price. Without this, a tie
+        was decided by observation order alone, which let a candidate in
+        another district be presented as the top recommendation.
+
+        A product row carries no address of its own, so it inherits the best
+        proximity rank of its observed parent (the shop that sells it).
+        """
+        from agent.runtime.location import candidate_rating, location_rank
+
+        parent_ranks = parent_ranks or {}
+
+        def proximity(candidate: Any) -> int:
+            rank = location_rank(candidate, location_tokens or [])
+            if rank:
+                return rank
+            parents = getattr(candidate, "parent_ids", None) or []
+            return max(
+                (parent_ranks.get(str(parent), 0) for parent in parents),
+                default=0,
+            )
+
         alignment = self.preference_alignment(candidates, card)
         constraints = [
             constraint
@@ -152,9 +184,16 @@ class CandidateRanker:
             if candidate.inventory is not None and candidate.inventory > 0:
                 score += 0.5
             scored.append(
-                (score, candidate.observed_turn, -(candidate.price or 0), candidate)
+                (
+                    score,
+                    proximity(candidate),
+                    candidate_rating(candidate),
+                    candidate.observed_turn,
+                    -(candidate.price or 0),
+                    candidate,
+                )
             )
-        scored.sort(key=lambda item: item[:3], reverse=True)
+        scored.sort(key=lambda item: item[:5], reverse=True)
         return [item[-1] for item in scored[:limit]]
 
 
