@@ -1466,17 +1466,41 @@ def profile_address(profile: dict[str, Any], alias: str) -> str:
 
 
 def _profile_address(profile: dict[str, Any], alias: str) -> str:
+    """Resolve the registered address behind a home/company alias.
+
+    Street-level keys must win over place-level ones: a profile commonly holds
+    both 常住地 (city) and 常住住址 (street address), and matching on the shared
+    "常住" marker first returned the city. The environment cannot geocode a bare
+    city, so a write filled with it fails, and the validator rejected correct
+    street addresses for not containing the city (E-043).
+    """
     markers = (
-        ("home", "家", "家庭", "常住")
+        ("家", "home", "住址", "地址", "常住住", "居住")
         if alias == "home"
-        else ("company", "公司", "单位", "工作")
+        else ("公司", "单位", "工作", "company", "office")
     )
+    place_only = ("常住地", "所在地", "城市", "city", "province", "省", "籍贯")
+    street_markers = ("住址", "地址", "street", "detail")
+    candidates: list[tuple[int, str]] = []
     for key, value in profile.items():
-        if any(marker.lower() in str(key).lower() for marker in markers):
-            if isinstance(value, dict):
-                return str(value.get("address", ""))
-            return str(value)
-    return ""
+        text = str(key)
+        lowered = text.lower()
+        if not any(marker.lower() in lowered for marker in markers):
+            continue
+        if any(marker in text for marker in place_only):
+            # 常住地/籍贯 describe a place, never a deliverable address.
+            continue
+        resolved = (
+            str(value.get("address", "")) if isinstance(value, dict) else str(value)
+        )
+        if not resolved:
+            continue
+        score = 2 if any(marker in lowered for marker in street_markers) else 1
+        candidates.append((score, resolved))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
 
 
 def _normalize_search_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
