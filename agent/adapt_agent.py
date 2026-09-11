@@ -80,6 +80,8 @@ class ADAPTAgent(PersonalizationAgent):
         *args,
         enable_candidate_validation: bool = True,
         enable_lessons: bool = True,
+        enable_adapt_prompt: bool = True,
+        gate_phases: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -87,6 +89,11 @@ class ADAPTAgent(PersonalizationAgent):
             raise TypeError("ADAPTAgent requires ADAPTMemory")
         self.enable_candidate_validation = enable_candidate_validation
         self.enable_lessons = enable_lessons
+        # Isolation-rig switches (E-046): with the prompt blocks off and phase
+        # gating open, only the stock prompt and the write-time validators remain
+        # between the model and the environment.
+        self.enable_adapt_prompt = enable_adapt_prompt
+        self.gate_phases = gate_phases
         self.task_spec = TaskSpec.compile("")
         self.decision_card = DecisionCard()
         self.ledger = CandidateLedger()
@@ -226,6 +233,10 @@ class ADAPTAgent(PersonalizationAgent):
     @property
     def system_prompt(self) -> str:
         base = super().system_prompt
+        if not getattr(self, "enable_adapt_prompt", True):
+            # Isolation rig: only the stock prompt (base + profile + memory
+            # read) reaches the model, so the prompt tax is measurable.
+            return base
         lessons = (
             self.lessons.render(self.task_spec.domain, self.task_spec.facet)
             if self.enable_lessons
@@ -370,7 +381,11 @@ class ADAPTAgent(PersonalizationAgent):
         for attempt in range(self._replan_limit + 1):
             self._refresh_system_message(state)
             compact_messages(state.messages)
-            allowed_tools = self.tool_registry.allowed_tools(self.runtime, self.ledger)
+            allowed_tools = self.tool_registry.allowed_tools(
+                self.runtime,
+                self.ledger,
+                gate_phases=getattr(self, "gate_phases", True),
+            )
             generation_messages = self._generation_messages(
                 state, allowed_tools, attempt
             )
@@ -1069,7 +1084,11 @@ class ADAPTAgent(PersonalizationAgent):
             arguments=recovered.arguments,
         )
         assistant = AssistantMessage(role="assistant", tool_calls=[call])
-        allowed_tools = self.tool_registry.allowed_tools(self.runtime, self.ledger)
+        allowed_tools = self.tool_registry.allowed_tools(
+            self.runtime,
+            self.ledger,
+            gate_phases=getattr(self, "gate_phases", True),
+        )
         problems = self._preflight(assistant, allowed_tools)
         if problems:
             self.debug.emit(

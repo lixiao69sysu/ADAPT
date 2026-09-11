@@ -211,7 +211,22 @@ class ToolRegistry:
                 return True
         return False
 
-    def allowed_tools(self, runtime: TaskRuntime, ledger: CandidateLedger) -> list[Any]:
+    def allowed_tools(
+        self,
+        runtime: TaskRuntime,
+        ledger: CandidateLedger,
+        *,
+        gate_phases: bool = True,
+    ) -> list[Any]:
+        if not gate_phases:
+            # Isolation rig (E-046): every environment tool stays visible, so
+            # the model keeps the action space the stock agent has. Write-time
+            # validation is unaffected; only the per-phase crop is removed.
+            return [
+                tool
+                for tool in self.tools
+                if self.meta[tool.name].role != ToolRole.MEMORY
+            ]
         allowed: list[Any] = []
         for tool in self.tools:
             meta = self.meta[tool.name]

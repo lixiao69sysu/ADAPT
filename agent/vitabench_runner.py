@@ -230,11 +230,20 @@ def run_adapt_personalization_task(
     enable_candidate_validation: bool = True,
     enable_lessons: bool = True,
     enable_tiered_compaction: bool = True,
+    enable_adapt_prompt: bool = True,
+    gate_phases: bool = True,
     evaluator_retries: int = 2,
     evaluator_retry_backoff_seconds: float = 1.0,
     debug_path: Path | None = None,
 ) -> SimulationRun:
-    """Compose frozen ADAPT V1 with unchanged VitaBench components."""
+    """Compose frozen ADAPT V1 with unchanged VitaBench components.
+
+    ``enable_adapt_prompt`` and ``gate_phases`` exist for the isolation rig: the
+    first drops ADAPT's own prompt blocks (policy, decision card, runtime state,
+    lessons, ledger) so only the stock prompt remains, the second stops cropping
+    the tool set per phase. They let one factor be varied at a time when
+    comparing against the stock baseline (E-046).
+    """
     user_id = task.user_profile.get("user_id") if task.user_profile else task.id
     memory = ADAPTMemory(
         language=language,
@@ -255,6 +264,8 @@ def run_adapt_personalization_task(
         language=language,
         enable_candidate_validation=enable_candidate_validation,
         enable_lessons=enable_lessons,
+        enable_adapt_prompt=enable_adapt_prompt,
+        gate_phases=gate_phases,
     )
     user = PersonalizationUser(
         subtasks=task.subtasks,
@@ -327,6 +338,11 @@ def run_stock_or_v2_personalization_task(
             if agent_kind == "adapt_v2" and flags.hybrid_memory
             else rewrite
         )
+    elif memory_type == "adapt":
+        # Isolation rig (E-046): the stock agent, unchanged, but with ADAPT's
+        # memory backend. This isolates the cost of the memory *representation*
+        # from every control-layer difference.
+        memory = ADAPTMemory(language=language, user_id=user_id)
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
     prompts = get_prompts(language)
@@ -417,6 +433,8 @@ def _run_one_simulation(
     memory_type: str,
     debug_path: Path | None,
     agent_context_guard: bool,
+    enable_adapt_prompt: bool = True,
+    gate_phases: bool = True,
 ) -> SimulationRun:
     if agent_kind == "adapt_v1":
         return run_adapt_personalization_task(
@@ -431,6 +449,8 @@ def _run_one_simulation(
             enable_candidate_validation=enable_candidate_validation,
             enable_lessons=enable_lessons,
             enable_tiered_compaction=enable_tiered_compaction,
+            enable_adapt_prompt=enable_adapt_prompt,
+            gate_phases=gate_phases,
             evaluator_retries=evaluator_retries,
             evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
             debug_path=debug_path,
@@ -477,6 +497,8 @@ def run_selected(
     evaluator_retry_backoff_seconds: float = 1.0,
     debug_to: Path | None = None,
     agent_context_guard: bool = True,
+    enable_adapt_prompt: bool = True,
+    gate_phases: bool = True,
 ) -> dict:
     if agent_kind == "adapt":
         # Backward-compatible CLI spelling. V1 remains frozen and explicit in
@@ -578,6 +600,8 @@ def run_selected(
                     memory_type=memory_type,
                     debug_path=debug_to,
                     agent_context_guard=agent_context_guard,
+                    enable_adapt_prompt=enable_adapt_prompt,
+                    gate_phases=gate_phases,
                 )
             except Exception:
                 # One user crashing (e.g. agent context overflow) must not
@@ -743,11 +767,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-trials", type=int, default=1)
     parser.add_argument("--language", default="chinese")
     parser.add_argument(
-        "--memory-type", choices=("rewrite", "groundtruth"), default="rewrite"
+        "--memory-type",
+        choices=("rewrite", "groundtruth", "adapt"),
+        default="rewrite",
+        help=(
+            "memory backend; 'adapt' runs the stock agent with ADAPT's memory "
+            "backend to isolate the memory representation (E-046)"
+        ),
     )
     parser.add_argument("--no-candidate-validation", action="store_true")
     parser.add_argument("--no-lessons", action="store_true")
     parser.add_argument("--no-tiered-compaction", action="store_true")
+    parser.add_argument(
+        "--no-adapt-prompt",
+        action="store_true",
+        help=(
+            "isolation rig: drop ADAPT's own prompt blocks (policy, decision "
+            "card, runtime state, lessons, ledger) and keep only the stock "
+            "prompt, so the prompt tax can be measured separately"
+        ),
+    )
+    parser.add_argument(
+        "--no-phase-gating",
+        action="store_true",
+        help=(
+            "isolation rig: stop cropping the tool set per phase (every tool "
+            "stays visible); write-time validation is unchanged"
+        ),
+    )
     parser.add_argument(
         "--v2-features",
         nargs="*",
@@ -815,6 +862,8 @@ def main() -> None:
         evaluator_retry_backoff_seconds=args.evaluator_retry_backoff_seconds,
         debug_to=args.debug_to,
         agent_context_guard=not args.no_agent_context_guard,
+        enable_adapt_prompt=not args.no_adapt_prompt,
+        gate_phases=not args.no_phase_gating,
     )
 
 
