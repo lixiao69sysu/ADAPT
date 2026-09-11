@@ -82,6 +82,7 @@ class ADAPTAgent(PersonalizationAgent):
         enable_lessons: bool = True,
         enable_adapt_prompt: bool = True,
         gate_phases: bool = True,
+        focus_write_phase: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -94,6 +95,9 @@ class ADAPTAgent(PersonalizationAgent):
         # between the model and the environment.
         self.enable_adapt_prompt = enable_adapt_prompt
         self.gate_phases = gate_phases
+        # Isolation rig (E-047): default behaviour keeps the focused write-phase
+        # context; disabling it keeps the full transcript like the stock agent.
+        self.focus_write_phase = focus_write_phase
         self.task_spec = TaskSpec.compile("")
         self.decision_card = DecisionCard()
         self.ledger = CandidateLedger()
@@ -447,8 +451,12 @@ class ADAPTAgent(PersonalizationAgent):
         Keeping the full search transcript in READY_TO_CREATE anchors smaller
         policy models to the earlier search call even though that tool is no
         longer exposed. The system prompt already contains the compact
-        Candidate Ledger, so retain only the latest user turn and an explicit
-        controller directive during irreversible phases.
+        Candidate Ledger, so by default only the latest user turn and an explicit
+        controller directive are retained during irreversible phases.
+
+        ``focus_write_phase=False`` is the isolation rig (E-047): it keeps the
+        whole transcript, as the stock agent does, and appends the same
+        directive instead of replacing the history.
         """
         if self.runtime.phase not in {
             RuntimePhase.READY_TO_CREATE,
@@ -463,6 +471,23 @@ class ADAPTAgent(PersonalizationAgent):
             ),
             None,
         )
+        directive = self._write_phase_directive(allowed_tools, attempt)
+        if not getattr(self, "focus_write_phase", True):
+            return [*state.system_messages, *state.messages, directive]
+        # Some OpenAI-compatible Qwen servers accept only one system message,
+        # even when multiple system messages are consecutive at the beginning.
+        system_content = "\n\n".join(
+            message.content or "" for message in state.system_messages
+        )
+        focused = [
+            SystemMessage(role="system", content=f"{system_content}\n\n{directive.content}")
+        ]
+        if latest_user is not None:
+            focused.append(latest_user)
+        return focused
+
+    def _write_phase_directive(self, allowed_tools, attempt: int = 0) -> SystemMessage:
+        """The controller directive for an irreversible phase."""
         allowed_names = ", ".join(tool.name for tool in allowed_tools) or "none"
         chosen_candidate = None
         selection_source = ""
@@ -502,23 +527,13 @@ class ADAPTAgent(PersonalizationAgent):
         )
         directive = (
             "## Runtime controller\n"
-            f"Focused irreversible phase, replan attempt {attempt + 1}. "
+            f"Irreversible phase, replan attempt {attempt + 1}. "
             f"Allowed tools: {allowed_names}. {action} "
             "Do not call any search/read tool, ask a question, or answer "
             "with text only. The Candidate Ledger in the system prompt is "
             "the complete observation snapshot."
         )
-        # Some OpenAI-compatible Qwen servers accept only one system message,
-        # even when multiple system messages are consecutive at the beginning.
-        system_content = "\n\n".join(
-            message.content or "" for message in state.system_messages
-        )
-        focused = [
-            SystemMessage(role="system", content=f"{system_content}\n\n{directive}")
-        ]
-        if latest_user is not None:
-            focused.append(latest_user)
-        return focused
+        return SystemMessage(role="system", content=directive)
 
     def _framework_payment_question(self) -> str:
         if self.runtime.phase != RuntimePhase.READY_TO_PAY:

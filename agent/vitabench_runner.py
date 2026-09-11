@@ -232,6 +232,7 @@ def run_adapt_personalization_task(
     enable_tiered_compaction: bool = True,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    focus_write_phase: bool = True,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
     evaluator_retries: int = 2,
@@ -446,6 +447,7 @@ def _run_one_simulation(
     agent_context_guard: bool,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    focus_write_phase: bool = True,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
 ) -> SimulationRun:
@@ -516,6 +518,7 @@ def run_selected(
     agent_context_guard: bool = True,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    focus_write_phase: bool = True,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
 ) -> dict:
@@ -621,6 +624,7 @@ def run_selected(
                     agent_context_guard=agent_context_guard,
                     enable_adapt_prompt=enable_adapt_prompt,
                     gate_phases=gate_phases,
+                    focus_write_phase=focus_write_phase,
                     enable_profile_summary=enable_profile_summary,
                     summary_max_chars=summary_max_chars,
                 )
@@ -806,6 +810,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--summary-max-chars", type=int, default=800)
+    parser.add_argument(
+        "--keep-write-phase-history",
+        action="store_true",
+        help=(
+            "isolation rig: keep the full transcript in the write phases instead "
+            "of replacing it with the system prompt, the latest user turn and a "
+            "controller directive (E-047)"
+        ),
+    )
     parser.add_argument("--no-candidate-validation", action="store_true")
     parser.add_argument("--no-lessons", action="store_true")
     parser.add_argument("--no-tiered-compaction", action="store_true")
@@ -897,6 +910,7 @@ def main() -> None:
         gate_phases=not args.no_phase_gating,
         enable_profile_summary=args.profile_summary,
         summary_max_chars=args.summary_max_chars,
+        focus_write_phase=not args.keep_write_phase_history,
     )
 
 
