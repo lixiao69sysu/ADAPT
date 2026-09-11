@@ -70,6 +70,7 @@ class ADAPTMemory(BaseMemory):
         drift_threshold: int = 2,
         max_questions: int = 2,
         enable_summary_rewrite: bool = False,
+        summary_max_chars: int = 800,
         enable_tiered_compaction: bool = True,
         entity_index_max_entries: int = 500,
         **kwargs,
@@ -104,6 +105,7 @@ class ADAPTMemory(BaseMemory):
             enable_tiered_compaction,
         )
         self.enable_summary_rewrite = enable_summary_rewrite
+        self.summary_max_chars = summary_max_chars
         self._seen_interactions: set[str] = set()
         self._current_task_key: str = ""
 
@@ -116,18 +118,44 @@ class ADAPTMemory(BaseMemory):
 
         Repeated framework reads are intentionally side-effect free: retrieval
         does not change salience and proposing a question does not spend budget.
+
+        When the LLM profile summary is enabled it is prepended as one bounded
+        block. Trace comparison against the stock baseline showed that its
+        advantage on the same model comes from exactly this: a *generalized*
+        preference summary ("喜欢冷色调", "对哈密瓜过敏") that the policy model can
+        apply directly, instead of item-level facts it must generalize itself
+        (E-046). The card below stays the precision half used by the validators.
         """
         query = query or ""
+        summary = self._render_summary_block()
         if not query:
             active = [fact for fact in self.facts if fact.status == "active"]
             values = [fact.value for fact in sorted(active, key=lambda f: f.confidence, reverse=True)[:8]]
-            return "PREFER: " + " | ".join(values) if values else "No user preference information available yet."
+            card_text = (
+                "PREFER: " + " | ".join(values)
+                if values
+                else "No user preference information available yet."
+            )
+            return f"{summary}{card_text}" if summary else card_text
         card = self.compile_task(query)
         if with_suggestion:
             question = self.propose_question(query)
             if question:
                 card.ask.insert(0, question)
-        return card.render()
+        rendered = card.render()
+        return f"{summary}{rendered}" if summary else rendered
+
+    def _render_summary_block(self) -> str:
+        """The bounded profile summary block, or an empty string when disabled."""
+        if not self.enable_summary_rewrite:
+            return ""
+        text = (self._summary_text or "").strip()
+        if not text:
+            return ""
+        return (
+            "## 用户偏好归纳（来自历史交互，供推理参考）\n"
+            f"{text[: self.summary_max_chars]}\n\n"
+        )
 
     def compile_task(self, instruction: str) -> DecisionCard:
         """Compile instruction and active facts into a bounded Decision Card."""
@@ -691,20 +719,21 @@ class ADAPTMemory(BaseMemory):
 
         current = self._summary_text or "（空，暂无历史画像）"
         prompt = (
-            "你是一个用户偏好记忆管理器。维护一份准确、连贯、详细的用户偏好画像。\n\n"
+            "你是一个用户偏好记忆管理器。维护一份准确、连贯的用户偏好画像。\n\n"
             f"## 当前画像：\n{current}\n\n"
             f"## 新的交互记录：\n{interactions_text}\n\n"
-            "## 要求：合并新旧信息，输出一份更新后的、尽量详细的用户偏好画像。规则：\n"
-            "1. 保留仍有效的偏好，更新矛盾的，删除过时的；\n"
-            "2. 按维度组织，尽量写具体细节（具体事实比泛泛描述有用）：\n"
-            "   - 口味/饮食：具体口味（重口味/清淡/麻辣/酸辣/菌汤）、忌口（不吃大蒜/香菜/冰）、甜度冰度（少糖/多冰/不加糖/常温/热）\n"
-            "   - 常用品牌/商家：具体的品牌名、店铺名（如霸王茶姬、白象）\n"
-            "   - 常点商品：具体的商品名\n"
-            "   - 地点：工作地址、常住地址、常去区域\n"
-            "   - 服务要求：配送时长、到店/外卖偏好\n"
-            "   - 其他：消费习惯、时间偏好、价格敏感度\n"
-            "3. 只写有依据的偏好，不要推测；\n"
-            "4. 控制在1200字以内；每条都保留事实依据，直接输出画像，不要任何解释。"
+            "## 要求：合并新旧信息，输出更新后的用户偏好画像。规则：\n"
+            "1. 保留仍有效的偏好，更新与之矛盾的旧偏好，删除过时项；**新的明确表述优先于更早的推论**；\n"
+            "2. 优先输出**可复用的偏好维度**，而不是一次性的商品清单。维度示例（不限于此）：\n"
+            "   - 审美/风格：颜色倾向（冷色调/暖色调/低饱和）、风格（简约/复古）\n"
+            "   - 口味/饮食：口味（重口味/清淡/麻辣/酸辣/菌汤）、忌口与过敏（如对某食材过敏）、甜度冰度\n"
+            "   - 出行：方式（动车/高铁/飞机）、座位与舱位等级、住宿价位与档次、常选品牌\n"
+            "   - 地点：常住/工作地址所属区域、常去商圈、可接受的距离或时长\n"
+            "   - 服务：配送时长要求、单人/多人、到店或外卖、时间偏好\n"
+            "   - 消费：价格区间、频率、对促销的偏好\n"
+            "3. 具体商品名、商家名只在**重复出现**或**代表上述维度**时保留，且必须紧跟其所属维度；\n"
+            "4. 只写有依据的偏好，不要推测；有冲突时以最新一次为准；\n"
+            f"5. 控制在 {self.summary_max_chars} 字以内；直接输出画像，不要任何解释。"
         )
         try:
             from vita.data_model.message import SystemMessage, UserMessage
@@ -716,11 +745,11 @@ class ADAPTMemory(BaseMemory):
             ]
             _args = {k: v for k, v in (llm_args or {}).items()
                      if k not in ("max_tokens", "max_completion_tokens", "num_retries")}
-            response = generate(model=llm, messages=messages, max_tokens=4096,
+            response = generate(model=llm, messages=messages, max_tokens=2048,
                                 num_retries=0, **_args)
             if response is None or not response.content:
                 return None
-            return response.content.strip()[:1200]
+            return response.content.strip()[: self.summary_max_chars]
         except Exception:  # noqa: BLE001 - optional summary generation is best-effort
             return None
 

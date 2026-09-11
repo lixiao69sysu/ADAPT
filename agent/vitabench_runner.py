@@ -232,6 +232,8 @@ def run_adapt_personalization_task(
     enable_tiered_compaction: bool = True,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    enable_profile_summary: bool = False,
+    summary_max_chars: int = 800,
     evaluator_retries: int = 2,
     evaluator_retry_backoff_seconds: float = 1.0,
     debug_path: Path | None = None,
@@ -248,6 +250,8 @@ def run_adapt_personalization_task(
     memory = ADAPTMemory(
         language=language,
         user_id=user_id,
+        enable_summary_rewrite=enable_profile_summary,
+        summary_max_chars=summary_max_chars,
         enable_tiered_compaction=enable_tiered_compaction,
     )
     prompts = get_prompts(language)
@@ -435,6 +439,8 @@ def _run_one_simulation(
     agent_context_guard: bool,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    enable_profile_summary: bool = False,
+    summary_max_chars: int = 800,
 ) -> SimulationRun:
     if agent_kind == "adapt_v1":
         return run_adapt_personalization_task(
@@ -451,6 +457,8 @@ def _run_one_simulation(
             enable_tiered_compaction=enable_tiered_compaction,
             enable_adapt_prompt=enable_adapt_prompt,
             gate_phases=gate_phases,
+            enable_profile_summary=enable_profile_summary,
+            summary_max_chars=summary_max_chars,
             evaluator_retries=evaluator_retries,
             evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
             debug_path=debug_path,
@@ -499,6 +507,8 @@ def run_selected(
     agent_context_guard: bool = True,
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
+    enable_profile_summary: bool = False,
+    summary_max_chars: int = 800,
 ) -> dict:
     if agent_kind == "adapt":
         # Backward-compatible CLI spelling. V1 remains frozen and explicit in
@@ -602,6 +612,8 @@ def run_selected(
                     agent_context_guard=agent_context_guard,
                     enable_adapt_prompt=enable_adapt_prompt,
                     gate_phases=gate_phases,
+                    enable_profile_summary=enable_profile_summary,
+                    summary_max_chars=summary_max_chars,
                 )
             except Exception:
                 # One user crashing (e.g. agent context overflow) must not
@@ -775,6 +787,16 @@ def build_parser() -> argparse.ArgumentParser:
             "backend to isolate the memory representation (E-046)"
         ),
     )
+    parser.add_argument(
+        "--profile-summary",
+        action="store_true",
+        help=(
+            "let the LLM maintain a bounded, generalized preference summary "
+            "and inject it into the prompt (baseline-style memory); off by "
+            "default pending the paired measurement (E-046)"
+        ),
+    )
+    parser.add_argument("--summary-max-chars", type=int, default=800)
     parser.add_argument("--no-candidate-validation", action="store_true")
     parser.add_argument("--no-lessons", action="store_true")
     parser.add_argument("--no-tiered-compaction", action="store_true")
@@ -864,6 +886,8 @@ def main() -> None:
         agent_context_guard=not args.no_agent_context_guard,
         enable_adapt_prompt=not args.no_adapt_prompt,
         gate_phases=not args.no_phase_gating,
+        enable_profile_summary=args.profile_summary,
+        summary_max_chars=args.summary_max_chars,
     )
 
 
