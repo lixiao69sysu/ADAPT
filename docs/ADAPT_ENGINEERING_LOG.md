@@ -39,17 +39,46 @@
 
 ## 当前可复现基线（2026-09-10 更新）
 
-记录日期：2026-09-10。权威产物 `data/simulations/stock_avg4_8u.json`（8 用户 × 4 trial = 32 次，全部可评分）。
+记录日期：2026-09-10。权威产物 `data/simulations/stock_avg4_8u.json`。
 
 - VitaBench 边界：`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
-- stock（`PersonalizationAgent` + `RewriteMemory`）官方 subtask 级指标：**Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000**（评估单元 100 个「用户×子任务」）；task 级 Pass 为 0（官方 `is_successful` 要求 reward == 1.0）。
-- 逐用户 Avg@4：J365414 0.409、P722245 0.364、Q089190 0.304、U000828 0.304、E057330 0.288、E941775 0.286、M793481 0.273、O309411 0.125。
-- 官方 skill split：personalize 0.3198（n=344）、proactive 0.125（n=56）。
+- **baseline**：stock agent（`PersonalizationAgent` + `RewriteMemory`，与本项目同一 runner、同一模型、同一 seed），官方 subtask 级指标 **Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000**；task 级 Pass 为 0（官方 `is_successful` 要求 reward == 1.0）。逐用户结果见产物文件。
+- 官方 skill split：personalize 0.3198、proactive 0.125。
 - 非功能指标：`tool_errors` 11、`incomplete_payments` 25、agent 上下文守卫裁剪 147+ 次（0 次 agent 崩溃）。
 - 指标口径：一律用官方 `vita.metrics.agent_metrics.compute_metrics`（见 E-030）；`agent/trace_metrics.py` 只作开发期粗筛。
 - 评测完整性：12 条 evaluation_failed 轨迹经 ADAPT 侧补丁重评全部恢复（见 E-018 之后的归一化补丁与 `agent/reevaluate_guarded.py`）。
 
 更早的 v5 五用户证据（0.2108 等）保留在下方历史段落，仅作 development evidence。
+
+## 评测口径：官方 56 用户（正式基准）
+
+**正式评测范围是全部 56 个个性化用户**，由固定哈希种子 `ADAPT-2026` 切分为
+dev / blind / final（`agent/vitabench_runner.py::stable_user_split`）。标准命令：
+
+```powershell
+# 56 用户官方基准：先跑 Avg@1，通过后再冻结代码跑 Avg@4
+python -m agent.vitabench_runner --agent adapt --cohort all --num-trials 1 `
+  --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
+  --save-to data/simulations/adapt_all56_avg1.json
+```
+
+范围声明（避免误读）：
+
+- **56 用户正式基准尚未运行**；本文件当前所有 baseline 数字均为开发子集测量，不得表述为正式基准成绩。
+- ADAPT 侧对照同样来自开发子集，仅用于机制验证；正式结论以 56 用户测量为准。
+
+ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.json`，与 baseline 同一组用户与 seed）：
+
+| 轮次 | 修复内容 | 用户 A | 用户 B | 合计算术均值 |
+| --- | --- | --- | --- | --- |
+| guard1 | E-042 护栏化（重复下单 / 记忆工具 / 探索额度） | 0.154 | — | — |
+| guard3 | E-043 地址取值 | 0.154 | — | — |
+| guard4 | E-044 过敏提取 | 0.154 | 0.214 | 0.185 |
+| guard5 | E-045 建议式领先者 + 委托逃逸口 | 0.154 | 0.143 | 0.148 |
+| baseline 同单元 | stock agent | 0.308 | 0.286 | 0.296 |
+
+**结论口径**：ADAPT 目前约为 baseline 的 50–75%（单 trial，方差约 ±1 个单元）；
+`guard5` 相对 `guard4` 的下降无法与噪声区分，因此**不声称 E-045 带来增益**。
 
 ---
 
@@ -619,6 +648,52 @@
 - **适用边界**：这些改动只撤销"框架替代模型"的部分，保留全部写前校验、实体义务、日期算术与完整性护栏；探索额度仍受族预算约束，不会回到 E-031 的搜索 thrash。
 - **后续风险/下一步**：A/B 若仍低于 stock，则按"护栏化"继续下探（例如把阶段裁剪改为全工具暴露+写前校验），并按 P1/P2 的顺序做带开关的消融。
 - **能力抽象**：preference utilization / execution / long-horizon consistency。
+
+---
+
+## E-043：档案里同时有"常住地"和"常住住址"，框架取了城市当送货地址
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-INVARIANT`。按键的语义（地点 vs 街道）取值，不涉及具体用户或任务。
+- **难点**：配送单要么被**误判为地址不合规**，要么被**填成一个无法地理编码的城市名**，两种都由同一个取值错误引起，最终都走到终局拒绝。
+- **证据**：`data/simulations/ab_guard2_E057330.log` 中同一个水果拼盘子任务连续两次 `Error: Longitude and latitude not found for address 河南省郑州市`（我新加的地址补全把城市名填了进去）；同轮 preflight 拒绝里 9 次与地址相关（`address does not resolve to the user's home address`、`address argument does not satisfy required value`）。
+- **根因**：`_profile_address` 以标记 `常住` 匹配键，而档案里 `常住地`（城市）排在 `常住住址`（街道）之前，于是：
+  (1) 校验器把"模型的完整街道地址"与"城市"比较，互不包含 → 误拒正确地址；
+  (2) 地址补全用同一个函数取值 → 把正确地址覆盖成城市 → 环境无法地理编码。
+- **有效方案**：`_profile_address` 跳过纯地点键（`常住地`/`籍贯`/`所在地`/`城市`/`city`/`province`/`省`），只在街道级键（`住址`/`地址`/`street`/`detail`）中取值，并对街道级键加权优先。
+- **验证**：`agent/tests/test_no_self_inflicted_loops.py` 新增（街道地址胜过城市、仅城市时返回空、校验器接受完整街道地址，以及补全与不覆盖正确地址）；全量 341 单测通过。修复后地址补全事件在 A/B 中触发 10–11 次且不再报地理编码错误。
+- **适用边界**：只影响"档案地址解析"这一处；不改变任何写前约束的语义。
+- **后续风险/下一步**：不同数据源的地址键命名可能不同，新增键名时应只补街道级键。
+- **能力抽象**：execution grounding。
+
+## E-044：用户在历史里说过"哈密瓜过敏"，记忆层没提取出来
+
+- **日期**：2026-09-10
+- **状态**：VERIFIED
+- **通用性判定**：`GENERAL-MECHANICAL`。只依赖句式（把物品放在避让词之前），与用户、任务、品类无关。
+- **难点**：对一位**已确诊食物过敏**的用户，ADAPT 推荐并下单了含该过敏原的商品；同一单元 stock agent 明确避开并拿到分数。
+- **证据**：该用户的可观察行为记录里有原话——"活了快 30 年，才知道自己哈密瓜过敏…我们科室医生让我去查了过敏源，果然中招了"；`data/simulations/ab_guard3_E057330.log` 中 ADAPT 的卡片显示 `AVOID: 烧烤`（无哈密瓜）并下单含哈密瓜拼盘；修复后 `data/simulations/ab_guard4.log` 的卡片显示 `AVOID: 哈密瓜`，模型主动说明"不含哈密瓜"，并与 stock 选中**同一家店**。
+- **根因**：避让模式只匹配"不吃X/忌口X"这类**前置**说法；中文更常说"**X过敏**"。而"过敏"被当成前置标记时，会把**它后面的整句话**当成避让对象（抓出"，我就说为什么每次吃哈密瓜"这类垃圾），真对象反而丢失。
+- **有效方案**：新增后置模式（`X过敏`/`X忌口`/`X不能吃`/`X吃不了`/`X不碰`），并加一个跨度清洗器：剥掉前导虚词（`才知道自己哈密瓜过敏` → `哈密瓜`），对含标点或虚词的整句跨度直接丢弃（`…让我去查过敏源` → 不产出）。既有维度映射保留：过敏 → `safety`（硬约束，真排除候选），普通不吃 → `avoid`。
+- **验证**：`agent/tests/test_avoidance_signals.py` 9 个单测（真实原句、四种常见句式、三条负例不误报、`safety` 维度、卡片上出现硬 `EXCLUDES` 约束并改变候选排序）；全量 341 单测通过。
+- **适用边界**：只做"避让对象"的抽取与归一；不含任何品类词表，因此对未见过的食物同样适用。
+- **后续风险/下一步**：误报风险主要来自叙述性提及，已用"跨度含标点/虚词即丢弃"覆盖；仍需在更多用户上观察。
+- **能力抽象**：preference extraction / safety。
+
+## E-045：偏好领先者锁死候选、委托后禁止一切提问——两处"治理"仍然扣分
+
+- **日期**：2026-09-10
+- **状态**：PARTIAL（机制已验证生效，A/B 未见增益）
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自同用户同 seed 的配对 trace 与 preflight 拒绝统计。
+- **难点**：在 27 个开发子集单元里，34 次 preflight 拒绝中有 6 次是"偏好分领先者否决模型选择"，16 次是"用户已委托选择 → 一切提问被拒"（每次拒绝耗掉三轮重规划，有时直接走到终局拒绝）。
+- **证据**：`data/simulations/ab_guard4.jsonl` 的拒绝原因统计；修复后同一统计中委托类拒绝从 16 降到 6，并出现 `preference_leader_diverged` 4 次。
+- **根因**：两者都是"框架替模型决策"的残留。(1) 偏好原子计数含噪（E-038 已证明共享命中不具判别性），却用它否决候选；(2) 委托语义本该只禁止"再问选哪个"，实现上却禁止了该阶段的一切提问。
+- **有效方案**：(1) 领先者降级为建议——`validate_ranked_choice` 不再因"未选到分最高者"拒绝，只在 preflight 记录 `preference_leader_diverged`；**用户明确指定**仍然硬锁。(2) 委托与"用户认可候选"一样保留一次 `execution_confirmation` 逃逸口，回答非拒绝即视为授权。
+- **验证**：`agent/tests/test_no_self_inflicted_loops.py` 与 `test_agent_architecture.py` 更新（领先者建议语义、显式选择仍锁定、委托逃逸口）；全量 341 单测通过。A/B：`guard5` 未见增益（见"评测口径"表），**不声称有效**，标记 PARTIAL 待 56 用户测量。
+- **适用边界**：仍保留全部硬约束与写前校验；只撤销"以噪声分数否决选择"和"以委托为由禁止一切提问"。
+- **后续风险/下一步**：单 trial 方差（±1 单元）掩盖了效应，需要多 trial 或更宽的用户范围才能判定。
+- **能力抽象**：execution / preference utilization。
 
 ---
 
