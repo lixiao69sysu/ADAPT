@@ -697,6 +697,33 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 
 ---
 
+## E-046：相对 baseline 的净负来自"表示 + 自由度"，不来自缺失的机制补丁
+
+- **日期**：2026-09-10
+- **状态**：OPEN（隔离实验已启动：R2/R3/R4）
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自代码结构与同用户同 seed 的配对轨迹对比，不读 rubric。
+- **难点**：本轮修掉 E-032…E-045 十四个"必然失败"后，ADAPT 在开发子集上仍只有 baseline 的 50–75%，且每加一处机制都在噪声内抖动（"打补丁—回退"循环）。需要回答的是**为什么 baseline 强**，而不是继续补机制。
+- **代码级证据（baseline 为什么强）**：
+  1. `PersonalizationAgent.system_prompt` 只拼三段：VitaBench 自带 `domain_policy`（很短）+ `## 当前用户基础信息`（完整注册档案）+ `## User Preference Memory`（`memory.read(query=当前指令)`）。**没有** ADAPT 附加的 policy / 决策卡 / 运行时状态 / lessons / 候选账本。
+  2. `RewriteMemory` 的记忆是 **LLM 重写**的：`memory_update_prompt.yaml` 明确要求"保留有效偏好 / 更新矛盾偏好 / 新增偏好 / 按饮食-消费-时间-地点-服务等维度结构化"。因此它输出的是**维度级结论**（"喜欢冷色调""对哈密瓜过敏"），而 `ADAPTMemory` 关闭了摘要改写（`enable_summary_rewrite=False`），只产出**条目级事实**（"冰蓝色系眼影盘""蓝色星空十字绣"）——模型必须自己做两跳概括，实测它没做。
+  3. baseline **不裁剪工具**、无阶段机、无终局拒绝路径；ADAPT 的 `allowed_tools` 按 phase 裁剪，且 `_generation_messages` 在 `READY_TO_CREATE/READY_TO_PAY` 会把消息历史**替换**为"system + 最后一条 user + 指令"，等于拿走模型自己的工具观察。
+  4. 探索与发言：baseline 每单元搜索 3.1 次（ADAPT 1.0）；baseline 108 单元里 **9 个零写操作拿满分**（推荐+理由本身得分），ADAPT 在 commit 类任务里直接下单，偏好推理不出现在对话中。
+  5. 分数结构：baseline 的单元分普遍是 0.1–0.5 的**部分分**，ADAPT 呈两极（0 或 1.0）→ 目标函数错位：baseline 优化"可见地满足偏好"，ADAPT 优化"任务完成、不犯错"。
+- **根因**：机制层的收益在 E-032…E-045 中已基本取尽（0.06 → 0.15–0.21 全部来自"消除自己制造的故障"）；剩余差距在**记忆表示**（归纳 vs 条目）、**prompt 税**（多几千字符且替换历史）、**动作空间**（阶段裁剪）。任何新增门禁都在用规则替换 27B 的判断力，因此表现为净负。
+- **有效方案（隔离实验设计）**：一次只变一个因子，全部与 baseline 同用户同 seed 对比：
+  | 变体 | agent | prompt | 记忆 | 工具 |
+  | --- | --- | --- | --- | --- |
+  | R1 baseline | stock | stock | RewriteMemory | 全量 |
+  | R2 | stock | stock | **ADAPTMemory**（`--memory-type adapt`） | 全量 |
+  | R3 | adapt | **仅 stock prompt**（`--no-adapt-prompt`） | ADAPTMemory | 全量 |
+  | R4 | adapt | stock + ADAPT 附加 | ADAPTMemory | **全量**（`--no-phase-gating`） |
+- **验证**：`agent/tests/test_isolation_rig.py` 3 个单测（默认裁剪 vs 全暴露、框架内部记忆写工具始终隐藏、`--no-adapt-prompt` 时 prompt 与 stock 完全一致）；全量 344 单测通过。
+- **适用边界**：隔离开关只用于对照实验，不改变默认行为；产出的结论用于决定下一轮做哪一项结构性改造。
+- **后续风险/下一步**：按隔离结果排序改造优先级（预期：① 记忆回到"有界 LLM 归纳 + 候选接地过滤"；② 去 prompt 税并恢复完整历史；③ 全工具暴露、只保留可修复校验）。**验收规则**：任何改动必须在固定配对装置上胜过对照，否则默认回退。
+- **能力抽象**：preference extraction / utilization / long-horizon consistency。
+
+---
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。
