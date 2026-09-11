@@ -718,6 +718,23 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
   | R3 | adapt | **仅 stock prompt**（`--no-adapt-prompt`） | ADAPTMemory | 全量 |
   | R4 | adapt | stock + ADAPT 附加 | ADAPTMemory | **全量**（`--no-phase-gating`） |
 - **验证**：`agent/tests/test_isolation_rig.py` 3 个单测（默认裁剪 vs 全暴露、框架内部记忆写工具始终隐藏、`--no-adapt-prompt` 时 prompt 与 stock 完全一致）；全量 344 单测通过。
+- **隔离结果（同 2 用户、同 seed、1 trial，`data/simulations/iso_*.json`）**：
+
+  | 变体 | prompt | 门禁 | 记忆 | E057330 | E941775 | 合计 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | baseline | stock | 无 | RewriteMemory | 0.308 | 0.286 | **0.296** |
+  | R2 | stock | 无 | ADAPTMemory | 0.154 | 0.214 | **0.185** |
+  | R3 | 仅 stock（去全部附加） | 有 | ADAPTMemory | 0.000 | 0.143 | 0.074 |
+  | R4 | stock + ADAPT 附加 | 全暴露 | ADAPTMemory | 0.077 | 0.143 | 0.111 |
+  | 全量 ADAPT | stock + ADAPT 附加 | 有 | ADAPTMemory | 0.154 | 0.143 | 0.148 |
+
+- **结论（两处推翻本条目最初的假设）**：
+  1. **记忆表示是主因**：仅替换记忆后端（R2，其余全为 stock）即从 0.296 掉到 0.185，约 0.11 的差距来自记忆；
+  2. **"prompt 税"不成立**：去掉全部 ADAPT 提示词附加反而更差（R3 0.074 < 全量 0.148）——决策卡/运行时状态/账本在**帮助**模型；
+  3. **"门禁税"不成立**：全工具暴露更差（R4 0.111 < 全量 0.148），阶段裁剪有净收益；
+  4. 同记忆下 stock agent（0.185）仍高于我们的 agent（0.148），残余约 0.04 来自控制层本身。
+  → **保留控制层，替换记忆表示**。
+- **有效方案（据此实施）**：`ADAPTMemory(enable_summary_rewrite=True)` 维护 LLM 画像并在 `read()` 中以**有界块**（默认 800 字）置顶注入；归纳提示词改为输出**可复用维度**（颜色/风格、口味与过敏、出行方式与等级、常去区域、服务、价格），具体商品与商家名仅在重复出现或代表维度时保留。runner 侧开关 `--profile-summary` / `--summary-max-chars`（默认关闭，待 R5 配对测量）。
 - **适用边界**：隔离开关只用于对照实验，不改变默认行为；产出的结论用于决定下一轮做哪一项结构性改造。
 - **后续风险/下一步**：按隔离结果排序改造优先级（预期：① 记忆回到"有界 LLM 归纳 + 候选接地过滤"；② 去 prompt 税并恢复完整历史；③ 全工具暴露、只保留可修复校验）。**验收规则**：任何改动必须在固定配对装置上胜过对照，否则默认回退。
 - **能力抽象**：preference extraction / utilization / long-horizon consistency。

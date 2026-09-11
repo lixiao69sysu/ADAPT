@@ -325,6 +325,8 @@ def run_stock_or_v2_personalization_task(
     evaluator_retry_backoff_seconds: float = 1.0,
     debug_path: Path | None = None,
     agent_context_guard: bool = True,
+    enable_profile_summary: bool = False,
+    summary_max_chars: int = 800,
 ) -> SimulationRun:
     """Run stock or ADAPT V2 through the same integrity-aware harness."""
     if agent_kind not in {"stock", "adapt_v2"}:
@@ -346,7 +348,12 @@ def run_stock_or_v2_personalization_task(
         # Isolation rig (E-046): the stock agent, unchanged, but with ADAPT's
         # memory backend. This isolates the cost of the memory *representation*
         # from every control-layer difference.
-        memory = ADAPTMemory(language=language, user_id=user_id)
+        memory = ADAPTMemory(
+            language=language,
+            user_id=user_id,
+            enable_summary_rewrite=enable_profile_summary,
+            summary_max_chars=summary_max_chars,
+        )
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
     prompts = get_prompts(language)
@@ -479,6 +486,8 @@ def _run_one_simulation(
         evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
         debug_path=debug_path,
         agent_context_guard=agent_context_guard,
+        enable_profile_summary=enable_profile_summary,
+        summary_max_chars=summary_max_chars,
     )
 
 
