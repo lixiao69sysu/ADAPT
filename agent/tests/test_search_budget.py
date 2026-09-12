@@ -129,8 +129,13 @@ def test_selection_after_recommendation_reaches_write_phase():
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 
-def test_explicit_purchase_request_promotes_without_another_search():
-    """E-033: an authorized write must not fall back to SEARCH (create blocked)."""
+def test_explicit_purchase_request_never_dead_ends_in_search():
+    """E-033 + E-049: an authorized write must not be stranded in SEARCH.
+
+    SEARCH forbids CREATE and so does SELECT, but SELECT still lets the model
+    ask about the open choice, and the bounded SELECT budget guarantees that an
+    unanswered choice cannot terminalise the subtask.
+    """
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我找个养生休闲的地方"))
     runtime.observe_candidates(30, execution_ready=True)
     assert runtime.phase == RuntimePhase.SELECT
@@ -138,7 +143,19 @@ def test_explicit_purchase_request_promotes_without_another_search():
     runtime.observe_user("那不行，你赶紧给我团一张啊，我都说好了。")
     assert runtime.authorization.create_authorized
     assert runtime.authorization.candidate_choice_authorized
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE, runtime.phase
+    # The turn reopens observation, where the model may search or ask. The
+    # choice is still open, so CREATE is not exposed yet.
+    assert runtime.phase in {RuntimePhase.SEARCH, RuntimePhase.SELECT}, runtime.phase
+    assert not runtime.choice_settled()[0]
+    runtime.observe_candidates(30, execution_ready=True)
+    assert runtime.phase == RuntimePhase.SELECT
+    # Two model generations in SELECT settle the choice for the model, so the
+    # write is always reachable.
+    runtime.note_select_turn()
+    assert runtime.phase == RuntimePhase.SELECT
+    runtime.note_select_turn()
+    assert runtime.choice_settled() == (True, "bounded select budget")
+    assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 
 def test_user_turn_without_purchase_intent_does_not_promote():

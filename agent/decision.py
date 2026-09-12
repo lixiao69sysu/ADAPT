@@ -1041,20 +1041,46 @@ class CandidateLedger:
             "choose from the maximum observable preference-coverage set"
         )
 
+    def evidence_leaders(self, card: DecisionCard, limit: int = 8) -> list[Candidate]:
+        """Candidates tied at the maximum *decisive* preference coverage.
+
+        Used by the learned preference-grounding policy to name the best
+        evidence-supported candidate; it is a control on which candidate the
+        framework points at, never a veto on writing (E-049).
+        """
+        ranked = self.shortlist(card, limit=limit)
+        if not ranked:
+            return []
+        from agent.runtime.ranking import CandidateRanker
+
+        scores = CandidateRanker.decisive_preference_scores(ranked, card)
+        best = max(scores.values(), default=0.0)
+        if best <= 0:
+            return []
+        return [
+            candidate
+            for candidate in ranked
+            if scores.get(candidate.candidate_id, 0.0) == best
+        ]
+
     def validate_ranked_choice(
         self,
         arguments: dict[str, Any],
         card: DecisionCard,
         selected_candidate_id: str = "",
     ) -> list[str]:
-        """Keep WRITE inside the compliant shortlist without taking over choice.
+        """Keep WRITE inside the observed set without taking the choice over.
 
-        Ranking is a retrieval aid, not an oracle: the policy model may choose
-        any compliant shortlisted candidate. An explicit user selection is a
-        real constraint and is enforced. A merely *leading* preference score is
-        not: trace comparison showed the blocking form wasting replans and, in
-        some units, ending the subtask in a refusal over noisy atom counts, so
-        the framework now only records the divergence (E-045).
+        Ranking is a retrieval aid, not an oracle. Only an explicit user
+        selection is a real constraint and is enforced; a merely leading
+        preference score and a position inside the rendered top-8 are not.
+
+        The positional form was a veto in disguise: a candidate the model had
+        genuinely observed, but which ranked ninth, produced a preflight
+        rejection, three replans and sometimes a terminal refusal. Divergence is
+        still observable through ``preference_leader_diverged`` and
+        ``shortlist_position_diverged``; the model chooses among compliant
+        observed candidates (E-045, E-049).
         """
         chosen = self.constraint_candidates(arguments)
         if not chosen:
@@ -1067,17 +1093,16 @@ class CandidateLedger:
                 f"selected {chosen_id}, but the user explicitly selected "
                 f"{selected_candidate_id} ({expected_name}); use that exact ID"
             ]
-        if selected_candidate_id:
-            return []
-        compliant_ids = {
-            candidate.candidate_id for candidate in self.shortlist(card, limit=8)
-        }
-        if compliant_ids and chosen_id not in compliant_ids:
-            return [
-                f"selected {chosen_id}, but it is outside the rendered compliant "
-                "Candidate shortlist; choose one of the visible shortlisted IDs"
-            ]
         return []
+
+    def shortlist_position(
+        self, candidate_id: str, card: DecisionCard, limit: int = 8
+    ) -> int:
+        """1-based position of an observed candidate in the rendered shortlist."""
+        for index, candidate in enumerate(self.shortlist(card, limit=limit), 1):
+            if candidate.candidate_id == candidate_id:
+                return index
+        return 0
 
     def render(
         self, card: DecisionCard | None = None, limit: int = 8, max_chars: int = 4200

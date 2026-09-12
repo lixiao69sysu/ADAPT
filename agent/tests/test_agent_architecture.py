@@ -654,7 +654,14 @@ def test_candidate_render_exposes_dynamic_preference_evidence():
     assert "preference_evidence=['三模']" in rendered
 
 
-def test_learned_strict_coverage_guard_rejects_only_lower_evidence_choice():
+def test_learned_strict_coverage_guard_names_the_evidence_leader_without_vetoing():
+    """The learned preference-grounding policy controls, it does not veto (E-049).
+
+    The blocking form cost six of twenty-one preflight rejections in one
+    two-user trace, and each rejection spends a replan. The policy now decides
+    which candidate the framework names in the write directive; a lower-evidence
+    write stays legal and remains observable.
+    """
     class Tool:
         name = "create_delivery_order"
 
@@ -712,10 +719,16 @@ def test_learned_strict_coverage_guard_rejects_only_lower_evidence_choice():
     assert observed == ["preference_undercoverage"]
 
     agent.ledger.require_max_preference_coverage = True
-    problems = agent._preflight(
+    assert not agent._preflight(
         AssistantMessage(role="assistant", tool_calls=[lower]), [Tool()]
     )
-    assert any("maximum observable preference-coverage set" in p for p in problems)
+    assert observed == ["preference_undercoverage", "preference_undercoverage"]
+    # ... and the policy now points the write directive at the best-evidence
+    # candidate instead.
+    agent.runtime.phase = RuntimePhase.READY_TO_CREATE
+    directive = agent._write_phase_directive([Tool()]).content
+    assert "learned preference-coverage policy" in directive
+    assert "S1_P00001" in directive
 
     best = ToolCall(
         id="best-evidence",
@@ -1741,10 +1754,16 @@ def test_candidate_choice_question_counts_once():
     assert not gate.evaluate("还需要我帮您选择吗？", runtime).allowed
 
 
-def test_direct_commit_delegates_candidate_choice_and_avoids_reconfirmation():
+def test_direct_commit_stays_in_select_until_the_choice_is_settled():
+    """E-049: the purchase instruction authorizes a write, not a candidate."""
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯喝的送到公司"))
     assert runtime.authorization.candidate_choice_authorized
     runtime.observe_candidates(5)
+    assert runtime.phase == RuntimePhase.SELECT
+    assert not runtime.choice_settled()[0]
+    runtime.observe_user("随便，你看着办")
+    runtime.observe_candidates(5)
+    assert runtime.choice_settled() == (True, "user delegated the choice")
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
     assert not QuestionGate().evaluate("确认下单吗？", runtime).allowed
 
@@ -1975,6 +1994,7 @@ def test_ready_to_create_exposes_only_create_tools():
         ]
     )
     runtime = TaskRuntime.begin(TaskSpec.compile("帮我点杯喝的送到公司"))
+    runtime.observe_user("随便，你看着办")
     runtime.observe_candidates(5)
     names = [tool.name for tool in registry.allowed_tools(runtime, CandidateLedger())]
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
@@ -2031,6 +2051,13 @@ def test_hotel_parent_candidate_requires_room_before_create_phase():
         "Hotel(hotel_id=S1_H00001, products=HotelProduct(product_id=S1_P00001, room_type=大床房, date=2026-02-19, quantity=1))",
     )
     runtime.observe_candidates(2, execution_ready=registry.execution_ready(ledger))
+    # E-049: one observed room leaves nothing to choose, so the choice is
+    # settled and CREATE is exposed without another question.
+    runtime.observe_choice_evidence(
+        leader_id="", executable_count=len(ledger.shortlist(DecisionCard(), limit=2))
+    )
+    runtime.observe_candidates(2, execution_ready=registry.execution_ready(ledger))
+    assert runtime.choice_settled() == (True, "single compliant candidate")
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 

@@ -89,6 +89,20 @@ Preference drift is scoped by `(scope, facet, dimension, category)`. Avoids,
 allergies and brands are multi-valued sets. Only genuinely single-valued,
 same-scope dimensions may supersede an older value.
 
+## Choice settlement
+
+`TaskRuntime.choice_settled()` is the single gate between observation and an
+irreversible write. `create_authorized` means the user allowed spending, not that
+the concrete item is known, so `READY_TO_CREATE` — the only phase that exposes a
+CREATE tool — is entered only when the choice is settled by observable evidence:
+an explicit user selection, the answer to a `candidate_choice`/`preference_choice`
+question, user delegation, a discriminating preference-evidence leader, a single
+compliant candidate, or a spent question budget. SELECT otherwise stays open so
+the model can ask or search; a bounded SELECT budget keeps the write reachable,
+and the question gate allows exactly the questions that settlement state permits.
+Never re-introduce "a compliant candidate exists, so force a CREATE", neither as
+a control nor as a learned lesson.
+
 ## Proactive questions
 
 - `propose_question()` is pure.

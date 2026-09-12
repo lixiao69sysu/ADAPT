@@ -77,8 +77,40 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 | guard5 | E-045 建议式领先者 + 委托逃逸口 | 0.154 | 0.143 | 0.148 |
 | baseline 同单元 | stock agent | 0.308 | 0.286 | 0.296 |
 
+隔离实验（同 2 用户、同 seed、1 trial，`data/simulations/iso_*.json`；R1 = 上表 baseline 行）：
+
+| 轮次 | 配置 | E057330 | E941775 | 合计 |
+| --- | --- | --- | --- | --- |
+| R1 baseline | stock + RewriteMemory | 0.308 | 0.286 | **0.2963** |
+| R2 | stock + ADAPTMemory（条目级） | 0.1538 | 0.2143 | 0.1852 |
+| R3 | ADAPT + 仅 stock prompt | 0.0000 | 0.1429 | 0.0741 |
+| R4 | ADAPT + 全工具暴露 | 0.0769 | 0.1429 | 0.1111 |
+| guard5 | ADAPT 全量（条目级记忆） | 0.1538 | 0.1429 | 0.1481 |
+| **R5a** | stock + ADAPTMemory **+ 有界 LLM 画像** | 0.3846 | 0.2143 | **0.2963** |
+| R5b | ADAPT 全量 + 画像 | 0.1538 | 0.0714 | 0.1111 |
+| R6a | R5b + 保留写阶段完整历史 | 0.1538 | 0.0714 | 0.1111 |
+| R6b | R5b + 放大上下文预算 | 0.1538 | 0.0714 | 0.1111 |
+| R7 | ADAPT 全量 + 画像（E-048 默认） | — | — | 未完成（见下） |
+
+R5a 扩展（4 个新用户、1 trial、`iso_R5a_ext.json`，对照为同用户同 seed 的 stock 缓存）：
+
+| 用户 | stock + RewriteMemory | stock + ADAPTMemory + 画像 |
+| --- | --- | --- |
+| J365414 | 0.3636 | **0.5455** |
+| M793481 | 0.2727 | 0.1818 |
+| P722245 | 0.3636 | 0.3636 |
+| Q089190 | 0.2857 | 0.2857 |
+| 合计 | 0.3191 | **0.3404** |
+
 **结论口径**：ADAPT 目前约为 baseline 的 50–75%（单 trial，方差约 ±1 个单元）；
 `guard5` 相对 `guard4` 的下降无法与噪声区分，因此**不声称 E-045 带来增益**。
+R6a/R6b 与 R5b 完全同分（三条轨迹互不相同），**推翻"prompt 税/上下文裁剪"假设**：裁剪不是亏损来源。
+R5a 在 6 个用户上的净差为 +0.016（±1 单元的噪声量级）→ 记忆改造达到**持平**，**不声称超过 baseline**。
+
+R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/13 单元时按要求终止，前缀为 2/8 全对
+（同用户 `R5b` 全程 2/13）；`E941775` 未开始，**因此 R7 没有用户级分数，只有前缀观测**。
+前缀观测到的行为变化是：模型自己提问"你想选哪款？还是就来最经典的瑞士莲牛奶巧克力100g（¥29.9）？"，
+用户回答"随便，你看着办吧"——即 E-048 之后模型确实会先问再决定，这正是 E-049 要固化的形状。
 
 ---
 
@@ -738,6 +770,65 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 - **适用边界**：隔离开关只用于对照实验，不改变默认行为；产出的结论用于决定下一轮做哪一项结构性改造。
 - **后续风险/下一步**：按隔离结果排序改造优先级（预期：① 记忆回到"有界 LLM 归纳 + 候选接地过滤"；② 去 prompt 税并恢复完整历史；③ 全工具暴露、只保留可修复校验）。**验收规则**：任何改动必须在固定配对装置上胜过对照，否则默认回退。
 - **能力抽象**：preference extraction / utilization / long-horizon consistency。
+
+---
+
+## E-047：写阶段上下文替换被怀疑为"prompt 税"，实测被推翻
+
+- **日期**：2026-09-11
+- **状态**：SUPERSEDED（假设不成立，开关保留为隔离装置）
+- **通用性判定**：`GENERAL-EMPIRICAL`。同用户同 seed 配对实验。
+- **难点**：E-046 的结论把差距归给"表示 + 自由度"，其中一项假设是：`_generation_messages` 在 `READY_TO_CREATE/READY_TO_PAY` 用"system + 最后一条 user + 控制器指令"**替换**整段历史，等于拿走模型自己的工具观察，因此模型在写阶段失忆。
+- **证据**：`data/simulations/iso_R6a_keep_history.json`（保留完整历史）与 `iso_R6b_big_context.json`（把 `ADAPT_CONTEXT_BUDGET_CHARS` 提到 200000、工具消息上限提到 100000）与 `iso_R5b_adapt_summary.json` **三者同为 0.1111**，但三条轨迹互不相同（同分不同路径）。
+- **根因（修订后）**：写阶段上下文裁剪不是亏损来源；三条轨迹的单元级同分说明亏损集中在"候选选择/实体正确性"这一层，而不是上下文容量。
+- **有效方案**：`--keep-write-phase-history` 与上下文预算环境变量保留为隔离开关；默认行为不变。
+- **验证**：`agent/tests/test_isolation_rig.py`；`scripts/_wire_focus.py` 记录两个开关确实改变了送进模型的消息序列（否则"同分"只是开关没生效）。
+- **适用边界**：只在 dev 子集上验证过；不改默认值。
+- **后续风险/下一步**：上下文容量问题可能在更长序列（56 用户全程）出现，需要在正式基准上复测一次。
+- **能力抽象**：long-horizon consistency。
+
+---
+
+## E-048：框架替模型说话（罐头提问 + 推荐定稿）在"先问后做"的单元上净负
+
+- **日期**：2026-09-11
+- **状态**：PARTIAL（机制已实现并被前缀观测支持，尚无用户级增益证据）
+- **通用性判定**：`GENERAL-EMPIRICAL`。证据来自 5 个"stock 赢、ADAPT 输"单元的逐单元轨迹对比。
+- **难点**：把 stock 赢、ADAPT 输的 5 个单元拉出来逐条看，stock 的路径是"问口味/问地址/问时间 → 给对比 → 拿到确认 → 下单"；ADAPT 的路径是"直接下单"或者"框架代替模型说话"（`_framework_question` 罐头维度问题、`_framework_recommendation` 直接定稿 DONE）。框架发言把模型自己的澄清问句挤掉了。
+- **根因**：`framework_speech=True` 时框架在模型之前产出用户可见文本：罐头问题没有候选上下文，推荐定稿直接结束子任务（`phase=DONE`），两者都拿走了"用户看到选项后再补充约束"的机会。
+- **有效方案**：`framework_speech` 默认 `False`——不再有框架罐头提问，也不再有"推荐→DONE"；提问与推荐由模型自己产出。同时把问题门禁改为"只拦重复"：`QuestionGate` 只否决重复维度、未回答挂起问题、已委托/直接成交的候选问题、学习到的策略；**不再否决模型的新问题**。
+- **验证**：`agent/tests/` 351→365 单测（含新 `test_choice_settlement.py`）；R7 前缀观测到模型自己提问、用户回答"随便，你看着办吧"。
+- **适用边界**：`--framework-speech` 保留旧路径用于隔离对照；推荐类任务的收尾现在完全依赖模型发言。
+- **后续风险/下一步**：推荐类任务若模型不发文字，可能出现"无输出"轨迹（`_finalize_visible_trajectory` 的 `missed_write` 只统计成交类）。
+- **能力抽象**：proactiveness / execution。
+
+---
+
+## E-049：下单授权被当成"已经知道买哪个"，任何候选一到就强制 CREATE
+
+- **日期**：2026-09-12
+- **状态**：OPEN（R8 = E-049 配对测量进行中）
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 5 个失败单元的路径对比 + 5 处独立代码路径的语义一致性审查，不读 rubric。
+- **难点**：用户说"帮我买X"，`TaskSpec.compile` 会把 `action=commit` 同时写成 `create_authorized=True` 和 `candidate_choice_authorized=True`；于是只要搜索返回任何候选，`observe_candidates()` 立刻把 phase 推到 `READY_TO_CREATE`——该阶段**只暴露 CREATE 工具**，并附上"立刻调用 CREATE、不要提问、不要搜索"的控制器指令。模型因此**没有合法动作去问"要哪种口味/送到哪"**，只能凭记忆猜一个候选下单。而 action evaluator 用的是 `min(trajectory, action)`，选错实体就是 0 分。
+- **证据**：
+  1. 路径对比：stock 赢的单元全部是"先问后做"，ADAPT 输的单元是"直接做"或"框架替模型做"。用 `scripts/_unit_dialogue.py` 读 R7 前缀（E057330 前 8 个单元）可直接看到：单元 2 搜完鲜花后**没有问**，直接选"粉色康乃馨+百合"下单；单元 3/4/7/8 同样是"搜完立刻选一个下单"；同一前缀里唯一得分的单元 5 也是同一形状（说明这不是"必输"，而是**把可用信息丢掉后赌一把**）；
+  2. 单元 8 的失败链更直接：模型下单 → 框架拒绝并发出终局文本"现有候选无法满足硬约束，我没有执行下单。" → **之后**用户才回答"随便，你看着办吧"。框架在用户仍愿意接受服务时单方面终止了子任务；
+  3. 旧语义被 4 处独立代码写死：`state.observe_candidates`、`state.observe_user`、`question_gate`（`candidate_choice_authorized` 直接否决候选问题）、`_write_phase_directive`（框架指定候选人并要求立即落单）；
+  4. 反向激励：`_finalize_visible_trajectory` 把"有可执行候选但没下单"记为 `missed_write`，编译成 `force_decision_after_candidates` 策略，下一子任务里**重新武装**同一行为；
+  5. 相关成本：一次两用户 trace 里 21 次 preflight 拒绝中有 6 次来自学习到的"最大偏好覆盖"硬否决（每次拒绝耗一轮重规划，有时走到终局拒绝）。
+- **根因**：把两件事混为一谈——"用户授权我花钱"（authorization）与"我知道要买哪一个"（choice）。前者是用户给的，后者必须由**可观察证据**给出：用户选择、用户回答、用户委托、判别性偏好证据、或只有一个合规候选。
+- **尝试过但无效的方案**：（1）只把偏好领先者降级为建议（E-045）——领先者不再锁死，但 phase 仍被强制推进；（2）只让框架不发言（E-048）——模型获得了发言机会，但 phase 仍可能已进写阶段，CREATE 一暴露就没有回头路。
+- **有效方案**：引入单一判定 `TaskRuntime.choice_settled() -> (bool, source)`，把"阶段推进"和"问题门禁"都挂在它上面：
+  1. **阶段**：`_maybe_promote()` 是唯一能进入 `READY_TO_CREATE` 的入口，条件为 `create_authorized ∧ execution_ready ∧ candidates_seen ∧ choice_settled`；
+  2. **settled 的五个可观察来源**：显式选择/序号、`candidate_choice`/`preference_choice` 维度的**提问已被回答**、用户委托（随便/你看着办）、判别性偏好领先者（`unique_evidence_leader`，严格高于所有次席且非零）、只有一个合规候选；
+  3. **有界逃逸（防 E-033 类活锁）**：问题预算用尽，或在 SELECT 里连续两次模型生成仍未settle，则记为 `bounded select budget` 并推进——写入永远可达；新的用户回合重置该计数；
+  4. **门禁对称**：候选类问题在**未 settle 时允许**（这正是 stock 赢的形状），settle 之后拒绝（"再问也改变不了答案"）；`execution_ready=False` 时拒绝（答案无法被执行，先补实体）；
+  5. **学习信号修正**：`missed_write` 只在 `choice_settled` 后仍不下单时记录，杜绝用"任何候选都得下单"反向武装；
+  6. **硬否决 → 控制**：学习到的 `require_max_preference_coverage` 不再否决写入，改为在写阶段**指名最大证据覆盖候选**；`validate_ranked_choice` 只保留"用户显式选择"这一条硬否决，排名位置越界只记 `shortlist_position_diverged`。
+- **验证**：`agent/tests/test_choice_settlement.py`（14 个新单测：六个 settle 来源、门禁对称性、有界逃逸、显式选择仍硬锁、位置越界不再否决、`missed_write` 只在 settle 后学习、低覆盖写入不再被否决）；全量 **365 单测通过**；`python -m compileall -q agent` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。配对测量：R8（`data/simulations/iso_R8_choice_settlement.json`，E057330 + E941775，1 trial）进行中。
+- **适用边界**：只对 `create_authorized` 的成交类子任务生效；推荐类任务（无写授权）行为不变，问题门禁不介入。settle 的每一个来源都必须来自可观察证据，不含任何 user/task/candidate 特例。
+- **后续风险/下一步**：多一次澄清往返可能消耗 `max_steps`（长序列末尾尤其），需要用 R8 的单元轨迹确认；若某单元因"多问一轮"而超步，需要把问题预算进一步下调。
+- **能力抽象**：execution / missing information detection / preference utilization。
 
 ---
 

@@ -75,6 +75,8 @@ _SIZE_RE = re.compile(
     r"\b(3[4-9]|4[0-9]|5[0-2])(?:\s*[-~到]\s*(3[4-9]|4[0-9]|5[0-2]))?\s*码?"
 )
 _COUNT_RE = re.compile(r"([一二两三四五六七八九十\d]+)\s*(?:人|位|张|份|双|个)")
+# Question dimensions whose answer resolves *which* candidate to act on.
+_CHOICE_DIMENSIONS = {"candidate_choice", "preference_choice"}
 
 
 @dataclass
@@ -104,6 +106,14 @@ class TaskRuntime:
     candidates_seen: int = 0
     payment_question_sent: bool = False
     write_succeeded: bool = False
+    # Choice settlement (E-049). An authorization to buy is not knowledge of
+    # what to buy: the runtime only exposes CREATE once something observable has
+    # fixed the concrete candidate, otherwise the model may ask about it first.
+    choice_clarified: bool = False
+    evidence_leader_id: str = ""
+    executable_candidate_count: int = 0
+    select_turns: int = 0
+    choice_source: str = ""
     # Set when the agent asked whether to execute an endorsed candidate and the
     # user has not answered yet. A non-declining answer authorizes the write,
     # otherwise the runtime has no legal action left (E-036).
@@ -148,6 +158,10 @@ class TaskRuntime:
     def observe_user(self, text: str) -> None:
         content = (text or "").strip()
         self.last_user_answer = content[:240]
+        # A new user turn is a new decision opportunity: the model gets its
+        # bounded SELECT budget again before the framework settles the choice
+        # for it (E-049).
+        self.select_turns = 0
         if self.execution_confirmation_pending:
             self.execution_confirmation_pending = False
             # The agent asked "shall I proceed?" about an endorsed candidate.
@@ -174,9 +188,14 @@ class TaskRuntime:
             self.authorization.pay_declined = True
             self.authorization.pay_authorized = False
         if self.pending_question_dimension:
-            self._record_slot_answer(self.pending_question_dimension, content)
-            self.asked_dimensions.add(self.pending_question_dimension)
+            answered = self.pending_question_dimension
+            self._record_slot_answer(answered, content)
+            self.asked_dimensions.add(answered)
             self.pending_question_dimension = ""
+            if answered in _CHOICE_DIMENSIONS:
+                # The model asked precisely because the choice was open; the
+                # answer is that resolution, whatever it turned out to be.
+                self.choice_clarified = True
         can_revise = self.phase == RuntimePhase.READY_TO_PAY or (
             self.phase == RuntimePhase.DONE and not self.write_succeeded
         )
@@ -210,31 +229,21 @@ class TaskRuntime:
         # An authorized write with an executable candidate must not be pushed
         # back into SEARCH: that phase forbids the create tool and the model has
         # no legal action left (E-033 livelock). Promote immediately instead of
-        # waiting for another search round.
+        # waiting for another search round -- but only once the concrete
+        # candidate is settled (E-049).
         #
         # Once a write has succeeded in this subtask the promotion must NOT
         # re-arm: the trace showed a completion-style task recreating the same
         # order on every user turn (14 duplicate orders), because each turn
         # pushed the runtime back into READY_TO_CREATE (E-042).
-        if (
-            self.authorization.create_authorized
-            and (
-                self.authorization.choice_delegated
-                or self.authorization.candidate_choice_authorized
-                or self.selection_made
-                or self.force_decision_after_candidates
-            )
-            and self.execution_ready
-            and self.candidates_seen
-            and not self.write_succeeded
-        ):
-            self.phase = RuntimePhase.READY_TO_CREATE
+        self._maybe_promote()
         self.record(
             "user",
             text=content,
             phase=self.phase.value,
             delegated=self.authorization.choice_delegated,
             create_authorized=self.authorization.create_authorized,
+            choice_settled=self.choice_settled()[0],
         )
 
     def _record_slot_answer(self, dimension: str, text: str) -> None:
@@ -317,19 +326,83 @@ class TaskRuntime:
         self.candidates_seen = max(self.candidates_seen, int(count or 0))
         if count:
             self.phase = RuntimePhase.SELECT
-            if (
-                self.authorization.choice_delegated
-                or self.authorization.candidate_choice_authorized
-                or self.selection_made
-                or self.force_decision_after_candidates
-            ) and self.authorization.create_authorized and execution_ready and not self.write_succeeded:
-                self.phase = RuntimePhase.READY_TO_CREATE
+            self._maybe_promote()
         self.record(
             "candidates",
             count=count,
             execution_ready=execution_ready,
             phase=self.phase.value,
         )
+
+    def observe_choice_evidence(
+        self, leader_id: str = "", executable_count: int = 0
+    ) -> None:
+        """Record the ledger-derived facts that can settle the choice.
+
+        Supplied by the owning agent, because only it holds the candidate ledger
+        and the Decision Card. The runtime never ranks candidates itself.
+        """
+        self.evidence_leader_id = leader_id or ""
+        self.executable_candidate_count = int(executable_count or 0)
+
+    def choice_settled(self) -> tuple[bool, str]:
+        """Whether the concrete candidate is fixed by something observable.
+
+        E-049: the stock agent wins the units where it asks which flavour, which
+        address or what time it is and only then writes. ADAPT used to treat the
+        initial purchase instruction as if it also chose the product, so any
+        observed candidate immediately forced a CREATE and the model had no
+        legal way to ask. A choice counts as settled only when one of these
+        holds, and each of them is checkable from the visible trajectory.
+        """
+        if self.selection_made or self.selected_candidate_id:
+            return True, "explicit user selection"
+        if self.authorization.choice_delegated:
+            return True, "user delegated the choice"
+        if self.choice_clarified:
+            return True, "candidate question answered"
+        if self.force_decision_after_candidates:
+            return True, "learned force-decision policy"
+        if self.evidence_leader_id:
+            return True, "unique preference-evidence leader"
+        if self.executable_candidate_count == 1:
+            return True, "single compliant candidate"
+        if self.candidates_seen and self.dimension_budget_spent:
+            return True, "question budget spent"
+        if self.candidates_seen and self.select_turns >= 2:
+            return True, "bounded select budget"
+        return False, ""
+
+    def note_select_turn(self) -> None:
+        """Count one model generation spent in SELECT and try the bounded escape."""
+        if self.phase == RuntimePhase.SELECT:
+            self.select_turns += 1
+            self._maybe_promote()
+
+    def promote_if_settled(self) -> bool:
+        """Expose CREATE when the choice is settled; report whether it was."""
+        self._maybe_promote()
+        return self.phase == RuntimePhase.READY_TO_CREATE
+
+    def _maybe_promote(self) -> None:
+        """Expose CREATE only for a write the user authorized and evidence settled."""
+        if self.write_succeeded or self.phase in {
+            RuntimePhase.WAIT_CREATE_RESULT,
+            RuntimePhase.WAIT_PAY_RESULT,
+            RuntimePhase.READY_TO_PAY,
+        }:
+            return
+        if not self.authorization.create_authorized:
+            return
+        if not (self.execution_ready and self.candidates_seen):
+            return
+        settled, source = self.choice_settled()
+        if not settled:
+            return
+        if self.choice_source != source:
+            self.choice_source = source
+            self.record("choice_settled", source=source)
+        self.phase = RuntimePhase.READY_TO_CREATE
 
     def observe_tool_result(
         self, tool_name: str, content: str, error: bool = False
@@ -384,9 +457,11 @@ class TaskRuntime:
     def render(self) -> str:
         auth = self.authorization
         gaps = self.critical_gaps()
+        settled, source = self.choice_settled()
         return (
             "## Deterministic runtime\n"
             f"PHASE={self.phase.value}\n"
+            f"CHOICE_SETTLED={settled}{f' ({source})' if source else ''}\n"
             f"CHOICE_DELEGATED={auth.choice_delegated}\n"
             f"CANDIDATE_CHOICE_AUTHORIZED={auth.candidate_choice_authorized}\n"
             f"CREATE_AUTHORIZED={auth.create_authorized}\n"

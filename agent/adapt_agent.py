@@ -65,6 +65,7 @@ _ADAPT_POLICY = """
 7. After create/book, pay only when separately authorized. If payment is declined, finish without paying.
 8. Never use evaluator rewards, rubrics, target IDs, or target/distraction annotations. They are not agent observations.
 9. When PHASE=ready_to_create, call the exposed CREATE tool immediately with the best compliant Candidate Ledger entry. Do not reconfirm, search, or inspect it again.
+10. When PHASE=select with CHOICE_SETTLED=False, the concrete item is not decided yet: ask one question that separates the observed candidates (which flavour, which one, where, when), or search for the missing evidence first. An order request authorizes the purchase, not a particular item.
 """
 
 _TOPPING_TERMS = ("布蕾", "珍珠", "芋泥", "芋圆", "波霸", "椰果", "仙草", "布丁", "红豆", "奶冻")
@@ -388,8 +389,10 @@ class ADAPTAgent(PersonalizationAgent):
         elif self.runtime.phase == RuntimePhase.SELECT:
             # Without the framework recommendation, a recommendation task still
             # has to end somewhere: the model decides, and this counter only
-            # feeds the debug stream.
+            # feeds the debug stream. It also arms the bounded escape that keeps
+            # an unsettled choice from dead-ending the subtask (E-049).
             self._select_turns += 1
+            self.runtime.note_select_turn()
 
         for attempt in range(self._replan_limit + 1):
             self._refresh_system_message(state)
@@ -419,6 +422,26 @@ class ADAPTAgent(PersonalizationAgent):
                 return assistant, state
 
             state.messages.append(assistant)
+            if (
+                problems
+                and all(problem.startswith("question gate:") for problem in problems)
+                and self.runtime.phase
+                in {RuntimePhase.SELECT, RuntimePhase.SEARCH, RuntimePhase.NEED_INFO}
+                and self.runtime.candidates_seen
+                and self.runtime.authorization.create_authorized
+                and self.runtime.choice_settled()[0]
+            ):
+                # The model tried to ask about a choice the gate may no longer
+                # allow, and SELECT exposes no write either, so spending the
+                # replan budget here would end the subtask in the refusal
+                # fallback (E-049). Settle the phase and let it act instead.
+                self.runtime.promote_if_settled()
+                self.debug.emit(
+                    "question_blocked_promoted",
+                    phase=self.runtime.phase.value,
+                    reason=self.runtime.choice_source,
+                )
+                continue
             correction = "ADAPT preflight rejected this action:\n- " + "\n- ".join(
                 problems
             )
@@ -515,6 +538,15 @@ class ADAPTAgent(PersonalizationAgent):
                     self.decision_card
                 )
                 selection_source = "unique preference-evidence leader"
+                if chosen_candidate is None and self.ledger.require_max_preference_coverage:
+                    # Learned preference-grounding policy (E-049): instead of
+                    # rejecting a lower-coverage write, the framework names the
+                    # best-evidence candidate and lets the model keep the
+                    # decision to write.
+                    leaders = self.ledger.evidence_leaders(self.decision_card)
+                    if leaders:
+                        chosen_candidate = leaders[0]
+                        selection_source = "learned preference-coverage policy"
         candidate_directive = ""
         if chosen_candidate is not None:
             parent_ids = ", ".join(chosen_candidate.parent_ids) or "none"
@@ -652,6 +684,37 @@ class ADAPTAgent(PersonalizationAgent):
         else:
             state.system_messages.append(SystemMessage(role="system", content=content))
 
+    def _note_choice_evidence(self) -> None:
+        """Push the ledger-derived choice facts the runtime cannot compute (E-049).
+
+        The runtime decides whether a write may be exposed; only the agent holds
+        the candidate ledger and the Decision Card, so the settlement evidence
+        (discriminating preference leader, number of compliant options) is
+        supplied here from observable tool results alone.
+        """
+        leader = self.ledger.unique_evidence_leader(self.decision_card)
+        compliant = self.ledger.shortlist(self.decision_card, limit=2)
+        self.runtime.observe_choice_evidence(
+            leader_id=leader.candidate_id if leader is not None else "",
+            executable_count=len(compliant),
+        )
+
+    def _emit_choice_state(self, trigger: str) -> None:
+        """Observable record of why the write phase is or is not open (E-049)."""
+        settled, source = self.runtime.choice_settled()
+        self.debug.emit(
+            "choice_state",
+            trigger=trigger,
+            phase=self.runtime.phase.value,
+            settled=settled,
+            source=source,
+            leader=self.runtime.evidence_leader_id,
+            compliant_candidates=self.runtime.executable_candidate_count,
+            candidates_seen=self.runtime.candidates_seen,
+            select_turns=self.runtime.select_turns,
+            asked_dimensions=sorted(self.runtime.asked_dimensions),
+        )
+
     def _observe_input(self, message: ValidAgentInputMessage) -> None:
         messages = (
             message.tool_messages
@@ -686,12 +749,14 @@ class ADAPTAgent(PersonalizationAgent):
                         ],
                     )
                     self.debug.emit("candidate_memory_retrieval", **grounding_stats)
+                    self._note_choice_evidence()
                     self.runtime.observe_candidates(
                         len(self.ledger.candidates),
                         execution_ready=self.tool_registry.execution_ready(
                             self.ledger, self.decision_card
                         ),
                     )
+                    self._emit_choice_state("observation")
                     self._emit_preference_alignment()
                 if item.error:
                     self._record_lesson(
@@ -741,12 +806,14 @@ class ADAPTAgent(PersonalizationAgent):
                     # executable. Re-evaluate it instead of forcing a duplicate
                     # search merely because observe_user() returned to SEARCH.
                     if self.ledger.candidates:
+                        self._note_choice_evidence()
                         self.runtime.observe_candidates(
                             len(self.ledger.candidates),
                             execution_ready=self.tool_registry.execution_ready(
                                 self.ledger, self.decision_card
                             ),
                         )
+                        self._emit_choice_state("user_answer")
                 if any(
                     marker in text
                     for marker in ("不是", "不对", "错了", "我说的是", "不要", "不用")
@@ -775,7 +842,13 @@ class ADAPTAgent(PersonalizationAgent):
             )
         elif has_question and not self._pending_question_decision.allowed:
             problems.append(f"question gate: {self._pending_question_decision.reason}")
-            if self.runtime.authorization.candidate_choice_authorized:
+            settled, _source = self.runtime.choice_settled()
+            if (
+                self.runtime.authorization.candidate_choice_authorized
+                and settled
+            ):
+                # Only a question asked *after* the choice was settled is a
+                # re-ask worth learning from (E-049).
                 self._record_lesson(
                     "candidate_choice_reask",
                     self._pending_question_decision.reason,
@@ -890,7 +963,7 @@ class ADAPTAgent(PersonalizationAgent):
                     # in some units, a terminal refusal, because it forced a
                     # candidate the model had deliberately not chosen on noisy
                     # atom counts (E-045). Hard constraints and an explicit
-                    # user selection are still enforced.
+                    # user selection are still enforced (E-049).
                     leader = self.ledger.unique_evidence_leader(self.decision_card)
                     chosen = self.ledger.constraint_candidates(call.arguments)
                     if (
@@ -903,6 +976,17 @@ class ADAPTAgent(PersonalizationAgent):
                             chosen=chosen[0].candidate_id,
                             leader=leader.candidate_id,
                         )
+                    if chosen:
+                        position = self.ledger.shortlist_position(
+                            chosen[0].candidate_id, self.decision_card
+                        )
+                        if position == 0:
+                            # Observed and compliant, but not in the rendered
+                            # crop: recorded, never vetoed (E-049).
+                            self.debug.emit(
+                                "shortlist_position_diverged",
+                                chosen=chosen[0].candidate_id,
+                            )
                     problems.extend(
                         self.ledger.validate_ranked_choice(
                             call.arguments,
@@ -922,9 +1006,14 @@ class ADAPTAgent(PersonalizationAgent):
                         self.debug.emit(
                             "preference_undercoverage_observed",
                             strict=self.ledger.require_max_preference_coverage,
+                            enforced=False,
                         )
-                        if self.ledger.require_max_preference_coverage:
-                            problems.append(coverage_gap)
+                        # E-049: the learned policy now changes *which candidate
+                        # the framework names* in the write directive instead of
+                        # vetoing the write. Six of the twenty-one preflight
+                        # rejections in one two-user trace came from this veto,
+                        # and each rejection costs a replan and can end the
+                        # subtask in a refusal.
             if (
                 role == ToolRole.CREATE
                 and not self.runtime.authorization.create_authorized
@@ -1436,12 +1525,14 @@ class ADAPTAgent(PersonalizationAgent):
         if 1 <= index <= len(shortlist):
             self.runtime.selected_candidate_id = shortlist[index - 1].candidate_id
             self.runtime.selection_made = True
+            self._note_choice_evidence()
             self.runtime.observe_candidates(
                 len(shortlist),
                 execution_ready=self.tool_registry.execution_ready(
                     self.ledger, self.decision_card
                 ),
             )
+            self._emit_choice_state("explicit_selection")
 
     def _emit_preference_alignment(self) -> None:
         """Expose capability-level evidence without evaluator information."""
@@ -1496,9 +1587,15 @@ class ADAPTAgent(PersonalizationAgent):
         has_executable_candidate = bool(
             self.ledger.shortlist(self.decision_card, limit=1)
         ) and self.tool_registry.execution_ready(self.ledger, self.decision_card)
+        settled, _source = self.runtime.choice_settled()
         if (
             self.runtime.authorization.create_authorized
             and has_executable_candidate
+            # E-049: an authorized write that merely had an open choice is not a
+            # missed write. Learning "force create after any executable
+            # candidate" from those subtasks is what armed the premature-write
+            # behaviour in the first place.
+            and settled
             and self.runtime.phase not in {
             RuntimePhase.WAIT_CREATE_RESULT,
             RuntimePhase.READY_TO_PAY,

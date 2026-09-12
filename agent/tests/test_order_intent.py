@@ -65,13 +65,24 @@ def test_completion_style_requires_a_quantity_or_item():
     assert not is_completion_style_request("行，那就第一个吧。")
 
 
-def test_ticket_order_authorizes_write_and_promotes_after_candidates():
+def test_ticket_order_waits_for_a_settled_choice_before_the_write():
+    """E-049: an authorization to buy is not knowledge of what to buy.
+
+    The runtime stays in SELECT - where the model may still ask which train or
+    which seat - and only exposes CREATE once something observable settles the
+    candidate.
+    """
     spec = TaskSpec.compile("周六要去绵阳找朋友，帮我定张车票")
     runtime = TaskRuntime.begin(spec)
     assert runtime.authorization.create_authorized
     assert runtime.authorization.candidate_choice_authorized
     assert not runtime.forbid_redundant_candidate_question
     runtime.observe_candidates(6, execution_ready=True)
+    assert runtime.phase == RuntimePhase.SELECT
+    assert not runtime.choice_settled()[0]
+    runtime.observe_user("那就 D1835 二等座吧，你看着办")
+    runtime.observe_candidates(6, execution_ready=True)
+    assert runtime.choice_settled()[0]
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 
@@ -162,6 +173,13 @@ def test_finalized_recommendation_reopens_for_a_follow_up_order():
     runtime.phase = RuntimePhase.DONE
     runtime.observe_user("那就帮我订一张吧")
     assert runtime.authorization.create_authorized
+    # The follow-up order reopens observation instead of firing a write the
+    # user never specified (E-049); the choice is still open here.
+    assert runtime.phase == RuntimePhase.SEARCH
+    assert not runtime.choice_settled()[0]
+    runtime.observe_user("就要第一个吧")
+    assert runtime.choice_settled()[0]
+    runtime.observe_candidates(3, execution_ready=True)
     assert runtime.phase == RuntimePhase.READY_TO_CREATE
 
 

@@ -66,20 +66,38 @@ class QuestionGate:
                     "an executable candidate"
                 ),
             )
-        if dimension == "candidate_choice" and runtime.authorization.choice_delegated:
-            return QuestionDecision(
-                False,
-                reason="the user delegated the choice; select a compliant candidate",
-            )
+        settled, source = runtime.choice_settled()
         if (
-            dimension == "candidate_choice"
-            and runtime.authorization.candidate_choice_authorized
+            dimension in {"candidate_choice", "preference_choice"}
+            and runtime.authorization.create_authorized
+            and runtime.candidates_seen
+            and not runtime.execution_ready
         ):
+            # Required entity information is still missing, so no answer could
+            # be acted on yet: expand the observed candidate set first and ask
+            # once it is executable (E-035, E-049).
             return QuestionDecision(
                 False,
                 reason=(
-                    "the direct execution request already authorizes candidate "
-                    "selection; expand required details or commit without reconfirming"
+                    "expand required details before asking which candidate "
+                    "to take; the current observation is not executable"
+                ),
+            )
+        if (
+            dimension in {"candidate_choice", "preference_choice"}
+            and settled
+            and runtime.authorization.create_authorized
+        ):
+            # The choice is fixed by the user's own answer, by delegation, by
+            # discriminating preference evidence or by a spent question budget.
+            # Asking again cannot change the answer, so the model must act
+            # (E-049). The gate never blocks a question while the choice is
+            # genuinely open: those are the units the stock agent wins (E-048).
+            return QuestionDecision(
+                False,
+                reason=(
+                    f"the candidate choice is already settled ({source}); "
+                    "act on the observed candidates"
                 ),
             )
         if dimension == "candidate_choice" and runtime.phase == RuntimePhase.SELECT and (
