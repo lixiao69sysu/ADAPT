@@ -92,6 +92,7 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 | R6b | R5b + 放大上下文预算 | 0.1538 | 0.0714 | 0.1111 |
 | R7 | ADAPT 全量 + 画像（E-048 默认） | — | — | 未完成（见下） |
 | **R8** | ADAPT 全量 + 画像 + E-048 + E-049 | 0.1538 | **0.2857** | **0.2222** |
+| **R9** | R8 + E-050（未决槽不再是死路） | 0.1538 | 0.2857 | 0.2222 |
 
 R8 逐单元（`data/simulations/iso_R8_choice_settlement.json`，`scripts/_unit_rewards.py`）：
 
@@ -100,7 +101,7 @@ R8 逐单元（`data/simulations/iso_R8_choice_settlement.json`，`scripts/_unit
 | E057330（13 单元） | 1、5 | 0.2885 | 0.3846 | 0.1538 | 0.1538 |
 | E941775（14 单元） | 7、12、13、14 | 0.2857 | 0.2143 | 0.0714 | **0.2857** |
 
-两个用户合计（27 单元）：stock 0.2870、R5a 0.2963、R5b 0.1111、**R8 0.2222**。
+两个用户合计（27 单元）：stock 0.2870、R5a 0.2963、R5b 0.1111、R8 0.2222、**R9 0.2222**。
 E941775 上 R8 追平 stock，且拿到**没有任何 ADAPT 配置拿过的单元 13、14**（单元 14 是 stock 4/4 全对的单元），
 其中单元 12/13 是 `create_instore_product_order` 成功落单——本文件此前记录的"ADAPT 从不出 venue 级写操作（0/20）"这条负债在 R8 中消失了。
 
@@ -873,6 +874,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   2. `ToolRegistry.allowed_tools`：`NEED_INFO` 同时放行 SEARCH（观察不等于承诺），只保留不可逆写操作隐藏；
   3. 兜底文案：重规划耗尽且槽仍未决时，输出该槽的问题（`_GAP_QUESTIONS`，与框架发言路径共用同一词表）而不是"无法满足硬约束"这种与事实不符的拒绝；没有具体槽时回到 `SEARCH` 继续观察。
 - **验证**：`agent/tests/test_open_slot_questions.py`（5 个单测：未决槽起始 NEED_INFO 且无挂起问题、模型可提问、已提交问题仍拦第二次、"NEED_INFO 仍暴露 SEARCH 但隐藏 CREATE"、回答后离开 NEED_INFO）；全量 **371 单测通过**；`compileall` 与 vendored 纯净检查通过。
+- **配对测量（R9，`data/simulations/iso_R9_open_slots.json`）**：
+  - 死路**类**被清零：整轮 27 个单元中 `a question is already waiting` 出现 **0 次**（R8 为 3 次），三个原本零工具调用的单元现在都产生了完整动作链；
+  - `E941775` 单元 2（stock 4/4）按预测**转为 1.0**：模型问"时间"槽 → 用户委托 → 搜航班 → `create_flight_order`；
+  - 但用户级总分不变（合计仍 0.2222）：同样的 1 单元损失在别处出现——`E941775` 单元 13 从 1.0 变成 0.0，机制完全相同（`unique preference-evidence leader` 结算 + `create_instore_product_order`），差别只在选中的候选，属单 trial 噪声量级（±1 单元）；
+  - 新增可观测性（`choice_state` 事件）显示结算来源已按预期工作：单元 17/18/25/26/27 由 `unique preference-evidence leader` 结算、单元 15/19 由用户委托结算、`E057330` 单元 13 由学习到的 force-decision 策略结算；单元 20 出现 5 次 `question budget exhausted` 拒绝但仍得分。
+  - **结论口径**：E-050 消除的是一整类**确定性的零工具调用失败**（机制已验证），其分数效应在当前 2 用户 1 trial 装置上被同量级的噪声掩盖（+1 单元 / −1 单元）。要给出分数结论需要多 trial 或更宽用户范围。
 - **适用边界**：只放宽"由未决槽引起的 NEED_INFO"；真正挂起的问题、重复维度、预算耗尽仍然拦截。终局拒绝文案只保留给"确实存在候选但都不合规"的情况。
 - **后续风险/下一步**：`_dimension_for` 的维度词表较粗（"从哪出发"会落到 `candidate_choice`），可能出现"同一维度只能问一次"过严；R9 的单元轨迹会显示是否需要细化。另外单元 12 的终局拒绝来自"没有任何航班候选"，需要在 R9 复查是否仍走到拒绝。
 - **能力抽象**：missing information detection / proactiveness / execution。
