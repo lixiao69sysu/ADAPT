@@ -787,8 +787,12 @@ def test_unserialized_category_hypernym_does_not_erase_observed_candidates():
         {
             "store_id": "S1_S00001",
             "product_ids": ["S1_P00001", "S1_P00002"],
+            # "送到家" now yields a real address contract (E-051), so a
+            # delivery write must carry the resolved address argument.
+            "address": "郑州市金水区沙门安置小区2栋302",
         },
         card,
+        {"常住住址": "郑州市金水区沙门安置小区2栋302"},
     )
 
 

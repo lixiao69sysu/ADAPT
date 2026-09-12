@@ -886,6 +886,27 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
 
 ---
 
+## E-051：框架自己编造了无法解析的地址，并把"送个东西到家"编译成推荐任务
+
+- **日期**：2026-09-12
+- **状态**：OPEN（机制已由单测与离线编译锁定；配对测量 R10 进行中）
+- **通用性判定**：`GENERAL-EMPIRICAL`。两个失败单元都可用零模型编译复现，且分别对应 stock 3/4 与 4/4 的单元。
+- **难点（两个独立缺陷）**：
+  1. **地址别名被当成字面地址**：`E057330` 单元 8「今天中午还是吃粉，给我点个粉送到单位来吧。」→ `_ADDRESS_RE` 把"送到"之后的文本整段捕获为 `单位来`（只剥了句尾"吧"），于是决策卡写成 `MUST: address=单位来` 且 operator=`contains`。模型照抄 `"address": "单位来"`，环境 `address_to_longitude_latitude` 抛 `Longitude and latitude not found for address 单位来`，重试同一参数被工具失败护栏拦下，子任务以终局拒绝结束。**stock 在 3/4 次试验中解出该单元。**
+  2. **"送"不是交易动词**：`E057330` 单元 10「好热，给我送个奶茶的到家来。」→ `_ORDER_VERB` 里没有"送"，`is_transaction_request` 为假，`TaskSpec.action` 编译成 **recommend**，`create_authorized=False`。模型给出了正确的对比表、接着宣布"我直接帮你下单了"，却被**我们自己的授权门禁**判为不允许写，随后反复读商品详情（23 次工具调用）而零产出。**stock 在 4/4 次试验中解出该单元。**
+- **根因**：两处都是"框架的表示层说谎"——一处把用户的地点别名变成环境无法地理编码的字面串，一处把明确的履约请求降级成信息咨询。模型在这两种情况下都按框架给的错误前提行动，失败看起来像模型能力问题，实际是框架造成的。
+- **证据**：`data/simulations/iso_R9.log`（单元 8 的 `单位来` 报错与后续护栏拒绝；单元 10 的对比表 + "我直接帮你下单了" + 23 次工具调用）、`data/simulations/iso_R9.jsonl`（单元 8：`create proposals 2`、`tool failure guard` ×4；单元 10：无 create 提案）、`scripts/_unit_events.py`、`scripts/_unit_dialogue.py`。
+- **有效方案**：
+  1. `_ADDRESS_RE` 之外新增 `_ALIAS_ADDRESS_RE`（`到|去|在` + 家/公司/单位/宿舍/办公室…），并引入 `_strip_address_particles`（剥句尾语气词与"来/去/就行/谢谢"）与 `_address_alias`：捕获串若是**地点别名**（可带 ≤3 字后缀）就解析成 `home`/`company` 并改用 `resolves_profile`；带结构特征（路/街/号/楼/小区/大厦…）的才保留为字面地址。`送到家乐福超市门口`、`送到郑州市金水区国基路166号` 保持字面，不被"家"劫持。
+  2. `_ORDER_VERB` 加入"送"。对象要求使 `帮我送到家`、`有没有送货服务` 仍然**不**构成交易请求。
+  3. `_normalize_address_call` 对**别名形态**的约束值一律经 `profile_address` 解析（不再只认 `resolves_profile`）；当工具 schema 声明了地址参数而调用**缺**该参数时也补齐（新增 `ToolMeta.argument_names` 提供 schema 全字段，避免给不接受地址的工具塞参数）。
+- **验证**：`agent/tests/test_address_alias_and_delivery_intent.py`（7 个单测：交易意图、信息请求不授权、`单位来`→company/`resolves_profile` 且卡片不再出现"单位来"、写参数被修复为注册单位地址、`到家`→home、真实地址不被劫持、旧 `contains` 卡片仍能解析）；全量 **378 单测通过**（其中 2 个既有测试按新契约更新：送货写在声明了地址参数时必须带地址）。
+- **适用边界**：别名表只含注册档案里确实存在的概念（家/公司/单位/宿舍/办公室/学校）；带结构标记的捕获串永不改写。仅影响 delivery 类带地址参数的写操作与含"送+对象"的交易判定。
+- **后续风险/下一步**：`送` 进入动词表后，含"送"的咨询句需要观察是否被误判（已加两条反例单测）；R10 在 4 个新 dev 用户上验证整体。
+- **能力抽象**：preference-to-action grounding / execution / missing information detection。
+
+---
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。

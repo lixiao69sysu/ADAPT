@@ -41,6 +41,7 @@ from agent.runtime import (
     RuntimePolicyStore,
     TaskRuntime,
     ToolErrorLedger,
+    ToolMeta,
     ToolRegistry,
     ToolRole,
     requires_product_entity,
@@ -671,16 +672,38 @@ class ADAPTAgent(PersonalizationAgent):
             return
         for constraint in constraints:
             operator = getattr(getattr(constraint, "operator", None), "value", "")
+            raw_value = str(constraint.value or "")
+            # An alias-shaped contract value ("单位", "公司", "家") resolves to
+            # the registered street address regardless of which operator the
+            # card used: the environment can only geocode the registered one
+            # (E-051).
+            resolved = profile_address(
+                getattr(self, "user_profile", None) or {}, raw_value
+            )
             if operator == "resolves_profile":
-                expected = profile_address(
-                    self.user_profile or {}, str(constraint.value or "")
-                )
+                expected = resolved
             else:
-                expected = str(constraint.value or "")
+                expected = resolved or raw_value
             if not expected:
                 continue
+            declared = set()
+            meta = getattr(self, "tool_registry", None)
+            if meta is not None:
+                declared = meta.meta.get(call.name, ToolMeta(call.name, ToolRole.READ)).argument_names
             for key in ("address", "location", "destination", "delivery_address"):
                 if key not in call.arguments:
+                    # A delivery write that omits the address it must deliver to
+                    # is repaired the same way as a wrong one, but only when the
+                    # tool actually declares that argument (E-051).
+                    if key not in declared:
+                        continue
+                    call.arguments[key] = expected
+                    self.debug.emit(
+                        "address_argument_repaired",
+                        tool=call.name,
+                        argument=key,
+                        replaced="",
+                    )
                     continue
                 current = str(call.arguments.get(key) or "")
                 if expected in current or current in expected:

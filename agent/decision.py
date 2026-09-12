@@ -48,6 +48,32 @@ _GENERIC_ENTITY_FRAGMENTS = (
 _ID_RE = re.compile(r"\b(?:S\d+_[A-Z]\d+|O[A-Z]?[A-Za-z0-9]+|B[A-Za-z0-9]{5,})\b")
 _FIELD_RE = re.compile(r"([A-Za-z_]+)=([^,)\n]+)")
 _ADDRESS_RE = re.compile(r"(?:送到|送去)([^，。；;!！?？]{2,40})")
+# "到家来", "到单位来", "去公司": a registered place named with a direction
+# verb instead of 送到. Without this the instruction carried no address
+# contract at all and the write used whatever the model guessed (E-051).
+_ALIAS_ADDRESS_RE = re.compile(
+    r"(?:到|去|在)(家|家里|家中|我家|公司|单位|店里|公司前台|办公室|学校|宿舍)"
+)
+_ADDRESS_PARTICLES = "吧呀啊哦呢嘛了啦来去"
+_ADDRESS_SUFFIXES = ("就行", "就成", "就好", "可以了", "谢谢", "麻烦")
+# Structural evidence that a captured phrase is a real address rather than a
+# registered place name.
+_ADDRESS_STRUCTURE_MARKERS = (
+    "路", "街", "道", "巷", "弄", "号", "栋", "幢", "座", "层", "室", "楼",
+    "小区", "大厦", "广场", "公寓", "花园", "园区", "学校", "医院", "机场",
+    "车站", "酒店", "宾馆",
+)
+_ADDRESS_ALIASES = {
+    "家": "home",
+    "家里": "home",
+    "家中": "home",
+    "我家": "home",
+    "公司": "company",
+    "单位": "company",
+    "店里": "company",
+    "公司前台": "company",
+    "办公室": "company",
+}
 _PARTY_SIZE_RE = re.compile(r"([一二两三四五六七八九十\d]+)\s*(?:个)?人")
 _ROUTE_RE = re.compile(
     r"(?:从)([^，。；;!！?？]{1,24}?)(?:到|去)([^，。；;!！?？]{1,24})"
@@ -239,18 +265,10 @@ class TaskSpec:
                     argument_name="date",
                 )
             )
-        address_match = _ADDRESS_RE.search(text)
+        address_match = _ADDRESS_RE.search(text) or _ALIAS_ADDRESS_RE.search(text)
         if address_match:
-            raw_address = address_match.group(1).strip().rstrip("吧呀啊")
-            alias = (
-                "home"
-                if raw_address in {"家", "家里", "家中"}
-                else (
-                    "company"
-                    if raw_address in {"公司", "单位", "店里", "公司前台"}
-                    else raw_address
-                )
-            )
+            raw_address = _strip_address_particles(address_match.group(1))
+            alias = _address_alias(raw_address)
             must.append(
                 Constraint(
                     "address",
@@ -1341,6 +1359,45 @@ def is_commit_tool(name: str) -> bool:
 
 def _is_commit_tool(name: str) -> bool:
     return is_commit_tool(name)
+
+
+def _strip_address_particles(value: str) -> str:
+    """Drop the sentence particles a captured address phrase picks up."""
+    text = (value or "").strip()
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _ADDRESS_SUFFIXES:
+            if text.endswith(suffix) and len(text) > len(suffix):
+                text = text[: -len(suffix)].strip()
+                changed = True
+        stripped = text.rstrip(_ADDRESS_PARTICLES).strip()
+        if stripped != text:
+            text = stripped
+            changed = True
+    return text
+
+
+def _address_alias(value: str) -> str:
+    """Resolve a captured address phrase to a profile alias when it is one.
+
+    ``_ADDRESS_RE`` captures everything after 送到, so "送到单位来吧" arrives as
+    "单位来". Keeping that as a literal address made the framework demand the
+    model write "单位来" verbatim: the environment cannot geocode it, the write
+    failed, the tool-failure guard blocked the retry and the subtask ended in
+    the terminal refusal while the stock agent completed the order (E-051).
+    """
+    text = _strip_address_particles(value)
+    if not text:
+        return ""
+    if text in _ADDRESS_ALIASES:
+        return _ADDRESS_ALIASES[text]
+    if any(marker in text for marker in _ADDRESS_STRUCTURE_MARKERS):
+        return text
+    for token, alias in _ADDRESS_ALIASES.items():
+        if len(token) >= 2 and text.startswith(token) and len(text) - len(token) <= 3:
+            return alias
+    return text
 
 
 def _required_slots(domain: str, facet: str, action: str, text: str) -> list[str]:

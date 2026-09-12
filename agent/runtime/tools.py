@@ -54,6 +54,7 @@ class ToolMeta:
     required_arguments: set[str] = field(default_factory=set)
     id_arguments: dict[str, str] = field(default_factory=dict)
     state_effect: str = ""
+    argument_names: set[str] = field(default_factory=set)
 
 
 class ToolRegistry:
@@ -95,10 +96,12 @@ class ToolRegistry:
             role = ToolRole.READ
         required: set[str] = set()
         id_arguments: dict[str, str] = {}
+        properties: set[str] = set()
         try:
             schema = tool.params.model_json_schema()
             required = set(schema.get("required", []))
-            for key in schema.get("properties", {}):
+            properties = set(schema.get("properties", {}))
+            for key in properties:
                 if key.endswith(("_id", "_ids")):
                     id_arguments[key] = key.removesuffix("_ids").removesuffix("_id")
         except (AttributeError, TypeError, ValueError):
@@ -108,7 +111,7 @@ class ToolRegistry:
             if role == ToolRole.CREATE
             else ("paid_order" if role == ToolRole.PAY else "")
         )
-        return ToolMeta(name, role, required, id_arguments, effect)
+        return ToolMeta(name, role, required, id_arguments, effect, properties)
 
     def role(self, name: str) -> ToolRole:
         return self.meta.get(name, ToolMeta(name, ToolRole.READ)).role

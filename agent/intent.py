@@ -63,7 +63,7 @@ TRANSACTION_MARKERS = (
     "再来一份",
 )
 
-_ORDER_VERB = "团|买|订|定|点|来|要|搞|弄|抢|捎|带|加|下"
+_ORDER_VERB = "团|买|订|定|点|来|要|搞|弄|抢|捎|带|加|下|送"
 _QUANTITY = r"一|两|二|三|四|五|六|七|八|九|十|几|半|\d+"
 _UNIT = (
     "张|个|份|单|杯|碗|套|双|只|瓶|盒|袋|包|件|位|间|台|次|支|束|枚|条|块|斤|人|款|种"
@@ -86,6 +86,12 @@ _ITEM = (
 #   item                    ("订酒店"，"点外卖")
 # A bare unit is not enough, so the compound noun "订单" never authorizes a
 # write.  "就选第一个" and "推荐一个适合的采摘园" intentionally do not match.
+#
+# 送 is a transaction verb when it takes an object ("给我送个奶茶到家来"):
+# with it missing, that instruction compiled as a *recommendation* task, the
+# runtime never authorized the delivery, and the model that tried to order was
+# rejected by our own gate while the stock agent simply delivered (E-051).
+# The object requirement keeps "帮我送到家" and "有没有送货服务" out.
 COMPLETION_INTENT_RE = re.compile(
     rf"(?:帮我|给我|替我|麻烦|直接|顺便|再|想)?(?:{_ORDER_VERB})"
     rf"(?:(?:{_QUANTITY})(?:{_UNIT}|{_ITEM})"
