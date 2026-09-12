@@ -13,7 +13,11 @@ def rewards(simulation: dict) -> list[float]:
     info = (simulation.get("reward_info") or {}).get("info") or {}
     subtasks = info.get("subtask_rewards") or {}
     if subtasks:
-        return [float(value or 0.0) for _, value in sorted(subtasks.items())]
+        ordered = sorted(
+            subtasks.items(),
+            key=lambda item: int(re.findall(r"\d+", item[0])[-1] or 0),
+        )
+        return [float(value or 0.0) for _, value in ordered]
     results = simulation.get("results") or []
     return [float(item.get("reward") or 0.0) for item in results]
 
