@@ -91,6 +91,18 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 | R6a | R5b + 保留写阶段完整历史 | 0.1538 | 0.0714 | 0.1111 |
 | R6b | R5b + 放大上下文预算 | 0.1538 | 0.0714 | 0.1111 |
 | R7 | ADAPT 全量 + 画像（E-048 默认） | — | — | 未完成（见下） |
+| **R8** | ADAPT 全量 + 画像 + E-048 + E-049 | 0.1538 | **0.2857** | **0.2222** |
+
+R8 逐单元（`data/simulations/iso_R8_choice_settlement.json`，`scripts/_unit_rewards.py`）：
+
+| 用户 | 得分单元 | stock 四次 | R5a（stock+我们的记忆） | R5b（E-048 前） | R8 |
+| --- | --- | --- | --- | --- | --- |
+| E057330（13 单元） | 1、5 | 0.2885 | 0.3846 | 0.1538 | 0.1538 |
+| E941775（14 单元） | 7、12、13、14 | 0.2857 | 0.2143 | 0.0714 | **0.2857** |
+
+两个用户合计（27 单元）：stock 0.2870、R5a 0.2963、R5b 0.1111、**R8 0.2222**。
+E941775 上 R8 追平 stock，且拿到**没有任何 ADAPT 配置拿过的单元 13、14**（单元 14 是 stock 4/4 全对的单元），
+其中单元 12/13 是 `create_instore_product_order` 成功落单——本文件此前记录的"ADAPT 从不出 venue 级写操作（0/20）"这条负债在 R8 中消失了。
 
 R5a 扩展（4 个新用户、1 trial、`iso_R5a_ext.json`，对照为同用户同 seed 的 stock 缓存）：
 
@@ -807,7 +819,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
 ## E-049：下单授权被当成"已经知道买哪个"，任何候选一到就强制 CREATE
 
 - **日期**：2026-09-12
-- **状态**：OPEN（R8 = E-049 配对测量进行中）
+- **状态**：PARTIAL（配对测量 R8 已完成：同用户上 +0.111；单个用户上无变化）
 - **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 5 个失败单元的路径对比 + 5 处独立代码路径的语义一致性审查，不读 rubric。
 - **难点**：用户说"帮我买X"，`TaskSpec.compile` 会把 `action=commit` 同时写成 `create_authorized=True` 和 `candidate_choice_authorized=True`；于是只要搜索返回任何候选，`observe_candidates()` 立刻把 phase 推到 `READY_TO_CREATE`——该阶段**只暴露 CREATE 工具**，并附上"立刻调用 CREATE、不要提问、不要搜索"的控制器指令。模型因此**没有合法动作去问"要哪种口味/送到哪"**，只能凭记忆猜一个候选下单。而 action evaluator 用的是 `min(trajectory, action)`，选错实体就是 0 分。
 - **证据**：
@@ -825,7 +837,14 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   4. **门禁对称**：候选类问题在**未 settle 时允许**（这正是 stock 赢的形状），settle 之后拒绝（"再问也改变不了答案"）；`execution_ready=False` 时拒绝（答案无法被执行，先补实体）；
   5. **学习信号修正**：`missed_write` 只在 `choice_settled` 后仍不下单时记录，杜绝用"任何候选都得下单"反向武装；
   6. **硬否决 → 控制**：学习到的 `require_max_preference_coverage` 不再否决写入，改为在写阶段**指名最大证据覆盖候选**；`validate_ranked_choice` 只保留"用户显式选择"这一条硬否决，排名位置越界只记 `shortlist_position_diverged`。
-- **验证**：`agent/tests/test_choice_settlement.py`（14 个新单测：六个 settle 来源、门禁对称性、有界逃逸、显式选择仍硬锁、位置越界不再否决、`missed_write` 只在 settle 后学习、低覆盖写入不再被否决）；全量 **365 单测通过**；`python -m compileall -q agent` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。配对测量：R8（`data/simulations/iso_R8_choice_settlement.json`，E057330 + E941775，1 trial）进行中。
+- **验证**：`agent/tests/test_choice_settlement.py`（14 个新单测：六个 settle 来源、门禁对称性、有界逃逸、显式选择仍硬锁、位置越界不再否决、`missed_write` 只在 settle 后学习、低覆盖写入不再被否决）；全量 **365 单测通过**；`python -m compileall -q agent` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
+- **配对测量（R8 = E-048 + E-049 组合，`data/simulations/iso_R8_choice_settlement.json`）**：
+  - `E057330` 0.1538（2/13），与 R5b 同分同单元 → 该用户上没有变化；
+  - `E941775` **0.0714 → 0.2857（1/14 → 4/14）**，追平 stock，并拿到单元 13、14（此前无任何 ADAPT 配置拿过）；
+  - 单元 12/13 由 `create_instore_product_order` 落单成功——此前记录的"venue 级写操作 0/20"负债消失；
+  - 单元 13、14 都出现 `preference_leader_diverged` 且**得分为 1.0**，即"领先者降级为建议"确实没有阻止正确选择；
+  - 但 R8 仍有三处 `question gate: a question is already waiting for the user's answer` 造成的零工具调用死路（见 E-050），其中 `E941775` 单元 2 是 stock 4/4 的单元，说明 E-049 的收益被 E-050 掩盖了一部分；
+  - **口径**：R8 相对 R5b 同时包含 E-048 与 E-049（及各自的伴随改动），不是 E-049 单项的贡献。
 - **适用边界**：只对 `create_authorized` 的成交类子任务生效；推荐类任务（无写授权）行为不变，问题门禁不介入。settle 的每一个来源都必须来自可观察证据，不含任何 user/task/candidate 特例。
 - **后续风险/下一步**：多一次澄清往返可能消耗 `max_steps`（长序列末尾尤其），需要用 R8 的单元轨迹确认；若某单元因"多问一轮"而超步，需要把问题预算进一步下调。
 - **能力抽象**：execution / missing information detection / preference utilization。
@@ -846,6 +865,9 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   → 模型在该阶段**没有任何合法动作**：提问被拒、不能搜索、不能下单。三次 preflight 拒绝耗尽重规划预算后落到终局拒绝文案。
 - **为什么是 E-048 引入的**：E-048 之前，框架自己会用 `_framework_question()` + `_GAP_QUESTIONS`（"请告诉我出发地。"）把这类槽问掉。同一单元在 R5b（E-048 之前）的轨迹是：`请告诉我出发地。` → 用户"随便吧，你看着办。" → 搜航班 → 下单（该单元仍因实体不符得 0，但**有完整动作链**）。E-048 关掉框架发言后，原本唯一的"合法动作"消失了，而门禁与工具裁剪仍在假设"框架会问"。
 - **证据**：`data/simulations/iso_R8.log`（两个单元的完整对话与三次同因拒绝）、`data/simulations/iso_R8.jsonl`（单元 6 只有 1 次 tool_result、0 次 question_committed）、`scripts/_unit_events.py`、`scripts/_unit_dialogue.py`；对照 `data/simulations/iso_R5b.log` 同单元。
+  R8 中同一死路共出现 **3 次**（`scripts/_unit_events.py` 逐单元可见三连 `question gate: a question is already waiting`）：
+  `E057330` 单元 6（`time` 槽；stock 0/0/0/0）、`E941775` 单元 2（`departure/date/quantity` 槽；**stock 4/4**）、`E941775` 单元 10（"帮我订张这周五的动车票"；stock 0/0/0/0）。
+  其中 `E941775` 单元 2 是 E-049 本可以得分、却被本死路吃掉的那一格。
 - **有效方案**：
   1. `QuestionGate`：`NEED_INFO` 只在**确实有问题挂着**（`pending_question_dimension` 非空）时拒绝新问题；由未决槽导致的 `NEED_INFO` 允许模型自己提问——这正是"缺失信息检测"能力本身；
   2. `ToolRegistry.allowed_tools`：`NEED_INFO` 同时放行 SEARCH（观察不等于承诺），只保留不可逆写操作隐藏；
