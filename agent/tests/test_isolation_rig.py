@@ -12,6 +12,14 @@ from agent.runtime.state import RuntimePhase, TaskRuntime
 from agent.runtime.tools import ToolMeta, ToolRegistry, ToolRole
 
 
+class _Debug:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def emit(self, event: str, **payload) -> None:
+        self.events.append({"event": event, **payload})
+
+
 def build_registry() -> ToolRegistry:
     registry = ToolRegistry()
     names = (
@@ -65,3 +73,28 @@ def test_adapt_prompt_blocks_are_optional(monkeypatch):
     agent = ADAPTAgent.__new__(ADAPTAgent)
     agent.enable_adapt_prompt = False
     assert ADAPTAgent.system_prompt.fget(agent) == "BASE-PROMPT"
+
+
+def test_framework_speech_is_off_by_default():
+    from agent.adapt_agent import ADAPTAgent
+    from agent.decision import Candidate, CandidateLedger, DecisionCard, TaskSpec
+    from agent.runtime.state import RuntimePhase, TaskRuntime
+
+    agent = ADAPTAgent.__new__(ADAPTAgent)
+    agent.debug = _Debug()
+    agent.ledger = CandidateLedger()
+    agent.ledger.candidates["S1"] = Candidate(
+        "S1", "shop", "某采摘园", "Shop(shop_name=某采摘园)", "search"
+    )
+    agent.decision_card = DecisionCard()
+    agent.task_spec = TaskSpec.compile("推荐一个适合的采摘园")
+    agent.runtime = TaskRuntime.begin(agent.task_spec)
+    agent.runtime.phase = RuntimePhase.SELECT
+    agent._recommendation_delivered = False
+    agent._select_turns = 5
+    agent.home_tokens = []
+    # Default (framework_speech absent/false): the model speaks, not the framework.
+    assert agent._framework_recommendation() is None
+    agent.framework_speech = True
+    assert agent._framework_recommendation() is not None
+

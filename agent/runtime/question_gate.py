@@ -23,6 +23,15 @@ class QuestionGate:
         return "?" in (text or "") or "？" in (text or "")
 
     def evaluate(self, text: str, runtime: TaskRuntime) -> QuestionDecision:
+        """Decide whether a model-authored question may be sent.
+
+        The gate exists to stop *repeated* questions, never to stop the model
+        from asking at all: trace comparison against the stock agent showed the
+        winning baseline units are exactly the ones where the model asks which
+        flavour, which address or what time it is, and the answer changes the
+        consequential argument (E-048). Blocking those questions turned a
+        partial-credit trajectory into a zero.
+        """
         if not self.is_question(text):
             return QuestionDecision(True, counts_against_budget=False)
         if runtime.phase == RuntimePhase.READY_TO_PAY:
@@ -31,21 +40,22 @@ class QuestionGate:
             return QuestionDecision(
                 True, "payment_confirmation", counts_against_budget=False
             )
-        if runtime.authorization.candidate_choice_authorized:
+        if runtime.phase == RuntimePhase.NEED_INFO:
+            # A question is already pending the user's answer; asking another
+            # one now would duplicate it.
             return QuestionDecision(
-                False,
-                reason=(
-                    "the direct execution request already authorizes candidate "
-                    "selection; expand required details or commit without reconfirming"
-                ),
+                False, reason="a question is already waiting for the user's answer"
             )
-        if runtime.authorization.choice_delegated and runtime.phase != RuntimePhase.SELECT:
+        if runtime.dimension_budget_spent:
+            return QuestionDecision(False, reason="question budget exhausted")
+        dimension = self._dimension_for(text)
+        if dimension in runtime.asked_dimensions:
             return QuestionDecision(
-                False,
-                reason="the user delegated the choice; select a compliant candidate",
+                False, reason=f"the {dimension} question was already asked"
             )
         if (
-            runtime.forbid_redundant_candidate_question
+            dimension == "candidate_choice"
+            and runtime.forbid_redundant_candidate_question
             and runtime.authorization.create_authorized
             and runtime.execution_ready
         ):
@@ -56,31 +66,51 @@ class QuestionGate:
                     "an executable candidate"
                 ),
             )
-        if runtime.phase == RuntimePhase.SELECT and not runtime.selection_made:
-            if "candidate_choice" in runtime.asked_dimensions:
-                return QuestionDecision(
-                    False, reason="candidate choice was already asked"
-                )
-            if len(runtime.asked_dimensions) >= 2:
-                return QuestionDecision(False, reason="question budget exhausted")
-            return QuestionDecision(True, "candidate_choice")
-        if runtime.phase == RuntimePhase.SELECT and (
-            runtime.selection_made or runtime.authorization.choice_delegated
+        if dimension == "candidate_choice" and runtime.authorization.choice_delegated:
+            return QuestionDecision(
+                False,
+                reason="the user delegated the choice; select a compliant candidate",
+            )
+        if (
+            dimension == "candidate_choice"
+            and runtime.authorization.candidate_choice_authorized
         ):
-            # The user endorsed a candidate, or delegated the choice outright,
-            # without asking for a transaction. Asking once whether to proceed is
-            # the only legal way forward; blocking it forced a terminal refusal
-            # (E-036, extended to delegation in E-045).
+            return QuestionDecision(
+                False,
+                reason=(
+                    "the direct execution request already authorizes candidate "
+                    "selection; expand required details or commit without reconfirming"
+                ),
+            )
+        if dimension == "candidate_choice" and runtime.phase == RuntimePhase.SELECT and (
+            runtime.selection_made or runtime.authorization.choice_delegated
+        ) and not runtime.authorization.create_authorized:
+            # The user already endorsed or delegated the candidate, so asking
+            # about the candidate again would loop; a question here can only be
+            # about proceeding. A non-declining answer authorizes the write
+            # (E-036).
             if "execution_confirmation" in runtime.asked_dimensions:
                 return QuestionDecision(
                     False, reason="execution confirmation was already asked"
                 )
-            if len(runtime.asked_dimensions) >= 2:
-                return QuestionDecision(False, reason="question budget exhausted")
             return QuestionDecision(True, "execution_confirmation")
-        return QuestionDecision(
-            False, reason=f"questions are not allowed in phase {runtime.phase.value}"
+        return QuestionDecision(True, dimension)
+
+    @staticmethod
+    def _dimension_for(text: str) -> str:
+        """Classify a clarifying question by the decision dimension it asks."""
+        content = text or ""
+        markers = (
+            ("address", ("送到哪", "送到哪里", "地址", "送家里", "送公司", "送医院")),
+            ("time", ("几点", "什么时间", "什么时候", "哪天", "周六还", "周日还")),
+            ("quantity", ("几杯", "几份", "几张", "几件", "数量", "多少人", "几人")),
+            ("size", ("多大", "尺码", "尺寸", "几号", "大杯", "中杯")),
+            ("preference_choice", ("哪个", "哪款", "哪家", "哪种", "选哪")),
         )
+        for dimension, terms in markers:
+            if any(term in content for term in terms):
+                return dimension
+        return "candidate_choice"
 
     @staticmethod
     def commit(decision: QuestionDecision, runtime: TaskRuntime) -> None:

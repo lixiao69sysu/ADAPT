@@ -229,6 +229,9 @@ def build_recommender(ledger: CandidateLedger, card: DecisionCard):
     agent.runtime.phase = RuntimePhase.SELECT
     agent._recommendation_delivered = False
     agent._select_turns = 2
+    # The framework recommendation is the legacy governor path; these tests pin
+    # its ordering behaviour, so it is switched on explicitly (E-048).
+    agent.framework_speech = True
     agent.home_tokens = home_tokens(PROFILE)
     agent.debug = _Debug()
     return agent

@@ -173,6 +173,7 @@ def test_recommendation_fallback_waits_for_the_model():
         "S1", "shop", "某采摘园", "Shop(shop_name=某采摘园)", "search"
     )
     agent._recommendation_delivered = False
+    agent.framework_speech = True
     agent._select_turns = 1
     assert agent._framework_recommendation() is None
     agent._select_turns = 2

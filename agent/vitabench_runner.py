@@ -233,6 +233,7 @@ def run_adapt_personalization_task(
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
     focus_write_phase: bool = True,
+    framework_speech: bool = False,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
     evaluator_retries: int = 2,
@@ -448,6 +449,7 @@ def _run_one_simulation(
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
     focus_write_phase: bool = True,
+    framework_speech: bool = False,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
 ) -> SimulationRun:
@@ -519,6 +521,7 @@ def run_selected(
     enable_adapt_prompt: bool = True,
     gate_phases: bool = True,
     focus_write_phase: bool = True,
+    framework_speech: bool = False,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
 ) -> dict:
@@ -625,6 +628,7 @@ def run_selected(
                     enable_adapt_prompt=enable_adapt_prompt,
                     gate_phases=gate_phases,
                     focus_write_phase=focus_write_phase,
+                    framework_speech=framework_speech,
                     enable_profile_summary=enable_profile_summary,
                     summary_max_chars=summary_max_chars,
                 )
@@ -811,6 +815,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--summary-max-chars", type=int, default=800)
     parser.add_argument(
+        "--framework-speech",
+        action="store_true",
+        help=(
+            "legacy governor path: the framework asks the clarifying question "
+            "and finalises the recommendation itself (off by default, E-048)"
+        ),
+    )
+    parser.add_argument(
         "--keep-write-phase-history",
         action="store_true",
         help=(
@@ -911,6 +923,7 @@ def main() -> None:
         enable_profile_summary=args.profile_summary,
         summary_max_chars=args.summary_max_chars,
         focus_write_phase=not args.keep_write_phase_history,
+        framework_speech=args.framework_speech,
     )
 
 

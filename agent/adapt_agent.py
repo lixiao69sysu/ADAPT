@@ -83,6 +83,7 @@ class ADAPTAgent(PersonalizationAgent):
         enable_adapt_prompt: bool = True,
         gate_phases: bool = True,
         focus_write_phase: bool = True,
+        framework_speech: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -98,6 +99,11 @@ class ADAPTAgent(PersonalizationAgent):
         # Isolation rig (E-047): default behaviour keeps the focused write-phase
         # context; disabling it keeps the full transcript like the stock agent.
         self.focus_write_phase = focus_write_phase
+        # Framework-authored user-facing turns (canned dimension questions and
+        # the recommendation finaliser) are off by default: the trace shows them
+        # pre-empting the model's own clarifying question or ending a unit with no
+        # order at all (E-048). The model speaks; the framework only verifies.
+        self.framework_speech = framework_speech
         self.task_spec = TaskSpec.compile("")
         self.decision_card = DecisionCard()
         self.ledger = CandidateLedger()
@@ -360,26 +366,29 @@ class ADAPTAgent(PersonalizationAgent):
             self._observe_assistant(gap_search)
             return gap_search, state
 
-        recommendation = self._framework_recommendation()
-        if recommendation:
-            state.messages.append(recommendation)
-            self.runtime.phase = RuntimePhase.DONE
-            self.debug.emit(
-                "recommendation_finalized",
-                candidates=len(self.ledger.shortlist(self.decision_card, limit=3)),
-                facet=self.task_spec.facet,
-            )
-            return recommendation, state
+        if getattr(self, "framework_speech", False):
+            # Legacy governor path: the framework asks the clarifying question
+            # and finalises the recommendation itself. Off by default (E-048).
+            recommendation = self._framework_recommendation()
+            if recommendation:
+                state.messages.append(recommendation)
+                self.runtime.phase = RuntimePhase.DONE
+                self.debug.emit(
+                    "recommendation_finalized",
+                    candidates=len(self.ledger.shortlist(self.decision_card, limit=3)),
+                    facet=self.task_spec.facet,
+                )
+                return recommendation, state
 
-        question = self._framework_question()
-        if question:
-            assistant = AssistantMessage(role="assistant", content=question)
-            state.messages.append(assistant)
-            return assistant, state
-
-        if self.runtime.phase == RuntimePhase.SELECT:
-            # Count the model's own turns in SELECT so the framework
-            # recommendation stays a fallback rather than the first word.
+            question = self._framework_question()
+            if question:
+                assistant = AssistantMessage(role="assistant", content=question)
+                state.messages.append(assistant)
+                return assistant, state
+        elif self.runtime.phase == RuntimePhase.SELECT:
+            # Without the framework recommendation, a recommendation task still
+            # has to end somewhere: the model decides, and this counter only
+            # feeds the debug stream.
             self._select_turns += 1
 
         for attempt in range(self._replan_limit + 1):
@@ -1223,6 +1232,9 @@ class ADAPTAgent(PersonalizationAgent):
         """
         if self.task_spec.action != "recommend":
             return None
+        if not getattr(self, "framework_speech", False):
+            # The model speaks; the framework does not (E-048).
+            return None
         if self.runtime.phase != RuntimePhase.SELECT:
             return None
         if self._recommendation_delivered:
@@ -1314,6 +1326,9 @@ class ADAPTAgent(PersonalizationAgent):
             )
 
     def _framework_question(self) -> str:
+        if not getattr(self, "framework_speech", False):
+            # The model asks its own clarifying questions (E-048).
+            return ""
         dimension = self.runtime.next_question_dimension()
         if not dimension:
             dimension = self._decision_gap_question_dimension()

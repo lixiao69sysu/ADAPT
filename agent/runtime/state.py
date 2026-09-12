@@ -285,6 +285,16 @@ class TaskRuntime:
         }:
             self.phase = RuntimePhase.SEARCH
 
+    @property
+    def dimension_budget_spent(self) -> bool:
+        """Whether the per-subtask question budget is used up.
+
+        The budget bounds *distinct decision dimensions*, not the number of
+        clarifying turns: the model may still ask about a dimension it has not
+        asked about yet (E-048).
+        """
+        return len(self.asked_dimensions) >= 2
+
     def next_question_dimension(self) -> str:
         if len(self.asked_dimensions) >= 2 or self.authorization.choice_delegated:
             return ""
