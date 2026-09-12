@@ -236,7 +236,11 @@ class ToolRegistry:
             if meta.role == ToolRole.SEARCH and not ledger.search_allowed(tool.name):
                 continue
             if runtime.phase == RuntimePhase.NEED_INFO:
-                if meta.role in {ToolRole.READ}:
+                # Observation stays available while a decision-critical slot is
+                # open: the model may need a search to ask a useful question,
+                # and hiding every search tool here left it with no legal action
+                # at all (E-050).
+                if meta.role in {ToolRole.SEARCH, ToolRole.READ}:
                     allowed.append(tool)
                 continue
             if runtime.phase in {RuntimePhase.START, RuntimePhase.SEARCH}:

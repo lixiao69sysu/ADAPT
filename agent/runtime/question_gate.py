@@ -40,9 +40,14 @@ class QuestionGate:
             return QuestionDecision(
                 True, "payment_confirmation", counts_against_budget=False
             )
-        if runtime.phase == RuntimePhase.NEED_INFO:
-            # A question is already pending the user's answer; asking another
-            # one now would duplicate it.
+        if runtime.phase == RuntimePhase.NEED_INFO and runtime.pending_question_dimension:
+            # A question is genuinely waiting for the user's answer; asking
+            # another one now would duplicate it. This must key on the *pending
+            # question*, not on the phase: a subtask whose TaskSpec has an open
+            # decision-critical slot also starts in NEED_INFO without any
+            # question having been sent, and the phase-only form rejected the
+            # model's first (and only legal) question three times, ending the
+            # subtask in the refusal fallback with zero tool calls (E-050).
             return QuestionDecision(
                 False, reason="a question is already waiting for the user's answer"
             )

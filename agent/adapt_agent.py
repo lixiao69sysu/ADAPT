@@ -72,6 +72,23 @@ _TOPPING_TERMS = ("布蕾", "珍珠", "芋泥", "芋圆", "波霸", "椰果", "�
 _TOPPING_NEGATIONS = ("不加小料", "无小料", "不要小料", "不放小料")
 _BEVERAGE_PRODUCT_TERMS = ("奶茶", "奶绿", "烤奶", "饮品", "果茶")
 
+# Last-resort wording for a decision-critical slot that is still open. Used by
+# the framework speech path and by the fallback after every model attempt was
+# rejected: a blocked question must never end the subtask in a false refusal
+# (E-050).
+_GAP_QUESTIONS = {
+    "size": "请告诉我需要的尺码，例如 42-43 码。",
+    "quantity": "请告诉我需要几人或几张票。",
+    "departure": "请告诉我出发地。",
+    "destination": "请告诉我目的地。",
+    "date": "请告诉我具体日期。",
+    "room_type": "请告诉我需要大床房还是双床房。",
+    "time": "请告诉我希望安排在上午、下午还是晚上。",
+    "caffeine": "这杯咖啡是上午喝还是下午喝？我会据此选高或低咖啡因。",
+    "taste": "你这次的锅底更想要麻辣、菌汤、番茄还是清汤？",
+    "dessert": "套餐里的甜品有明确偏好吗？我会按候选中的精确配套筛选。",
+}
+
 
 class ADAPTAgent(PersonalizationAgent):
     """PersonalizationAgent with task compilation and guarded execution."""
@@ -470,6 +487,25 @@ class ADAPTAgent(PersonalizationAgent):
 
         if self.runtime.phase == RuntimePhase.READY_TO_PAY:
             fallback_content = "订单已创建，目前尚未支付。"
+        elif self.runtime.phase == RuntimePhase.NEED_INFO:
+            # Every model attempt was rejected while a decision-critical slot is
+            # still open. Asking the slot question is the only honest answer;
+            # the refusal text below would be false (E-050).
+            dimension = (
+                self.runtime.pending_question_dimension
+                or self.runtime.next_question_dimension()
+            )
+            if dimension:
+                fallback_content = _GAP_QUESTIONS.get(
+                    dimension, f"请补充{dimension}。"
+                )
+                self.runtime.commit_question(dimension)
+                self.debug.emit(
+                    "question_committed", dimension=dimension, source="fallback"
+                )
+            else:
+                self.runtime.phase = RuntimePhase.SEARCH
+                fallback_content = "我需要更多信息才能继续，请补充你的需求。"
         else:
             self.runtime.phase = RuntimePhase.UNSATISFIABLE
             fallback_content = "现有候选无法满足硬约束，我没有执行下单。"
@@ -1428,19 +1464,7 @@ class ADAPTAgent(PersonalizationAgent):
         if not dimension:
             self.runtime.phase = RuntimePhase.SEARCH
             return ""
-        questions = {
-            "size": "请告诉我需要的尺码，例如 42-43 码。",
-            "quantity": "请告诉我需要几人或几张票。",
-            "departure": "请告诉我出发地。",
-            "destination": "请告诉我目的地。",
-            "date": "请告诉我具体日期。",
-            "room_type": "请告诉我需要大床房还是双床房。",
-            "time": "请告诉我希望安排在上午、下午还是晚上。",
-            "caffeine": "这杯咖啡是上午喝还是下午喝？我会据此选高或低咖啡因。",
-            "taste": "你这次的锅底更想要麻辣、菌汤、番茄还是清汤？",
-            "dessert": "套餐里的甜品有明确偏好吗？我会按候选中的精确配套筛选。",
-        }
-        question = questions.get(dimension, f"请补充{dimension}。")
+        question = _GAP_QUESTIONS.get(dimension, f"请补充{dimension}。")
         self.runtime.commit_question(dimension)
         self.memory.commit_question(question)
         self.debug.emit("question_committed", dimension=dimension, source="framework")

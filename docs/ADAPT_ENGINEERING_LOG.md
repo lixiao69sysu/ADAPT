@@ -832,6 +832,31 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
 
 ---
 
+## E-050：E-048 撤掉框架提问后，NEED_INFO 变成硬死路（无工具、无提问、必有终局拒绝）
+
+- **日期**：2026-09-12
+- **状态**：OPEN（机制已由单元轨迹与单测锁定；配对测量 R9 待跑）
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 R8 逐单元 debug sidecar 与对话轨迹，可零模型复现。
+- **难点**：R8 里 `E057330` 单元 6（`instore/wellness`「又得去理发店了，帮我买个套餐。」）与 `E941775` 单元 2（`ota`「想订张机票去旅游，你有什么好地方推荐吗？」，**stock 4/4 全对**）都是：一次工具调用都没有（单元 6 只有一次 `query_preference_memory`），直接输出终局文本"现有候选无法满足硬约束，我没有执行下单。"，用户随后 `###STOP###` 结束。单元 2 的日志里可以看到同一句被拒三次：
+  `question gate: a question is already waiting for the user's answer`。
+- **根因（三处叠加，全部可零模型复现）**：
+  1. `TaskSpec.compile` 判定该指令有未决的关键槽（单元 6 = `['time']`，单元 2 = `['departure','date','quantity']`），`TaskRuntime.begin` 因此把 phase 直接置为 `NEED_INFO`；
+  2. `QuestionGate` 当时按 **phase** 判断"已有问题在等答案"，于是把模型提出的第一个问题也拒掉——但此时 `pending_question_dimension == ""`，**根本没有任何问题被发出过**；
+  3. `allowed_tools` 在 `NEED_INFO` 只放行 READ 角色工具，SEARCH 全部隐藏，CREATE 也隐藏。
+  → 模型在该阶段**没有任何合法动作**：提问被拒、不能搜索、不能下单。三次 preflight 拒绝耗尽重规划预算后落到终局拒绝文案。
+- **为什么是 E-048 引入的**：E-048 之前，框架自己会用 `_framework_question()` + `_GAP_QUESTIONS`（"请告诉我出发地。"）把这类槽问掉。同一单元在 R5b（E-048 之前）的轨迹是：`请告诉我出发地。` → 用户"随便吧，你看着办。" → 搜航班 → 下单（该单元仍因实体不符得 0，但**有完整动作链**）。E-048 关掉框架发言后，原本唯一的"合法动作"消失了，而门禁与工具裁剪仍在假设"框架会问"。
+- **证据**：`data/simulations/iso_R8.log`（两个单元的完整对话与三次同因拒绝）、`data/simulations/iso_R8.jsonl`（单元 6 只有 1 次 tool_result、0 次 question_committed）、`scripts/_unit_events.py`、`scripts/_unit_dialogue.py`；对照 `data/simulations/iso_R5b.log` 同单元。
+- **有效方案**：
+  1. `QuestionGate`：`NEED_INFO` 只在**确实有问题挂着**（`pending_question_dimension` 非空）时拒绝新问题；由未决槽导致的 `NEED_INFO` 允许模型自己提问——这正是"缺失信息检测"能力本身；
+  2. `ToolRegistry.allowed_tools`：`NEED_INFO` 同时放行 SEARCH（观察不等于承诺），只保留不可逆写操作隐藏；
+  3. 兜底文案：重规划耗尽且槽仍未决时，输出该槽的问题（`_GAP_QUESTIONS`，与框架发言路径共用同一词表）而不是"无法满足硬约束"这种与事实不符的拒绝；没有具体槽时回到 `SEARCH` 继续观察。
+- **验证**：`agent/tests/test_open_slot_questions.py`（5 个单测：未决槽起始 NEED_INFO 且无挂起问题、模型可提问、已提交问题仍拦第二次、"NEED_INFO 仍暴露 SEARCH 但隐藏 CREATE"、回答后离开 NEED_INFO）；全量 **371 单测通过**；`compileall` 与 vendored 纯净检查通过。
+- **适用边界**：只放宽"由未决槽引起的 NEED_INFO"；真正挂起的问题、重复维度、预算耗尽仍然拦截。终局拒绝文案只保留给"确实存在候选但都不合规"的情况。
+- **后续风险/下一步**：`_dimension_for` 的维度词表较粗（"从哪出发"会落到 `candidate_choice`），可能出现"同一维度只能问一次"过严；R9 的单元轨迹会显示是否需要细化。另外单元 12 的终局拒绝来自"没有任何航班候选"，需要在 R9 复查是否仍走到拒绝。
+- **能力抽象**：missing information detection / proactiveness / execution。
+
+---
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。
