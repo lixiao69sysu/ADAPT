@@ -486,30 +486,41 @@ class ADAPTAgent(PersonalizationAgent):
             else:
                 state.messages.append(UserMessage(role="user", content=correction))
 
+        fallback_content = self._fallback_message()
+        fallback = AssistantMessage(role="assistant", content=fallback_content)
+        state.messages.append(fallback)
+        return fallback, state
+
+    def _fallback_message(self) -> str:
+        """The text sent when every model attempt in one turn was rejected.
+
+        It must never repeat a false refusal: a subtask whose only blockers were
+        derived constraints, or whose decision-critical slot is still open, has
+        an honest answer that is not "no compliant candidate exists" (E-050,
+        E-052).
+        """
         if self.runtime.phase == RuntimePhase.READY_TO_PAY:
-            fallback_content = "订单已创建，目前尚未支付。"
-        elif self.runtime.phase == RuntimePhase.NEED_INFO:
-            # Every model attempt was rejected while a decision-critical slot is
-            # still open. Asking the slot question is the only honest answer;
-            # the refusal text below would be false (E-050).
+            return "订单已创建，目前尚未支付。"
+        if self.runtime.phase == RuntimePhase.NEED_INFO:
             dimension = (
                 self.runtime.pending_question_dimension
                 or self.runtime.next_question_dimension()
             )
             if dimension:
-                fallback_content = _GAP_QUESTIONS.get(
-                    dimension, f"请补充{dimension}。"
-                )
                 self.runtime.commit_question(dimension)
                 self.debug.emit(
                     "question_committed", dimension=dimension, source="fallback"
                 )
-            else:
-                self.runtime.phase = RuntimePhase.SEARCH
-                fallback_content = "我需要更多信息才能继续，请补充你的需求。"
-        else:
-            self.runtime.phase = RuntimePhase.UNSATISFIABLE
-            fallback_content = "现有候选无法满足硬约束，我没有执行下单。"
+                return _GAP_QUESTIONS.get(dimension, f"请补充{dimension}。")
+            self.runtime.phase = RuntimePhase.SEARCH
+            return "我需要更多信息才能继续，请补充你的需求。"
+        if self.runtime.constraint_veto_counts:
+            # Only derived constraints blocked the write and they are now
+            # capped; the choice may well be settled and executable.
+            self.runtime.phase = RuntimePhase.SELECT
+            return "我再核对一下候选，马上给你确认。"
+        self.runtime.phase = RuntimePhase.UNSATISFIABLE
+        return "现有候选无法满足硬约束，我没有执行下单。"
         fallback = AssistantMessage(role="assistant", content=fallback_content)
         state.messages.append(fallback)
         return fallback, state
@@ -1102,7 +1113,48 @@ class ADAPTAgent(PersonalizationAgent):
                 problems.append(
                     "text claims or promises execution but contains no WRITE tool call"
                 )
-        return list(dict.fromkeys(problems))
+        return list(dict.fromkeys(self._cap_repeated_vetoes(problems)))
+
+    # Constraints the framework *derived* from text. They may be wrong, so they
+    # must not veto forever: a single mis-parsed value produced 103 identical
+    # rejections in one subtask until the step budget was gone (E-052).
+    _CAPPED_VETO_PREFIXES = (
+        "selected candidate does not satisfy required",
+        "selected candidate does not show required value",
+        "selected candidate has observable preference score",
+    )
+    _VETO_CAP = 3
+
+    def _cap_repeated_vetoes(self, problems: list[str]) -> list[str]:
+        """Stop repeating a derived constraint once it has rejected a few times.
+
+        Invariants that are facts about the environment or the user - ID
+        provenance, AVOID violations, authorization, duplicate writes, the
+        tool-failure guard - are never capped.
+        """
+        kept: list[str] = []
+        for problem in problems:
+            if not problem.startswith(self._CAPPED_VETO_PREFIXES):
+                kept.append(problem)
+                continue
+            allowed, capped = self._count_capped_veto(problem)
+            if allowed:
+                kept.append(problem)
+            elif capped and capped == self._VETO_CAP + 1:
+                self.debug.emit(
+                    "constraint_veto_capped", constraint=problem[:120]
+                )
+                self._record_lesson(
+                    "constraint_veto_capped",
+                    problem,
+                    "A derived constraint that no observed candidate satisfies is a representation problem: state it, do not veto forever.",
+                )
+        return kept
+
+    def _count_capped_veto(self, problem: str) -> tuple[bool, int]:
+        counts = self.runtime.constraint_veto_counts
+        counts[problem] = counts.get(problem, 0) + 1
+        return counts[problem] <= self._VETO_CAP, counts[problem]
 
     def _normalize_search_call(self, call: ToolCall) -> None:
         """Make retrieval honor a dominant exclusion before result truncation.

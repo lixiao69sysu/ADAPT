@@ -30,6 +30,11 @@ class ConstraintOperator(str, Enum):
 _DATE_RE = re.compile(
     r"\b20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b|\d{1,2}月\d{1,2}日|\d{1,2}号"
 )
+# "先定30和31号的" asks for two nights. The single-day pattern above matched only
+# the second one, so the card demanded the 31st and vetoed every attempt to book
+# the 30th -- 103 identical rejections in one subtask, until the step budget was
+# gone (E-052).
+_DAY_LIST_RE = re.compile(r"(\d{1,2})\s*(?:和|、|及|与|,|，)\s*(\d{1,2})\s*号")
 _EXACT_ENTITY_RE = re.compile(
     r"(?:就选|指定|要的是|就)([\u4e00-\u9fffA-Za-z0-9··・（）()_-]{2,24}?)(?:吧|[,，。!！?？]|$)"
 )
@@ -254,7 +259,30 @@ class TaskSpec:
                         evidence_span=party_match.group(0),
                     )
                 )
-        for date in _DATE_RE.findall(text):
+        # A day *list* is a per-night requirement: one candidate can only carry
+        # one of the days, so the framework may state it but must not veto on it.
+        day_list_days: list[str] = []
+        masked = text
+        for match in _DAY_LIST_RE.finditer(text):
+            for day in (match.group(1), match.group(2)):
+                if day not in day_list_days:
+                    day_list_days.append(day)
+            masked = masked.replace(match.group(0), " " * len(match.group(0)))
+        for day in day_list_days:
+            must.append(
+                Constraint(
+                    "date",
+                    f"{int(day)}号",
+                    ConstraintTarget.ARGUMENT,
+                    ConstraintOperator.EQUALS,
+                    hard=False,
+                    evidence_span=f"{day_list_days[0]}和{day_list_days[-1]}号"
+                    if len(day_list_days) > 1
+                    else f"{day}号",
+                    argument_name="date",
+                )
+            )
+        for date in _DATE_RE.findall(masked):
             must.append(
                 Constraint(
                     "date",

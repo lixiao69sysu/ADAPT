@@ -114,6 +114,10 @@ class TaskRuntime:
     executable_candidate_count: int = 0
     select_turns: int = 0
     choice_source: str = ""
+    # How often each derived constraint has rejected a proposal in this
+    # subtask. A constraint the framework derived from text can be wrong; after
+    # a few identical rejections it must stop vetoing (E-052).
+    constraint_veto_counts: dict[str, int] = field(default_factory=dict)
     # Set when the agent asked whether to execute an endorsed candidate and the
     # user has not answered yet. A non-declining answer authorizes the write,
     # otherwise the runtime has no legal action left (E-036).
