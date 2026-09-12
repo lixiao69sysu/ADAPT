@@ -82,26 +82,43 @@ Priority is fixed:
 
 `ADAPTMemory.read()` returns a bounded Decision Card with at most eight facts
 and 1200 characters. It is a pure function: repeated reads must not change
-salience, question budget, or memory state. Narrative `_summary_text` rewriting
-is disabled by default and is never injected into the runtime prompt.
+salience, question budget, or memory state. The LLM profile summary (D1 in the
+design spine) is the recall half of the data layer: when enabled it is prepended
+as one bounded block of at most `summary_max_chars` characters by `read()`, and
+it is never a substitute for the fact-level card that the validators use. It is
+enabled by `--profile-summary`, which every measured ADAPT configuration passes;
+the documented command must keep doing so until the flag becomes the default.
 
 Preference drift is scoped by `(scope, facet, dimension, category)`. Avoids,
 allergies and brands are multi-valued sets. Only genuinely single-valued,
 same-scope dimensions may supersede an older value.
 
+## Design spine
+
+ADAPT is one idea, not a pile of guards: **a controller that never asserts what
+it cannot know, over a data layer whose conclusions are directly usable and
+evidence-bearing.** The controller may only (a) pass through observed values,
+(b) withhold an irreversible action, or (c) hand the question back to the user.
+It may never invent a value, decide for the user or the model, or speak for the
+model. The five invariants, the data-layer half, the current audit findings and
+the change protocol are in `docs/ADAPT_ENGINEERING_LOG.md` ("设计主线"). Every
+change must cite the invariant it restores, the exact assertion it removes, a
+zero-model reproducible trace unit, and a paired measurement.
+
 ## Choice settlement
 
 `TaskRuntime.choice_settled()` is the single gate between observation and an
-irreversible write. `create_authorized` means the user allowed spending, not that
-the concrete item is known, so `READY_TO_CREATE` — the only phase that exposes a
-CREATE tool — is entered only when the choice is settled by observable evidence:
-an explicit user selection, the answer to a `candidate_choice`/`preference_choice`
-question, user delegation, a discriminating preference-evidence leader, a single
-compliant candidate, or a spent question budget. SELECT otherwise stays open so
-the model can ask or search; a bounded SELECT budget keeps the write reachable,
-and the question gate allows exactly the questions that settlement state permits.
-Never re-introduce "a compliant candidate exists, so force a CREATE", neither as
-a control nor as a learned lesson.
+irreversible write (invariant I2). `create_authorized` means the user allowed
+spending, not that the concrete item is known, so `READY_TO_CREATE` — the only
+phase that exposes a CREATE tool — is entered only when the choice is settled by
+observable evidence: an explicit user selection, the answer to a
+`candidate_choice`/`preference_choice` question, user delegation, a
+discriminating preference-evidence leader, a single compliant candidate, or a
+spent question budget. SELECT otherwise stays open so the model can ask or
+search; a bounded SELECT budget keeps the write reachable, and the question gate
+allows exactly the questions that settlement state permits. Never re-introduce
+"a compliant candidate exists, so force a CREATE", neither as a control nor as a
+learned lesson.
 
 ## Proactive questions
 
