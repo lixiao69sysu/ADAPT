@@ -69,6 +69,24 @@ def _sign_test(wins: int, losses: int) -> tuple[float, float]:
     return z, p
 
 
+def load_tasks(path: pathlib.Path) -> tuple[str, ...]:
+    """Cohort identity of a checkpoint: its ``tasks`` field, sorted.
+
+    ``info["cohort"]`` is only a CLI label. Two runs whose labels are both
+    ``dev`` can still have been drawn from different user sets -- that happened
+    in this repository (E-092: the same label covered two cohorts overlapping by
+    2 of 8 users), so the label must never be used as identity.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    out = []
+    for t in data.get("tasks") or []:
+        if isinstance(t, dict):
+            out.append(str(t.get("id")))
+        else:
+            out.append(str(t))
+    return tuple(sorted(out))
+
+
 def load_units(path: pathlib.Path) -> dict[tuple[str, int, str], dict[str, Any]]:
     """Map (task_id, trial, subtask_id) -> observable unit record."""
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -134,6 +152,14 @@ def main() -> None:
             "vs a single-trial run)"
         ),
     )
+    ap.add_argument(
+        "--allow-different-cohorts",
+        action="store_true",
+        help=(
+            "override the E-092 cohort gate and report a cross-cohort contrast; "
+            "the result is unpaired and must be labelled as such"
+        ),
+    )
     args = ap.parse_args()
 
     path_a, path_b = pathlib.Path(args.a), pathlib.Path(args.b)
@@ -150,6 +176,32 @@ def main() -> None:
           f"B-only {len(set(units_b) - set(units_a))})")
     if not shared:
         raise SystemExit("no paired units; refusing to report an unpaired comparison")
+
+    # ---- cohort identity gate (E-092) ------------------------------------
+    # `info["cohort"]` is a CLI label, not an identity: `--cohort dev` has
+    # already named two different user sets in this repository. A comparison
+    # across them would report "the change" where the arms simply used different
+    # users, so identity is read from the checkpoint's `tasks` field.
+    tasks_a, tasks_b = load_tasks(path_a), load_tasks(path_b)
+    if tasks_a and tasks_b and tasks_a != tasks_b:
+        overlap = sorted(set(tasks_a) & set(tasks_b))
+        print()
+        print(f"!! COHORT MISMATCH: A has {len(tasks_a)} tasks, B has {len(tasks_b)}, "
+              f"overlap {len(overlap)}")
+        print(f"   A-only: {sorted(set(tasks_a) - set(tasks_b))}")
+        print(f"   B-only: {sorted(set(tasks_b) - set(tasks_a))}")
+        if not args.allow_different_cohorts:
+            raise SystemExit(
+                "refusing to compare across different cohorts (E-092); compare the "
+                "checkpoints' `tasks` fields, not info['cohort']; re-run the arm on "
+                "the control's users (--task-ids), or pass --allow-different-cohorts "
+                "to report an explicitly unpaired cross-cohort contrast"
+            )
+        print("   --allow-different-cohorts given: reporting anyway; this is NOT a "
+              "cohorted contrast and must be labelled cross-cohort.")
+        print()
+    else:
+        print(f"cohort: identical task sets ({len(tasks_a)} users)")
 
     mean_a = sum(units_a[k]["reward"] for k in shared) / len(shared)
     mean_b = sum(units_b[k]["reward"] for k in shared) / len(shared)

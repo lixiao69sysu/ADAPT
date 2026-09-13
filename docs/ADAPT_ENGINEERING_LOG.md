@@ -2573,6 +2573,57 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   这个代理偏松，已如实标注。**"已实现且测试通过"与"reach 够大"都不等于"有效"。**
 - **能力抽象**：planning / proactiveness / utilization（**观测**，非干预）。
 
+## E-092：`--cohort dev` 与缓存基线不是同一批 8 个用户（重叠 2/8）——一次会跑错 11.5 小时的运行被拦下
+
+- **日期**：2026-09-13
+- **状态**：OPEN。**不改动任何 agent 行为**；本条约束的是**测量设备**本身。
+- **通用性**：GENERAL-STRUCTURAL（checkpoint 的 `tasks` 字段是队列身份，`info["cohort"]` 只是 CLI 标签）。
+- **难点**：按用户批准的主线配置启动 8 用户 ADAPT 臂时用了 `--cohort dev`。**首个 `task_id` 是 `B865629`**，
+  而 `stock_avg4_8u.json` 的 8 人是 `E057330 / E941775 / J365414 / M793481 / O309411 / P722245 / Q089190 / U000828`。
+  `B865629` 不在其中。运行已进入第 1 个用户第 1/16 个子任务（会话完成、已评测），
+  照此跑完约 **11.5 小时**（基线实测 **86.4 min/(用户·试次)**），产出的将是一份**与缓存基线不可比**的检查点。
+- **证据**（零模型，无 API 调用）：
+  - `python -c "from agent.vitabench_runner import get_tasks, stable_user_split; ..."` →
+    56 个任务；`dev = ['U200109','W974351','U010122','U901652','B865629','Q089190','Y208341','E057330']`；
+    `blind = ['U973458','U778202','E941775','X193757','Z544664','U778201','U820719','O309411']`；
+    **dev 与基线重叠 2 人**（`E057330`、`Q089190`），且 `E941775`、`O309411` 现在被分到 blind。
+  - `python -c "json.load(open('data/simulations/stock_avg4_8u.json'))['tasks']"` →
+    `['E057330','E941775','J365414','M793481','O309411','P722245','Q089190','U000828']`；
+    `simulations` 里的 `task_id` 集合与之一致（8 人、32 条 (user,trial)）。
+- **根因**：`stable_user_split` 对**当前** `get_tasks(language)` 的**全集**按 `sha256(f"{SPLIT_SEED}:{user_id}")`
+  排序取前 8（`vitabench_runner.py:226-234`，`SPLIT_SEED = "ADAPT-2026"`）。种子没变，
+  **但被排序的全集变了**：基线是 2026-09-06 的快照，此后任务集合发生了变动，于是"dev"这个名字指向了另一批人。
+  CLAUDE.md 已经把这个陷阱写成"两个都叫 8 dev users 的队列，只重叠 2 人"，但那条警告**在运行命令里看不出来**：
+  `--cohort dev` 打出的标签是 `dev`，基线打出的标签也是 `dev`，两者长得一样。
+- **险些造成的错误**：若按 `--cohort dev` 跑完再与 `stock_avg4_8u.json` 对照，
+  **8 人里有 6 人不同**，这个差异会被读成"本次改动的效果"，而它其实只是换了队列。
+  这是本轮最贵的一个坑，且**只有在看 `tasks` 字段时才会暴露**。
+- **有效方案**：
+  1. 一切与缓存基线的对照必须用**显式** `--task-ids`（`nargs="*"`，直接绕过 split，
+     见 `vitabench_runner.py:429` 的 `set(task_ids or split[cohort])`）。
+     本轮最终命令：`--task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828`。
+  2. **队列身份取 `tasks` 字段，不取 `info["cohort"]`**：checkpoint 写入的是
+     `"tasks": sorted(selected_ids)`（`:485`），产物因此自我描述；`info["cohort"]` 只是 CLI 标签。
+     本次显式指定 8 人时标签仍是 `dev`，已知并如实记录。
+  3. 新增设备 `scripts/_trial_slice_metrics.py`：把官方单位 `(task_id, subtask_idx)` 按试次切片，
+     以解决"1 试次臂 vs 缓存 4 试次基线不是同一个量"的问题。**校准**：在基线上复现出
+     官方 `Avg@4 = 0.2925` 与用户等权 `0.2940`，与文档逐位一致；
+     四个单试次切片为 `0.2900 / 0.3200 / 0.2900 / 0.2700`——即**单试次的公平对照就是 ≈0.29**，
+     这同时给出单试次切片的抽样抖动（sd≈0.019，仍**远小于** 8 用户对照下限 ±0.0582）。
+- **附带发现（对后续重跑有用）**：`run_selected` 支持**断点续跑**——若 `save_to` 已存在
+  且 `info` 与 `tasks` 完全一致，则从已完成集合 `done` 继续（`:488-498`）；
+  配置不一致会直接 `raise ValueError`。所以被拦下的这次运行没有污染任何产物（未写出检查点文件）。
+- **验证**：`scripts/_trial_slice_metrics.py data/simulations/stock_avg4_8u.json` →
+  `official units=100`、`pooled Avg@4=0.2925`、`equal-user-weight=0.2940`、
+  `sim durations: n=32 mean=86.4 min total=46.1 h`。
+- **适用边界**：本条不声称任何能力或分数变化。它只在**跨运行比较之前**生效：
+  先比对两个 checkpoint 的 `tasks` 字段，再谈 delta。若将来任务全集再次变动，
+  `stable_user_split` 的 `dev`/`blind` 会再次漂移，而旧的显式 ID 列表仍然稳定。
+- **后续风险/下一步**：`--cohort dev` 这个名字在仓库里已经指过至少两批不同的人；
+  建议在 `scripts/paired_arms.py` 里加一条硬门禁——两个检查点 `tasks` 不同则拒绝比较，
+  而不是打印一个看似有效的数字。（本条已记录，尚未实现。）
+- **能力抽象**：不在六类能力之内——属于 **measurement integrity（评测设备完整性）**。
+
 ## 新记录模板
 
 以后遇到新问题时复制以下模板。首次发现时标为 OPEN；只有证据满足要求后才能更新为 PARTIAL 或 VERIFIED。
