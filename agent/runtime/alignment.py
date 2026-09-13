@@ -62,12 +62,30 @@ class CandidateAttributeMap:
     attributes: tuple[CandidateAttribute, ...]
 
     @classmethod
-    def from_candidate(cls, candidate: Any) -> "CandidateAttributeMap":
+    def from_candidate(
+        cls, candidate: Any, min_chars: int = 2
+    ) -> "CandidateAttributeMap":
+        """Extract the candidate's printed attributes.
+
+        ``min_chars`` is the shortest normalized value kept. The default (2)
+        preserves the historical behaviour used by grounding. The
+        correspondence view passes 1, because a single-character attribute is
+        real evidence ("taste=辣") and dropping it makes a one-character
+        constraint permanently unknowable -- the E-061 information loss, one
+        layer down. Numeric and technical values are excluded at any length.
+        """
+
+        def usable(text: str) -> bool:
+            normalized = _normalize(text)
+            if len(normalized) < min_chars or normalized.isdigit():
+                return False
+            return "_" not in text
+
         values: list[CandidateAttribute] = []
 
         def add(key: str, value: Any, source: str) -> None:
             text = str(value or "").strip()
-            if key in _TECHNICAL_KEYS or not _usable(text):
+            if key in _TECHNICAL_KEYS or not usable(text):
                 return
             values.append(CandidateAttribute(key or "open", text, source))
             # Merchant/service names are atomic identities. Splitting a value
@@ -75,7 +93,7 @@ class CandidateAttributeMap:
             # like reusable brand evidence across unrelated candidates.
             parts = () if key in {"store_name", "shop_name", "merchant_name"} else _VALUE_SPLIT_RE.split(text)
             for part in parts:
-                if part != text and _usable(part):
+                if part != text and usable(part):
                     values.append(CandidateAttribute(key or "open", part, source))
 
         add("name", getattr(candidate, "name", ""), "name")

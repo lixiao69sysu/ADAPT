@@ -54,8 +54,14 @@ def test_audit_uses_known_room_slot_without_hidden_access_or_repeat_question():
     report = audit_tasks([task], [task.id])
     assert report.users == 1
     assert report.subtasks == 1
-    assert report.questions_proposed == 0
+    # The intent is that a *known* slot is never re-asked. The old policy asked
+    # nothing at all here only because its single candidate question was the
+    # already-known room type; the gap-driven policy asks about the city
+    # instead, which is a genuine user-only gap. Asserting
+    # `questions_proposed == 0` conflated "no repeat" with "no question", so
+    # the real invariant is asserted directly.
     assert report.known_slot_question_conflicts == 0
+    assert report.questions_proposed <= 1
     assert report.structured_scope_checks >= 1
     assert report.structured_scope_mismatches == 0
 

@@ -46,8 +46,8 @@ from agent.memory.fact_store import FactStore
 from agent.memory.facts import fact_from_signal
 from agent.memory.grounding import ground_facts_to_candidates
 from agent.memory.lifecycle import LifecycleManager
-from agent.memory.proactive import ProactiveEngine
-from agent.memory.retrieval import RetrievalConfig, RetrievalScorer, _normalize_domain
+from agent.memory.proactive import ProactiveEngine, QuestionContext
+from agent.memory.retrieval import RetrievalConfig, RetrievalScorer
 from agent.memory.signals import SignalParser
 from agent.memory.slots import resolve_preference_slots
 from agent.memory.stream import MemoryStream, parse_timestamp
@@ -55,9 +55,6 @@ from agent.memory.stream import MemoryStream, parse_timestamp
 
 class ADAPTMemory(BaseMemory):
     """ADAPT long-term preference memory with drift-aware retrieval."""
-
-    # Execution hints draw from a wider window than the final bounded card.
-    _HINT_TOP_K = 40
 
     def __init__(
         self,
@@ -129,13 +126,7 @@ class ADAPTMemory(BaseMemory):
         query = query or ""
         summary = self._render_summary_block()
         if not query:
-            active = [fact for fact in self.facts if fact.status == "active"]
-            values = [fact.value for fact in sorted(active, key=lambda f: f.confidence, reverse=True)[:8]]
-            card_text = (
-                "PREFER: " + " | ".join(values)
-                if values
-                else "No user preference information available yet."
-            )
+            card_text = self._render_memory_overview()
             return f"{summary}{card_text}" if summary else card_text
         card = self.compile_task(query)
         if with_suggestion:
@@ -144,6 +135,32 @@ class ADAPTMemory(BaseMemory):
                 card.ask.insert(0, question)
         rendered = card.render()
         return f"{summary}{rendered}" if summary else rendered
+
+    def _render_memory_overview(self, max_facts: int = 8) -> str:
+        """Render the whole-memory view through the polarity-aware renderer.
+
+        The overview must not assert a polarity it does not know. Joining raw
+        ``fact.value`` under a fixed ``PREFER`` label turned a durable safety
+        fact such as an allergy into a stated preference, and
+        ``read_preference_memory`` reads exactly this path (E-059). Polarity is
+        a typed property of the fact, so both read paths share one renderer.
+        """
+        active = [fact for fact in self.facts if fact.status == "active"]
+        if not active:
+            return "No user preference information available yet."
+        negatives: list[str] = []
+        positives: list[str] = []
+        for fact in sorted(active, key=lambda f: f.confidence, reverse=True):
+            if not fact.value:
+                continue
+            target = negatives if fact.polarity == "negative" else positives
+            if fact.value not in target:
+                target.append(fact.value)
+        if not negatives and not positives:
+            return "No user preference information available yet."
+        return DecisionCard(avoid=negatives, prefer=positives).render(
+            max_facts=max_facts
+        )
 
     def _render_summary_block(self) -> str:
         """The bounded profile summary block, or an empty string when disabled."""
@@ -250,15 +267,6 @@ class ADAPTMemory(BaseMemory):
             "grounded_positive": len(selected_values),
             "grounded_negative": len(negative),
         }
-
-    def _summary_fallback(self, spec: TaskSpec) -> list[str]:
-        """Retrieve at most three relevant summary lines without dumping it all."""
-        if not self._summary_text:
-            return []
-        markers = {spec.facet, *[c.value for c in spec.must]}
-        lines = [line.strip(" -*") for line in self._summary_text.splitlines() if line.strip()]
-        relevant = [line for line in lines if any(marker and marker in line for marker in markers)]
-        return relevant[:3]
 
     def begin_subtask(self, instruction: str) -> None:
         """Explicit state transition invoked by ADAPTAgent, never by read()."""
@@ -384,87 +392,6 @@ class ADAPTMemory(BaseMemory):
             return "No user preference information available yet."
 
         return "\n\n".join(sections)
-
-    def _execution_hint(self, query: str) -> str:
-        """Task-specific execution hint: the preferences most relevant to THIS
-        subtask's choice, surfaced at the top of read() output.
-
-        Soft framing on purpose — a hard 'must-do' gate made the agent fragile
-        in v3 (over-asking, no exploration). This is an informational nudge the
-        agent can override when the instruction conflicts.
-
-        v13: domain-gated. Drop events whose content clearly belongs to a
-        different domain than the query (e.g. 狗咖/外卖 in a hotel task), and
-        for OTA queries drop concrete past entities (brands, products, past
-        dates) that anchored the agent to the wrong city/subdomain in v12
-        (A891207 长春 hotel task surfaced 锦州喜来登 + 张门票 -> collapse).
-        Only abstract food/taste likes survive for OTA; v10 passed OTA subtasks
-        with no hint at all, so an empty OTA hint is the safe default.
-        """
-        if not query or not self.stream.events:
-            return ""
-        events = self.scorer.retrieve(self.stream, query, k=self._HINT_TOP_K)
-        qdom = self.scorer.domain(query)
-        # 忌口最高优先（最不能违反）；明确偏好/品牌/口味等跟随相关性排序，
-        # 避免跨领域噪音（如点外卖任务误提示"要高铁"）
-        high: list[str] = []
-        prod_med: list[str] = []      # 常点X — concrete product anchors (most actionable)
-        brand_med: list[str] = []     # 常选X — brand anchors
-        attr_med: list[str] = []      # taste/likes — attribute-level signals
-        seen: set[str] = set()
-        for ev in events:
-            sig = ev.signal
-            if sig is None or self.drift.suppress_drifted(ev):
-                continue
-            p = sig.predicate
-            obj = (sig.object or "").strip()
-            if not obj or obj in seen:
-                continue
-            # Multi-clause 忌口 fragments (e.g. "小料，觉得多余") come from the
-            # dialogue regex running past a clause boundary ("不加小料，觉得多余").
-            # They are unreliable and crowd the 4-slot hint — drop them so the
-            # real dimension preferences (冰镇/布蕾/热饮) can surface.
-            if p == "avoids_food" and any(c in obj for c in "，、。；,。"):
-                continue
-            seen.add(obj)
-            # Cross-domain guard: only enforced when the query domain is
-            # confidently detected.
-            if qdom:
-                evdom = self.scorer._event_domain(
-                    sig, f"{sig.predicate} {sig.object} {sig.raw}"
-                )
-                if evdom and _normalize_domain(evdom) != _normalize_domain(qdom):
-                    continue
-            if p == "avoids_food":
-                high.append(f"忌口{obj}")
-            elif qdom == "ota" and p in ("brand_loyalty", "prefers_product", "explicit_preference"):
-                # OTA: skip concrete past entities that anchor the agent to a
-                # wrong city/brand/subdomain (喜来登/门票/过去日期). Keep the
-                # abstract signals below (taste/likes) or nothing.
-                continue
-            elif p == "brand_loyalty":
-                brand_med.append(f"常选{obj}")
-            elif p == "taste_preference":
-                attr_med.append(obj)
-            elif p == "likes_food":
-                attr_med.append(f"喜欢{obj}")
-            elif p == "prefers_product":
-                prod_med.append(f"常点{obj}")
-            elif p == "explicit_preference":
-                attr_med.append(obj)
-        # v16a dimension extraction adds taste_preference events (冰饮/热饮/小料)
-        # that crowded 常点焦糖玛奇朵 out of B865629 sub3's hint (top_k=5 window),
-        # dropping the proactive coffee subtask 1.0 -> 0.0. Reserve concrete product
-        # anchors (常点X) before brands/tastes so a real past order can't be fully
-        # displaced by a generic attribute event.
-        hints = (high + prod_med[:2] + brand_med + attr_med)[:4]
-        if not hints:
-            return ""
-        return (
-            "【本任务执行提示】" + "、".join(hints) +
-            "。选择商家/商品/房型/出行方式等选项时，应优先匹配上述常点商品/常选店铺；"
-            "仅当与本次指令明确冲突时，以指令为准。"
-        )
 
     def update(
         self,
@@ -668,42 +595,16 @@ class ADAPTMemory(BaseMemory):
 
     @staticmethod
     def _format_interactions(interactions: list) -> str:
-        """Compact text of interactions for LLM summarization (init_gen format)."""
-        lines: list[str] = []
-        for inter in interactions:
-            if not isinstance(inter, dict):
-                continue
-            date = inter.get("date", "")
-            for beh in inter.get("behavior", []):
-                if not isinstance(beh, dict):
-                    continue
-                btype = beh.get("behavior_type", "unknown")
-                content = beh.get("content", {})
-                if btype == "order":
-                    merchant = content.get("merchant_name", "") if isinstance(content, dict) else ""
-                    names = []
-                    for it in content.get("items", []) if isinstance(content, dict) else []:
-                        if isinstance(it, dict):
-                            names.append(str(it.get("product_name", "")))
-                    remark = (content.get("remark", "") or content.get("note", "")) if isinstance(content, dict) else ""
-                    line = f"[{date}] 点单 {merchant}: {', '.join(n for n in names if n)[:120]}"
-                    if remark:
-                        line += f" (备注:{remark})"
-                    lines.append(line)
-                elif btype == "search":
-                    kw = content.get("keyword", "") if isinstance(content, dict) else str(content)
-                    if kw:
-                        lines.append(f"[{date}] 搜索: {kw}")
-                elif btype in ("complaint", "comment", "review"):
-                    target = content.get("target_name", "") if isinstance(content, dict) else ""
-                    if target:
-                        lines.append(f"[{date}] {btype}: {target}")
-            for turn in inter.get("dialogue", []):
-                if isinstance(turn, dict) and turn.get("role") == "user":
-                    c = turn.get("content", "")
-                    if c:
-                        lines.append(f"[{date}] 用户: {c[:80]}")
-        return "\n".join(lines)[:2500]
+        """Keep source fields and corrections until semantic summarization.
+
+        The stock formatter supports both benchmark interaction shapes and
+        preserves product attributes and review bodies. A prefix character cut
+        here used to discard the most recent corrections before the LLM saw them.
+        The generated summary still has its separate presentation budget.
+        """
+        from vita.memory.rewrite_memory import RewriteMemory
+
+        return RewriteMemory._format_interactions(interactions)
 
     def _llm_update_summary(self, interactions: list, llm: str,
                             llm_args: dict | None) -> str | None:
@@ -780,40 +681,72 @@ class ADAPTMemory(BaseMemory):
 
     def propose_question(self, instruction: str, domain: str | None = None) -> str | None:
         """Pure question proposal; does not consume the per-subtask budget."""
-        return self._suggest_question_inner(instruction, domain)
+        proposal = self.propose(instruction, domain)
+        return proposal.question if proposal else None
 
-    def _suggest_question_inner(self, instruction: str, domain: str | None = None) -> str | None:
-        # Infer domain from the instruction if not given (e.g. read() path).
-        if domain is None:
-            domain = self.scorer.domain(instruction)
-        memory_text = self._read_base(instruction)
+    def propose(self, instruction: str, domain: str | None = None):
+        """Pure proposal carrying the slot the question is about (E-069)."""
         spec = TaskSpec.compile(instruction)
         known_slots = resolve_preference_slots(spec, self.facts)
-        return self.proactive.propose_question(
-            instruction, memory_text, domain, known_slots=known_slots
+        context = QuestionContext(
+            instruction=instruction,
+            domain=spec.domain,
+            facet=spec.facet,
+            action=spec.action,
+            unknown_slots=tuple(spec.unknown_slots or ()),
+            resolved_slots={
+                slot: str(value)
+                for slot, value in (spec.resolved_slots or {}).items()
+                if value
+            },
+            known_slots=dict(known_slots or {}),
         )
+        return self.proactive.propose(context=context)
 
-    def commit_question(self, question: str) -> bool:
-        """Record that ADAPTAgent actually sent ``question`` to the user."""
-        return self.proactive.commit_question(question)
+    def _suggest_question_inner(self, instruction: str, domain: str | None = None) -> str | None:
+        return self.propose_question(instruction, domain)
 
-    def record_user_answer(self, answer: str, question: str | None = None,
-                           dimension: str = "") -> bool:
-        """Persist an answer to a committed proactive question."""
+    def commit_question(self, question: str, **metadata) -> bool:
+        """Record that a question was actually sent to the user.
+
+        ``metadata`` (``slot``/``value``/``is_confirmation``) comes from the
+        :class:`~agent.memory.proactive.Proposal` the question came from, so the
+        reply can later be resolved to a decision dimension.
+        """
+        return self.proactive.commit_question(question, **metadata)
+
+    def record_user_answer(
+        self,
+        answer: str,
+        question: str | None = None,
+        dimension: str = "",
+    ) -> bool:
+        """Persist an answer to a committed proactive question.
+
+        The stored fact carries the **resolved slot value**, not the reply text:
+        an affirmative answer to "这次仍然不加糖吗？" stores 无糖, not "是的"
+        (E-069). The slot becomes the fact's dimension so later turns can read it.
+        """
         q = question or self.proactive.pending_question
         if not q or not (answer or "").strip():
             return False
         before = len(self.stream)
-        self.proactive.record_answer(q, answer, self)
+        slot, value = self.proactive.record_answer(q, answer, self)
+        if not value:
+            # The reply was consumed but resolved to nothing usable (a bare
+            # "不用了" to an open question). Nothing to ingest, and inventing a
+            # value here is exactly what the design spine forbids.
+            return True
         event = self.stream.events[-1] if len(self.stream) > before else None
         if event and event.signal:
             fact = fact_from_signal(event.signal, str(event.id))
-            if dimension:
+            resolved_dimension = dimension or slot
+            if resolved_dimension:
                 spec = TaskSpec.compile(self._current_task_key)
                 fact.scope = spec.domain
                 fact.facet = spec.facet
                 fact.category = spec.facet
-                fact.dimension = dimension
+                fact.dimension = resolved_dimension
             self._ingest_fact(fact)
         return True
 

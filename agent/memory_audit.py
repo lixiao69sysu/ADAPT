@@ -25,16 +25,15 @@ from vita.domains.personalization.environment import get_tasks
 
 from agent.decision import TaskSpec, _valid_fact_value
 from agent.memory.adapt_memory import ADAPTMemory
-from agent.memory.facts import PreferenceFact, fact_from_signal
+from agent.memory.facts import PreferenceFact, SCALAR_DIMENSIONS, fact_from_signal
 from agent.memory.signals import SignalParser
 from agent.memory.slots import resolve_preference_slots
 from agent.vitabench_runner import SPLIT_SEED, stable_user_split
 
 
-_SCALAR_DIMENSIONS = {
-    "temperature", "sweetness", "taste", "topping", "room_type",
-    "transport", "budget", "time",
-}
+# The single-valued boundary is declared once, in ``agent.memory.facts``; see
+# the comment on ``SCALAR_DIMENSIONS`` there.
+_SCALAR_DIMENSIONS = SCALAR_DIMENSIONS
 _LOCAL_SCOPES = {"delivery", "instore", "local_commerce"}
 _QUESTION_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("transport", ("飞机还是高铁", "出行方式", "倾向飞机", "倾向高铁")),

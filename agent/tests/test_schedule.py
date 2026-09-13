@@ -12,13 +12,10 @@ from datetime import datetime
 
 import pytest
 
-from agent.decision import CandidateLedger, DecisionCard
 from agent.runtime.schedule import (
     parse_agent_time,
     resolve_relative_date,
 )
-from agent.runtime.state import RuntimePhase, TaskRuntime
-from agent.runtime.tools import ToolMeta, ToolRegistry, ToolRole
 
 
 def at(value: str) -> datetime:
@@ -77,15 +74,6 @@ def test_time_of_day_hint_is_recorded():
     assert resolve_relative_date("没有时间词的请求", at("2024-12-24 20:00:00")) is None
 
 
-def test_runtime_publishes_the_resolved_date():
-    from agent.decision import TaskSpec
-
-    runtime = TaskRuntime.begin(TaskSpec.compile("明天晚上帮我找个地方"))
-    runtime.resolved_date = "2024-12-25"
-    runtime.date_evidence = "明天"
-    runtime.date_time_hint = "晚上"
-    rendered = runtime.render()
-    assert "RESOLVED_DATE=2024-12-25 (from 明天) time-of-day: 晚上" in rendered
 
 
 class _Debug:
@@ -96,51 +84,9 @@ class _Debug:
         self.events.append({"event": event, **payload})
 
 
-def build_agent() -> object:
-    from agent.adapt_agent import ADAPTAgent
-    from agent.decision import TaskSpec
-
-    agent = ADAPTAgent.__new__(ADAPTAgent)
-    agent.debug = _Debug()
-    agent.ledger = CandidateLedger()
-    agent.task_spec = TaskSpec.compile("明天晚上帮我找个地方")
-    agent.decision_card = DecisionCard()
-    agent.runtime = TaskRuntime.begin(agent.task_spec)
-    agent.tool_registry = ToolRegistry()
-    agent.tool_registry.meta = {
-        "get_date_holiday_info": ToolMeta(
-            "get_date_holiday_info", ToolRole.READ, {"date"}, {}
-        ),
-        "instore_shop_search_recommend": ToolMeta(
-            "instore_shop_search_recommend", ToolRole.SEARCH, {"keywords"}, {}
-        ),
-    }
-    agent._date_grounded = False
-    return agent
 
 
-def test_date_grounding_call_is_issued_once_before_deciding():
-    agent = build_agent()
-    agent.runtime.phase = RuntimePhase.SEARCH
-    agent.runtime.resolved_date = "2024-12-25"
-    agent.runtime.date_evidence = "明天"
-    message = agent._framework_date_grounding()
-    assert message is not None
-    call = message.tool_calls[0]
-    assert call.name == "get_date_holiday_info"
-    assert call.arguments == {"date": "2024-12-25"}
-    # Never repeated, and never issued after the write phase has been reached.
-    assert agent._framework_date_grounding() is None
 
 
-def test_date_grounding_skipped_without_a_relative_expression():
-    agent = build_agent()
-    agent.runtime.phase = RuntimePhase.SEARCH
-    assert agent._framework_date_grounding() is None
 
 
-def test_date_grounding_is_not_issued_after_execution_started():
-    agent = build_agent()
-    agent.runtime.phase = RuntimePhase.READY_TO_CREATE
-    agent.runtime.resolved_date = "2024-12-25"
-    assert agent._framework_date_grounding() is None

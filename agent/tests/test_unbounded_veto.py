@@ -9,10 +9,8 @@ refusal text repeated to the user until the step budget was gone.
 
 from __future__ import annotations
 
-from agent.adapt_agent import ADAPTAgent
-from agent.decision import CandidateLedger, DecisionCard, TaskSpec, build_decision_card
-from agent.runtime import RuntimePhase, TaskRuntime
-from agent.runtime.tool_errors import ToolErrorLedger
+from agent.decision import TaskSpec, build_decision_card
+from agent.candidate_ledger import CandidateLedger
 
 TWO_NIGHTS = (
     "后天要去遵义喝朋友的喜酒，顺便在那玩几天，"
@@ -28,20 +26,6 @@ class _Debug:
         self.events.append({"event": event, **payload})
 
 
-def _agent(instruction: str = TWO_NIGHTS) -> ADAPTAgent:
-    agent = object.__new__(ADAPTAgent)
-    agent.task_spec = TaskSpec.compile(instruction)
-    agent.runtime = TaskRuntime.begin(agent.task_spec)
-    agent.decision_card = DecisionCard()
-    agent.ledger = CandidateLedger()
-    agent.tool_errors = ToolErrorLedger()
-    agent.debug = _Debug()
-    agent.enable_lessons = False
-    agent.lessons: list[str] = []
-    agent._record_lesson = lambda failure, trigger, correction: agent.lessons.append(
-        failure
-    )
-    return agent
 
 
 def test_a_day_list_states_both_nights_without_vetoing():
@@ -78,47 +62,9 @@ def test_an_environment_fact_is_still_enforced():
     assert any("was not returned by a tool" in problem for problem in problems)
 
 
-def test_a_repeated_derived_veto_is_capped_after_three_attempts():
-    agent = _agent()
-    problem = "selected candidate does not satisfy required date: 31号"
-    kept = [
-        agent._cap_repeated_vetoes([problem]) for _ in range(agent._VETO_CAP + 1)
-    ]
-    assert all(entries == [problem] for entries in kept[: agent._VETO_CAP])
-    assert kept[-1] == []
-    assert agent.runtime.constraint_veto_counts[problem] == agent._VETO_CAP + 1
-    assert agent.lessons == ["constraint_veto_capped"]
-    assert any(
-        event["event"] == "constraint_veto_capped" for event in agent.debug.events
-    )
 
 
-def test_provenance_and_authorization_are_never_capped():
-    agent = _agent()
-    facts = [
-        "room_id=S1_P99999 was not returned by a tool in this subtask",
-        "CREATE is not authorized by the user",
-        "selected candidate contains forbidden value: 花生",
-        "this exact order was already created in this subtask",
-        "tool failure guard: the same address argument already failed 2 times",
-    ]
-    for _ in range(10):
-        assert agent._cap_repeated_vetoes(facts) == facts
-    assert agent.runtime.constraint_veto_counts == {}
 
 
-def test_the_fallback_never_repeats_the_false_refusal_after_a_cap():
-    agent = _agent()
-    agent.runtime.phase = RuntimePhase.SELECT
-    agent.runtime.constraint_veto_counts = {"date: 31号": 4}
-    message = agent._fallback_message()
-    assert "无法满足硬约束" not in message
-    assert agent.runtime.phase == RuntimePhase.SELECT
 
 
-def test_the_fallback_still_refuses_when_a_real_constraint_blocks():
-    agent = _agent()
-    agent.runtime.phase = RuntimePhase.SELECT
-    message = agent._fallback_message()
-    assert "无法满足硬约束" in message
-    assert agent.runtime.phase == RuntimePhase.UNSATISFIABLE

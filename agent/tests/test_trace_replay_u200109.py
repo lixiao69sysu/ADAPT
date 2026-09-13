@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent.decision import CandidateLedger, DecisionCard, TaskSpec
+from agent.decision import DecisionCard
+from agent.candidate_ledger import CandidateLedger
 from agent.memory.adapt_memory import ADAPTMemory
-from agent.runtime import QuestionGate, RuntimePhase, RuntimePolicyStore, TaskRuntime
 
 
 TRACE_PATH = Path(__file__).parents[2] / "data" / "simulations" / "adapt_smoke_2u.json"
@@ -27,12 +27,6 @@ def test_replay_source_contains_delegation_payment_and_decline_events():
     assert "不用了，我自己付。" in turns
 
 
-def test_soup_delegation_transitions_to_create_without_reasking():
-    runtime = TaskRuntime.begin(TaskSpec.compile("想喝汤了，你帮我点个送到家里"))
-    runtime.observe_user("随便，你看着办吧。")
-    runtime.observe_candidates(3)
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE
-    assert not QuestionGate().evaluate("您喜欢什么口味的汤？", runtime).allowed
 
 
 def test_retail_task_does_not_receive_restaurant_avoid_memory():
@@ -45,21 +39,6 @@ def test_retail_task_does_not_receive_restaurant_avoid_memory():
     assert "香菜" not in card.avoid
 
 
-def test_slipper_replay_records_size_once_then_uses_first_candidate():
-    runtime = TaskRuntime.begin(TaskSpec.compile("脚冷，该买一双新的拖鞋了，帮我下单一双送到家里"))
-    assert runtime.next_question_dimension() == "size"
-    runtime.commit_question("size")
-    runtime.observe_user("42-43码，第一双吧，直接下单。")
-    ledger = CandidateLedger()
-    ledger.observe(
-        "delivery_product_search_recommand",
-        "StoreProduct(store_id=S1_S00001, product_name=保暖拖鞋42-43码, "
-        "product_id=S1_P00001, quantity=5)",
-    )
-    runtime.observe_candidates(1)
-    assert runtime.resolved_slots["size"] == "42-43"
-    assert runtime.phase == RuntimePhase.READY_TO_CREATE
-    assert runtime.next_question_dimension() == ""
 
 
 def test_ranker_excludes_zero_inventory_and_keeps_top_five():
@@ -75,13 +54,3 @@ def test_ranker_excludes_zero_inventory_and_keeps_top_five():
     assert all(candidate.inventory != 0 for candidate in shortlist)
 
 
-def test_execution_lesson_changes_runtime_policy_not_only_prompt():
-    policies = RuntimePolicyStore("U200109")
-    policies.begin_subtask("U200109")
-    policies.observe("delivery", "retail", "missed_write")
-    policies.observe("delivery", "retail", "repeat_search")
-    policies.observe("delivery", "retail", "repeat_search")
-    policies.begin_subtask("U200109")
-    policy = policies.policy("delivery", "retail")
-    assert policy.force_decision_after_candidates
-    assert policy.max_searches_per_family == 1

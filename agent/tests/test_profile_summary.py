@@ -8,7 +8,6 @@ to the model, and asked for item-level detail instead of reusable dimensions.
 
 from __future__ import annotations
 
-import pytest
 
 from agent.memory.adapt_memory import ADAPTMemory
 
@@ -43,6 +42,23 @@ def test_summary_is_absent_by_default():
     memory = ADAPTMemory()
     memory.update(INTERACTIONS)
     assert "用户偏好归纳" not in memory.read("买个垃圾桶")
+
+
+def test_summary_input_retains_attributes_review_body_and_late_correction():
+    interactions = [{"date": "2026-01-01", "behavior": [
+        {"behavior_type": "order", "content": {
+            "merchant_name": "Example", "items": [{"product_name": "Tea", "sugar": "NO_SUGAR"}],
+            "remark": "x" * 2700}},
+        {"behavior_type": "review", "content": {"target_name": "Example", "text": "TOO_SWEET"}},
+    ], "dialogue": [{"role": "user", "content": "NEW_CORRECTION"}]}]
+    formatted = ADAPTMemory._format_interactions(interactions)
+    assert all(value in formatted for value in ("NO_SUGAR", "TOO_SWEET", "NEW_CORRECTION"))
+
+
+def test_summary_input_accepts_typed_interactions():
+    formatted = ADAPTMemory._format_interactions([
+        {"type": "conversation", "timestamp": "2026-01-02", "content": "no peanuts"}])
+    assert "no peanuts" in formatted
 
 
 def test_summary_block_is_prepended_when_enabled():

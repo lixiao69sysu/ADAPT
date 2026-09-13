@@ -21,7 +21,6 @@ def summarize(path: Path) -> dict[str, Any]:
     repeated_search_excess = 0
     incomplete_payments = 0
     evaluation_failed = 0
-    operation_counts: Counter[str] = Counter()
     skill_rewards: dict[str, list[float]] = {"personalize": [], "proactive": []}
     simulation_scores: dict[str, float] = {}
 
@@ -82,11 +81,6 @@ def summarize(path: Path) -> dict[str, Any]:
                     pending_payment = False
         repeated_search_excess += sum(max(0, count - 2) for count in search_counts.values())
         incomplete_payments += int(pending_payment)
-        operations = ((simulation.get("states") or {}).get("adapt_v2") or {}).get(
-            "operations", []
-        )
-        for operation in operations:
-            operation_counts[str(operation.get("status") or "unknown")] += 1
 
     early, late = _early_late(window_rewards)
     pass4 = _pass_at_four(simulations, exclusions)
@@ -118,7 +112,6 @@ def summarize(path: Path) -> dict[str, Any]:
         "prevented_writes": prevented_writes,
         "repeated_search_excess": repeated_search_excess,
         "incomplete_payments": incomplete_payments,
-        "operation_status_counts": dict(operation_counts),
         "simulation_scores": simulation_scores,
     }
 

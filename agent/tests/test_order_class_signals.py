@@ -8,7 +8,8 @@ to one who only ever took 高铁.
 
 from __future__ import annotations
 
-from agent.decision import Candidate, CandidateLedger, DecisionCard, TaskSpec
+from agent.decision import Candidate, DecisionCard, TaskSpec
+from agent.candidate_ledger import CandidateLedger
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.memory.facts import fact_from_signal
 from agent.memory.grounding import ground_facts_to_candidates

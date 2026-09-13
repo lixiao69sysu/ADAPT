@@ -12,7 +12,6 @@ from vita.metrics.agent_metrics import (
     _compute_subtask_pass_metrics,
     is_successful,
     pass_at_k,
-    pass_hat_k,
 )
 
 CP = Path('data/simulations/stock_avg4_8u.json')

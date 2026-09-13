@@ -1,14 +1,20 @@
 """Preference drift detection: detect when user preferences shift over time.
 
 The core idea: monitor specific preference *dimensions* (taste, budget level,
-hotel brand, etc.) for shifts. A drift is declared when a NEW value on a
+hotel room type, etc.) for shifts. A drift is declared when a NEW value on a
 dimension repeatedly conflicts with the established value.
 
 Important: NOT every new product is a drift. Buying different dishes is normal
-consumption variety. Drift applies only to "dimension" predicates where a
-single preference governs the direction (e.g. taste spicy -> mild). Product
-preferences (prefers_product) are excluded from drift and handled purely by
-lifecycle decay.
+consumption variety. Drift applies only to genuinely single-valued dimensions
+where one preference governs the direction (e.g. 热饮 -> 冰饮). Multi-valued sets
+(avoids, allergies, brands, products, likes, searches) never drift and never
+evict one another.
+
+The slot a value lives in is the same slot the fact store supersedes in:
+``(scope, facet, dimension, category)``, taken from ``PreferenceFact.slot_key``.
+The previous version of this module compared a *different* slot — it dropped
+``category`` and admitted a single predicate — so the two mechanisms could not
+agree on what "the same preference" meant and supersession never fired (E-090).
 
 Reference structure (from VitaBench user_scenario): each preference has a
 change history with entries {content, type: unchanged|changed, source}. We
@@ -20,17 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from agent.memory.facts import fact_from_signal
+from agent.memory.facts import SCALAR_DIMENSIONS, fact_from_signal
 from agent.memory.signals import Signal
-
-# Predicates that represent a single preference *dimension* where a shift is
-# meaningful drift. Product-level predicates (prefers_product, intent_product)
-# are excluded — buying different dishes is normal variety, not drift.
-DIMENSION_PREDICATES = {
-    # Only genuinely single-valued dimensions participate. Likes, avoids, and
-    # brands are multi-valued sets and must not evict one another.
-    "taste_preference",
-}
 
 
 @dataclass
@@ -66,12 +63,25 @@ class DriftDetector:
 
     @staticmethod
     def _slot_key(signal: Signal) -> Optional[tuple[str, str, str, str]]:
-        if signal.predicate not in DIMENSION_PREDICATES:
-            return None
+        """The drift slot, or ``None`` when this signal may not drift at all.
+
+        Participation is decided by the *resulting fact's dimension*, using the
+        single-valued set the fact store also supersedes on — not by a
+        hand-maintained predicate whitelist. Every predicate that can produce a
+        genuinely single-valued dimension therefore participates, and every
+        predicate producing a multi-valued set (avoids, brands, products,
+        likes, searches) is excluded by construction.
+
+        Negative facts are excluded too. Aversion is additive by design: a new
+        "don't eat X" is not a change of mind about "don't eat Y".
+        """
         fact = fact_from_signal(signal)
-        # Single-valued dimensions share the default category within a scoped
-        # facet, while negative constraints remain additive and never get here.
-        return fact.scope, fact.facet, fact.dimension, "default"
+        if fact.polarity == "negative" or fact.dimension not in SCALAR_DIMENSIONS:
+            return None
+        # Exactly the key ``FactStore`` supersedes in; ``slot_key`` is where a
+        # negative substitutes its value for the category, which the polarity
+        # guard above already makes unreachable.
+        return fact.slot_key
 
     def observe(self, signal: Signal) -> Optional[str]:
         """Process a new signal, updating dimension slots.

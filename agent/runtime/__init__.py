@@ -1,39 +1,13 @@
-"""Deterministic execution controller used only by ADAPTAgent."""
+"""Shared decision-side runtime helpers.
 
-from agent.runtime.debug import DebugEventStore
-from agent.runtime.evolution import (
-    CapabilityTarget,
-    CompiledRuntimePolicy,
-    RuntimePolicyAdapter,
-    RuntimePolicyRule,
-    RuntimePolicyStore,
-)
-from agent.runtime.question_gate import QuestionDecision, QuestionGate
-from agent.runtime.state import AuthorizationState, RuntimePhase, TaskRuntime
-from agent.runtime.tool_errors import ParameterRecovery, ToolErrorLedger
-from agent.runtime.tools import (
-    ToolMeta,
-    ToolRegistry,
-    ToolRole,
-    requires_product_entity,
-)
+This package used to re-export the controller's state machine, tool registry,
+question gate, runtime-policy store and tool-failure ledger. All of those were
+retired with the controller (see docs/AGENT_ARCHITECTURE.md, section 9), so the
+package is now just a namespace for the four modules the shared decision layer
+actually depends on:
 
-__all__ = [
-    "AuthorizationState",
-    "DebugEventStore",
-    "CapabilityTarget",
-    "CompiledRuntimePolicy",
-    "QuestionDecision",
-    "QuestionGate",
-    "ParameterRecovery",
-    "RuntimePhase",
-    "RuntimePolicyAdapter",
-    "RuntimePolicyRule",
-    "RuntimePolicyStore",
-    "TaskRuntime",
-    "ToolMeta",
-    "ToolRegistry",
-    "ToolErrorLedger",
-    "ToolRole",
-    "requires_product_entity",
-]
+``alignment`` (memory/grounding imports it), ``ranking``, ``location`` and
+``schedule`` (decision.py calls them). Keep it free of re-exports: an eager
+``__init__`` is what once pulled the whole controller into the data layer's
+import closure.
+"""

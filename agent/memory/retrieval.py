@@ -19,12 +19,10 @@ Design decisions:
 from __future__ import annotations
 
 import math
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 
-from agent.memory.signals import Signal
 from agent.memory.stream import MemoryEvent, MemoryStream, parse_timestamp
 
 # --- Jieba lazy import (gracefully degrade to bigram if unavailable) ----------

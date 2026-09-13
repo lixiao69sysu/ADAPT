@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
 # --- Interaction type metadata -------------------------------------------------
@@ -115,11 +115,35 @@ _AVOIDANCE_LEAD_WORDS = (
     "就是",
     "现在",
     "以后",
+    # Contrastive conjunctions. A postfix avoidance pattern anchored on "…过敏"
+    # could keep the clause-initial conjunction ("但是我对花生"), and without
+    # these the lead-stripper stopped at 但 and the whole span was then rejected
+    # as not item-like -- discarding a real safety constraint instead of
+    # falling back to the shorter usable item (E-061).
+    "但是",
+    "不过",
+    "可是",
+    "然而",
+    "只是",
+    "但",
 )
 # Single function-word characters that can survive a word-level strip when the
 # regex started mid-word (…"知道自己哈密瓜过敏" → "道自己哈密瓜").
 _AVOIDANCE_LEAD_CHARS = "才知道了自己每次说为什么我你他她它的是还真感觉现在后原来其实应该可能居然竟然就也都当然要想吃想喝爱对跟和与在"
 _AVOIDANCE_PUNCTUATION = "。，,．.！!？?；;：:、 \t\n"
+
+# A preference object is a noun phrase, and a noun phrase does not span clause
+# punctuation. Every dialogue capture group uses this class so that one clause
+# cannot swallow the next one (E-061): "我喜欢吃香菜，但是我对花生过敏" must
+# yield 香菜 as a like *and* 花生 as a safety constraint, not a single positive
+# object made of both. The list separator "、" and the colon are deliberately
+# allowed through, because "苹果、香蕉" is one enumeration, not two clauses.
+_OBJECT_SPAN = r"[^，,。．.；;！!？?…\n]"
+
+# Negations that invert a like-verb when they appear just before it. Without
+# this, "我不喜欢吃香菜" matched the LIKE pattern at the "喜欢吃" substring and
+# recorded a positive like (E-080).
+_LIKE_NEGATIONS = ("不", "别", "没", "勿", "拒绝")
 
 
 def _strip_avoidance_lead(value: str) -> str:
@@ -299,9 +323,19 @@ class SignalParser:
         # deliberately absent here — it usually follows the item ("哈密瓜过敏"),
         # and matching it forwards captured the rest of the sentence instead of
         # the item.
+        # The capture width is a bound, not a minimum item length: a legitimate
+        # object can be one character ("不能吃辣"). The old pattern reached the
+        # required two characters only by crossing the following comma and then
+        # truncating the result, which is what made deletion unsafe (E-061).
         dislike_patterns = [
-            r"(?:我?不吃|不要|别放|不加|不能吃|讨厌|排斥|不碰)(.{2,12})",
-            r"(.{2,12})(?:我不喜欢|我讨厌|吃不了|受不了)",
+            rf"(?:我?不吃|不要|别放|不加|不能吃|讨厌|排斥|不碰)({_OBJECT_SPAN}{{1,12}})",
+            rf"({_OBJECT_SPAN}{{1,12}})(?:我不喜欢|我讨厌|吃不了|受不了)",
+            # "我不喜欢吃X" is a dislike, but the LIKE pattern below matches the
+            # substring "喜欢吃" inside it and recorded a *positive* like --
+            # the user's explicit aversion became a preference (E-080). The
+            # suffix form is matched here so the polarity is right, and the LIKE
+            # loop skips anything preceded by a negation.
+            rf"(?:我不喜欢|我不爱吃|我不爱喝|不爱吃|不爱喝)(?:吃|喝)?({_OBJECT_SPAN}{{1,12}})",
         ]
         # Chinese also states the item *before* the avoidance word ("哈密瓜过敏",
         # "海鲜忌口"). Without these postfix patterns a durable safety fact in
@@ -326,19 +360,28 @@ class SignalParser:
 
         # --- LIKE / preference ---
         like_patterns = [
-            r"(?:我喜欢吃|我爱吃|最爱吃|偏好|偏爱|喜欢吃|爱吃|爱喝)(.{2,15})",
-            r"(.{2,15})(?:是我最爱|我最喜欢|我很喜欢)",
+            rf"(?:我喜欢吃|我爱吃|最爱吃|偏好|偏爱|喜欢吃|爱吃|爱喝)({_OBJECT_SPAN}{{1,15}})",
+            rf"({_OBJECT_SPAN}{{1,15}})(?:是我最爱|我最喜欢|我很喜欢)",
         ]
         for pat in like_patterns:
             for m in re.finditer(pat, text):
+                # A negation in front of the like-verb inverts it: "我不喜欢吃
+                # 香菜" used to yield a positive like of 香菜 (E-080). The marker
+                # can sit up to a couple of characters after the negation
+                # ("我不喜欢…"), so a short window is inspected rather than a
+                # single-character lookbehind.
+                prefix = text[max(0, m.start() - 4) : m.start()]
+                if any(negation in prefix for negation in _LIKE_NEGATIONS):
+                    continue
                 obj = (m.group(1) or "").strip().rstrip("的了啊呢嗯哦，,。.！!？?")
-                if obj and 2 <= len(obj) <= 15:
+                # One character is a legitimate object here ("我爱吃辣").
+                if obj and 1 <= len(obj) <= 15:
                     signals.append(Signal("likes_food", obj, 0.75, ts, "conversation",
                                           text, importance=5.0))
 
         # --- EXPLICIT WANT ---
         want_patterns = [
-            r"(?:我想吃|我要吃|来个|给我来|我要订|帮我订|我想要)(.{2,20})",
+            rf"(?:我想吃|我要吃|来个|给我来|我要订|帮我订|我想要)({_OBJECT_SPAN}{{2,20}})",
         ]
         for pat in want_patterns:
             for m in re.finditer(pat, text):
@@ -353,7 +396,7 @@ class SignalParser:
         # Preserve the requested object as a structured fact instead of leaving
         # it buried in the fallback prose summary.
         future_default_patterns = [
-            r"(?:以后|下次).{0,16}?(?:都得|都要|默认|一定要)(?:加|点|选|来)?(?:一份|一个|一杯|一些)?(.{2,12})",
+            rf"(?:以后|下次).{{0,16}}?(?:都得|都要|默认|一定要)(?:加|点|选|来)?(?:一份|一个|一杯|一些)?({_OBJECT_SPAN}{{2,12}})",
         ]
         for pat in future_default_patterns:
             for m in re.finditer(pat, text):
@@ -403,7 +446,7 @@ class SignalParser:
 
         # --- BRAND LOYALTY ---
         brand_patterns = [
-            r"(?:我(?:经)?常(?:去|点|在)|我喜欢去|我总是去|经常光顾)(.{2,15})(?:店|餐厅|外卖|馆|家)?",
+            rf"(?:我(?:经)?常(?:去|点|在)|我喜欢去|我总是去|经常光顾)({_OBJECT_SPAN}{{2,15}})(?:店|餐厅|外卖|馆|家)?",
         ]
         for pat in brand_patterns:
             for m in re.finditer(pat, text):

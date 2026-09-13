@@ -1,249 +1,463 @@
-"""Proactive asking engine: detect information gaps and ask targeted questions.
+"""Proactive question policy: ask about a declared gap, never about a topic.
 
-VitaBench 2.0's proactive subtasks hide `user_intention` — it is only
-disclosed when the agent proactively asks a directly relevant question. The
-rubric then checks the agent picked the *right* option for that hidden intent.
+The previous policy decided *what to ask* by matching topic keywords
+(咖啡/时间/人数/房型) against the instruction and a fixed per-domain question
+table, then defaulting the domain to ``delivery`` when it could not tell. That
+produced four reproduced defects (E-068): a book request got a food-taste
+question, a haircut got a headcount question, a remembered dislike was echoed
+back as a preference, and a tool-findable field was asked about.
 
-Two gap patterns drive asking:
-1. Missing decision dimension: the instruction omits a key choice the rubric
-   grades (e.g. "买去迪的票" doesn't say 高铁/飞机/汽车 — must ask).
-2. Vague + no memory: instruction is uncertain AND memory lacks a preference.
+This module keeps what was necessary -- the question budget, the pending
+question, the answer association -- and replaces the decision with a gap-driven
+one:
 
-Key heuristics (domain-specific):
-- ota: if instruction mentions a trip but not the transport mode -> ask
-- delivery/instore: if instruction vague about taste/type -> ask
-- instore: if group dining but no headcount/room specified -> ask
+1. **A question exists only for a declared gap.** ``TaskSpec.unknown_slots`` is
+   the compiler's own list of required-but-unstated slots. No gap, no question.
+   That is what makes "帮我推荐一本书" correctly ask nothing.
+2. **The question text comes from the slot, not from a domain topic list.** The
+   slot vocabulary is the compiler's schema, so adding support for a new slot is
+   a schema change, not another keyword.
+3. **Personalisation reads structured facts only.** The old policy substring-
+   matched the rendered memory text, so "不喜欢高铁" was echoed as "您之前偏好
+   高铁". Polarity must come from the fact's typed polarity, never from the
+   presence of a word (the E-059 invariant, one layer up).
+4. **A gap a tool can close is not asked.** ``product``/``shop_or_service`` are
+   found by searching; asking the user about them spends the budget on something
+   a tool call answers.
+
+The proposal is pure: it never spends budget. ``commit_question`` spends it only
+after the question was actually sent.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Optional
 
-VAGUE_MARKERS = [
-    "随便", "帮我挑", "帮我看", "没想好", "不知道", "都可以", "听你的",
-    "你看着", "推荐", "哪家", "帮我选", "不想纠结", "帮我想想",
-]
+# Slots whose value only the user can supply. Everything else is either
+# tool-findable (search returns products, shops, hotels) or derivable.
+USER_ONLY_SLOTS: frozenset[str] = frozenset(
+    {
+        "address",
+        "city",
+        "date",
+        "departure",
+        "destination",
+        "quantity",
+        "room_type",
+        "size",
+        "time",
+        "transport",
+        "caffeine",
+        "budget",
+        "party_size",
+        "taste",
+    }
+)
 
-# Decision dimensions per domain that the rubric is likely to grade.
-# (dimension_name, question)
-DOMAIN_QUESTIONS: dict[str, List[tuple[str, str]]] = {
-    "delivery": [
-        ("口味偏好", "您更倾向什么口味？比如清淡、麻辣、烧烤等。"),
-        ("预算", "这餐大概的预算范围是多少呢？"),
-        ("餐厅类型", "您想吃什么类型的美食？比如中餐、西餐、日料等。"),
-    ],
-    "instore": [
-        ("场景人数", "大概是几个人一起呢？有包间或其他要求吗？"),
-        ("餐厅类型", "您更想吃什么类型的呢？火锅、川菜、西餐或其他？"),
-        ("预算", "这顿饭大概的预算范围是多少呢？"),
-    ],
-    "ota": [
-        ("出行方式", "这趟出行您是倾向飞机还是高铁呢？"),
-        ("住宿类型", "您住宿有特别要求吗？比如大床房、亲子房，或者特定品牌酒店？"),
-        ("预算", "大概的预算范围是多少呢？"),
-    ],
+# Not askable: slots a search or detail call fills, plus slots whose
+# "is it already stated?" test is too weak to trust.
+#
+# ``product``/``shop_or_service`` belong here deliberately. The compiler's
+# product-category vocabulary does not cover food names, so marking them askable
+# produced 47 questions of the form "您想要哪一类的呢？" for instructions that had
+# already named the item ("帮我点个麻辣烫"). Re-asking something the user just
+# said is the "已明确仍机械重问" failure, and it is worse than staying silent
+# (E-068).
+TOOL_FINDABLE_SLOTS: frozenset[str] = frozenset(
+    {"product", "shop_or_service", "store", "hotel", "attraction"}
+)
+
+# Slots the agent's own context already answers. Every user profile in the
+# benchmark carries 常住住址/工作地址, and ``decision.profile_address`` resolves
+# the 家/公司 aliases, so asking the user for a delivery address is asking for
+# something already in hand. The rule is the user's own: if it can be looked up,
+# look it up rather than spending a question on it.
+CONTEXT_RESOLVABLE_SLOTS: frozenset[str] = frozenset({"address"})
+
+# One question per slot, phrased without naming a domain. The slot name is the
+# schema's, so this table grows with the schema rather than with the corpus.
+SLOT_QUESTIONS: dict[str, str] = {
+    "transport": "这次出行您想用哪种方式？比如高铁、飞机或汽车。",
+    "destination": "您要去哪里呢？",
+    "departure": "您从哪里出发呢？",
+    "city": "您想在哪个城市呢？",
+    "date": "您计划哪一天呢？",
+    "time": "您希望什么时间呢？",
+    "quantity": "您需要几份／几张呢？",
+    "address": "送到哪里呢？",
+    "room_type": "您对房型有要求吗？比如大床房、双床房或套房。",
+    "size": "您需要什么尺码呢？",
+    "caffeine": "您想要高咖啡因还是低咖啡因的呢？",
+    "budget": "您大致的预算范围是多少呢？",
+    "party_size": "大概几个人一起呢？",
+    "product": "您想要哪一类的呢？",
+    "shop_or_service": "您想找哪一类的店或服务呢？",
+    "taste": "您对口味有什么要求吗？",
 }
 
-# Missing-dimension detectors: given an instruction, return the dimension that
-# is *missing* (None if the instruction already specifies it).
-TRANSPORT_KEYWORDS = ("高铁", "飞机", "动车", "火车", "机票", "航班", "经济舱", "高铁票", "火车票")
+# The order gaps are asked in when several are open at once: the one that most
+# changes the next step comes first.
+SLOT_PRIORITY: tuple[str, ...] = (
+    "transport",
+    "destination",
+    "departure",
+    "city",
+    "date",
+    "time",
+    "room_type",
+    "size",
+    "budget",
+    "quantity",
+    "address",
+    "party_size",
+    "taste",
+    "caffeine",
+)
 
-# Keywords indicating instore group/private dining
-GROUP_DINING_KEYWORDS = ("聚餐", "包间", "订座", "预约", "几个人", "朋友", "家人", "同事", "请客", "宴请")
-GROUP_SPEC_KEYWORDS = ("个人", "位", "人吃饭", "人的包间", "人桌", "包厢")
 
-# Keywords indicating hotel/accommodation request
-HOTEL_KEYWORDS = ("酒店", "住宿", "宾馆", "旅馆", "民宿", "房间", "入住", "预订房")
-HOTEL_TYPE_KEYWORDS = ("大床", "双床", "标准间", "套房", "亲子", "豪华", "商务")
+@dataclass(frozen=True)
+class QuestionContext:
+    """Everything the policy is allowed to look at. No raw memory text."""
 
-# Time-of-day / time-anchor keywords for the "missing time" gap. The hidden
-# intent of many proactive subtasks is a specific time (e.g. "下午三点喝"),
-# which the rubric then checks ("送达时间 15点左右").
-TIME_OF_DAY_KEYWORDS = ("下午", "晚上", "中午", "上午", "早上", "凌晨", "傍晚", "几点", "点半", "点整")
-TIME_ANCHOR_KEYWORDS = ("明天", "今天", "后天", "号", "周末", "下周", "下个月", "这周", "今晚", "明晚")
+    instruction: str = ""
+    domain: str = ""
+    facet: str = ""
+    action: str = ""
+    unknown_slots: tuple[str, ...] = ()
+    resolved_slots: dict[str, str] = field(default_factory=dict)
+    # slot -> value, taken from structured facts only.
+    known_slots: dict[str, str] = field(default_factory=dict)
 
-# Caffeine signal words (user wants a functional effect, so strength matters).
-CAFFEINE_SIGNAL_KEYWORDS = ("提神", "开会", "加班", "熬夜", "检查", "犯困", "困", "备考", "赶")
-CAFFEINE_LEVEL_KEYWORDS = ("高咖啡因", "低咖啡因", "浓", "淡", "脱因", "无咖啡因", "双份浓缩")
 
-# Substrings containing 票 that are NOT travel tickets (男票/女票 = BF/GF slang,
-# 发票/股票/彩票/传票). Guards the bare "票" OTA marker against romance slang.
-_TICKET_GUARD: tuple = ("男票", "女票", "发票", "股票", "彩票", "传票")
+@dataclass(frozen=True)
+class Proposal:
+    """A question the policy would ask, together with what it is about."""
+
+    question: str
+    slot: str = ""
+    value: str = ""
+    is_confirmation: bool = False
+
+
+@dataclass(frozen=True)
+class PendingQuestion:
+    """A question that was actually sent, with what it was about.
+
+    Storing the *slot* alongside the text is what lets a reply be linked to a
+    decision dimension. Without it, answering "是的" to "这次仍然不加糖吗？"
+    produced the structured fact ``value="是的"`` -- the literal reply, which is
+    useless downstream (E-069).
+    """
+
+    question: str
+    slot: str = ""
+    # The value the question is *about*. Set for confirmations, so an
+    # affirmative reply can be resolved to the value rather than to the word
+    # "yes".
+    value: str = ""
+    polarity: str = ""
+    is_confirmation: bool = False
+
+
+# A bare affirmative/negative reply carries no value of its own; it must be
+# resolved against the pending question. Negatives are checked first because
+# "不是" contains "是".
+_NEGATIVE_REPLIES = (
+    "不是",
+    "不用",
+    "不要",
+    "不需要",
+    "不用了",
+    "不对",
+    "不一样",
+    "不",
+    "否",
+    "no",
+    "nope",
+)
+_AFFIRMATIVE_REPLIES = (
+    "是的",
+    "对",
+    "对的",
+    "嗯",
+    "好",
+    "好的",
+    "可以",
+    "行",
+    "要",
+    "需要",
+    "一样",
+    "还是",
+    "没错",
+    "当然",
+    "是",
+    "yes",
+    "yep",
+    "ok",
+)
+
+
+def _is_affirmative(text: str) -> bool:
+    lowered = text.strip().casefold()
+    if not lowered or len(lowered) > 12:
+        return False
+    if any(marker in lowered for marker in _NEGATIVE_REPLIES):
+        return False
+    return any(marker in lowered for marker in _AFFIRMATIVE_REPLIES)
+
+
+def _is_negative(text: str) -> bool:
+    lowered = text.strip().casefold()
+    if not lowered or len(lowered) > 12:
+        return False
+    return any(marker in lowered for marker in _NEGATIVE_REPLIES)
+
+
+# Handing the decision back is not stating a preference. Observed in the first
+# proactive smoke: the reply "随便，你看着办吧。" to "您想用哪种方式？" was stored
+# as the value of the ``transport`` slot (E-069). Delegation is a state change --
+# the agent must decide -- not evidence about the user.
+_DELEGATION_PHRASES = (
+    "随便",
+    "你看着办",
+    "看着办",
+    "都行",
+    "都可以",
+    "听你的",
+    "无所谓",
+    "看你",
+    "你觉得",
+    "你决定",
+    "你定",
+    "我不太清楚",
+    "不清楚",
+    "不知道",
+    "没想好",
+    "都听",
+)
+_PARTICLES = "了吧啊呢嗯哦呀嘛，,。.！!？?、；;：: \t"
+
+# Correction framing that introduces the new value rather than naming it:
+# "不是，这次少糖" -> the value is 少糖, not "这次少糖". This is discourse framing,
+# not domain vocabulary, so it is deliberately tiny and domain-free.
+_CORRECTION_FRAMING = (
+    "这次",
+    "这回",
+    "那",
+    "这",
+    "改成",
+    "换成",
+    "改为",
+    "换",
+    "要",
+    "就",
+)
+
+
+def _is_delegation(text: str) -> bool:
+    """Whether the reply only hands the decision back, stating no value.
+
+    Requires that a delegation phrase actually occurs, and that nothing
+    substantive remains once it, the particles and the punctuation are removed.
+    Merely "becoming empty" is not enough: a bare "好" would qualify and be
+    mistaken for delegation. A reply that mixes delegation with a real value
+    ("随便，就二等座吧") keeps its content and is therefore not pure delegation.
+    """
+    remainder = text or ""
+    found = False
+    for phrase in _DELEGATION_PHRASES:
+        if phrase in remainder:
+            found = True
+            remainder = remainder.replace(phrase, "")
+    if not found:
+        return False
+    return len(remainder.strip(_PARTICLES)) < 2
+
+
+def resolve_answer(
+    pending: PendingQuestion | None, answer: str
+) -> tuple[str, str]:
+    """Map a reply to ``(slot, value)``, or ``("", "")`` when nothing is usable.
+
+    Four cases:
+
+    * a confirmation plus an affirmative -> the value the question was about
+      ("是的" to "仍然不加糖吗？" resolves to 无糖, not to "是的");
+    * a confirmation plus a negative -> no value; the remembered preference does
+      not hold this round, which is a state change, not a new fact;
+    * a pure delegation ("随便，你看着办吧") -> no value; the user handed the
+      decision back rather than stating a preference;
+    * anything else -> the reply text is the value for the question's slot.
+    """
+    if pending is None:
+        return ("", "")
+    text = (answer or "").strip()
+    if not text:
+        return ("", "")
+
+    if _is_delegation(text):
+        return (pending.slot, "")
+
+    if pending.is_confirmation and pending.value:
+        if _is_affirmative(text):
+            return (pending.slot, pending.value)
+        if _is_negative(text):
+            # "不是，这次少糖" both denies the remembered value and states a new
+            # one. Returning no value there discarded the correction, which is
+            # the failure the user reported in the first place (E-080). The
+            # denial is stripped, and whatever remains is the correction.
+            remainder = text
+            for marker in _NEGATIVE_REPLIES:
+                if marker in remainder:
+                    remainder = remainder.replace(marker, "", 1)
+                    break
+            remainder = remainder.strip(_PARTICLES)
+            for framing in _CORRECTION_FRAMING:
+                if remainder.startswith(framing):
+                    remainder = remainder[len(framing) :].strip(_PARTICLES)
+                    break
+            if len(remainder) >= 2:
+                return (pending.slot, remainder)
+            return (pending.slot, "")
+    # A long reply is a real statement, not a yes/no token.
+    if not pending.is_confirmation and (_is_affirmative(text) or _is_negative(text)):
+        # "是要的" / "不用了" to an open question carries no value we can use.
+        return (pending.slot, "")
+    return (pending.slot, text)
 
 
 class ProactiveEngine:
-    """Detect information gaps and decide whether/what to ask."""
+    """Decide whether a declared gap is worth one question."""
 
     def __init__(self, max_questions: int = 2) -> None:
         self.max_questions = max_questions
         self.asked_this_subtask: int = 0
         self.asked_questions: set[str] = set()
-        self.pending_question: Optional[str] = None
+        self.pending: Optional[PendingQuestion] = None
+
+    @property
+    def pending_question(self) -> Optional[str]:
+        return self.pending.question if self.pending else None
 
     def reset_subtask(self) -> None:
         self.asked_this_subtask = 0
         self.asked_questions.clear()
-        self.pending_question = None
+        self.pending = None
 
-    def is_vague(self, instruction: str) -> bool:
-        """Whether the instruction signals uncertainty / wants us to decide."""
-        return any(m in instruction for m in VAGUE_MARKERS)
+    # -- gap selection ------------------------------------------------------
 
-    # -- domain coverage ---------------------------------------------------
+    def open_gaps(self, context: QuestionContext) -> list[str]:
+        """Declared, user-only, still-unknown slots, most decisive first."""
+        known = {slot for slot, value in (context.known_slots or {}).items() if value}
+        resolved = {
+            slot for slot, value in (context.resolved_slots or {}).items() if value
+        }
+        gaps = [
+            slot
+            for slot in context.unknown_slots or ()
+            if slot in USER_ONLY_SLOTS
+            and slot not in TOOL_FINDABLE_SLOTS
+            and slot not in CONTEXT_RESOLVABLE_SLOTS
+            and slot not in known
+            and slot not in resolved
+            and slot in SLOT_QUESTIONS
+        ]
+        order = {slot: index for index, slot in enumerate(SLOT_PRIORITY)}
+        return sorted(dict.fromkeys(gaps), key=lambda slot: order.get(slot, len(order)))
 
-    def _domain_covered(self, memory_text: str, domain: Optional[str]) -> bool:
-        low = memory_text or ""
-        if not low or low == "No user preference information available yet.":
-            return False
-        if domain == "ota":
-            return any(k in low for k in ("酒店", "机票", "航班", "高铁", "出行", "住宿", "房间", "景点"))
-        return any(k in low for k in ("口味", "喜欢", "爱吃", "偏好", "餐", "店", "常用商家"))
+    def question_for_slot(self, slot: str, context: QuestionContext) -> str:
+        """The question for one slot, personalised from structured facts only."""
+        base = SLOT_QUESTIONS.get(slot, "")
+        if not base:
+            return ""
+        known = (context.known_slots or {}).get(slot, "")
+        if known:
+            # A remembered value that still holds is a confirmation, and the
+            # gap would not have opened in the first place; this branch only
+            # guards a caller that passes an inconsistent context.
+            return f"您之前提到{known}，这次还是这样吗？"
+        return base
 
-    # -- missing-dimension detectors ---------------------------------------
-
-    def _missing_transport(self, instruction: str) -> bool:
-        """OTA: instruction clearly involves buying travel tickets but does not
-        specify the transport mode (high-speed rail vs plane vs car).
-
-        Requires a STRONG travel-buying signal — just saying "去" (go) is not
-        enough (e.g. "去聚餐"). The presence of 票/订票/出行/机票 strongly
-        implies travel ticketing.
-        """
-        travel_buying = any(k in instruction for k in ("票", "机票", "订票", "出行", "车票")) \
-            and not any(g in instruction for g in _TICKET_GUARD)
-        specifies_transport = any(k in instruction for k in TRANSPORT_KEYWORDS)
-        return travel_buying and not specifies_transport
-
-    def _missing_hotel_type(self, instruction: str) -> bool:
-        """OTA: instruction involves booking a hotel but no room type specified."""
-        has_hotel = any(k in instruction for k in HOTEL_KEYWORDS)
-        specifies_type = any(k in instruction for k in HOTEL_TYPE_KEYWORDS)
-        return has_hotel and not specifies_type
-
-    def _missing_group_size(self, instruction: str) -> bool:
-        """Instore: group/private dining context but headcount not specified."""
-        has_group = any(k in instruction for k in GROUP_DINING_KEYWORDS)
-        specifies_size = any(k in instruction for k in GROUP_SPEC_KEYWORDS)
-        return has_group and not specifies_size
-
-    def _missing_taste(self, instruction: str) -> bool:
-        """delivery/instore: vague about what to eat."""
-        if any(k in instruction for k in ("吃", "餐", "饭", "菜", "外卖", "店")):
-            # If no explicit taste/cuisine is given, it's a gap.
-            return not any(k in instruction for k in ("辣", "清淡", "火锅", "烧烤", "川菜", "粤菜", "西餐", "类型", "日料", "面", "米粉", "烤", "炸"))
-        return False
-
-    def _missing_time(self, instruction: str) -> bool:
-        """Instruction has a concrete time anchor (明天/今天/N号) and a time-sensitive
-        action, but no time-of-day. The hidden intent often carries a specific time
-        (e.g. "下午三点喝") that the rubric then checks.
-
-        Excludes transport bookings (机票/高铁/航班) — there the date anchor is the
-        travel date, not a time-of-day the user needs to pin down upfront.
-        """
-        has_anchor = any(k in instruction for k in TIME_ANCHOR_KEYWORDS)
-        time_sensitive = any(k in instruction for k in
-                             ("点", "订", "买", "推荐", "送", "约", "下单", "外卖", "咖啡", "奶茶", "餐", "玩", "吃"))
-        specifies_time = any(k in instruction for k in TIME_OF_DAY_KEYWORDS)
-        is_transport = any(k in instruction for k in TRANSPORT_KEYWORDS)
-        return has_anchor and time_sensitive and not specifies_time and not is_transport
-
-    def _missing_caffeine(self, instruction: str) -> bool:
-        """Coffee + a functional signal (提神/开会/加班) but no caffeine level.
-        The rubric often checks high vs low caffeine."""
-        has_coffee = "咖啡" in instruction
-        has_signal = any(k in instruction for k in CAFFEINE_SIGNAL_KEYWORDS)
-        specifies_level = any(k in instruction for k in CAFFEINE_LEVEL_KEYWORDS)
-        return has_coffee and has_signal and not specifies_level
-
-    def _personalized_question(self, domain: Optional[str], memory_text: str,
-                                dimension_idx: int = 0) -> str:
-        """Return a question, optionally personalized with existing memory context.
-
-        If memory already contains a preference for the asked dimension, frame it as
-        a confirmation question instead of an open-ended ask.
-        """
-        domain = domain or "delivery"
-        base_q = DOMAIN_QUESTIONS[domain][dimension_idx][1]
-
-        # Check if memory has a relevant past value — confirm rather than ask cold
-        if memory_text and memory_text != "No user preference information available yet.":
-            if domain == "ota" and dimension_idx == 0:
-                # Check if we know a transport preference
-                for kw in ("高铁", "飞机", "动车"):
-                    if kw in memory_text:
-                        return f"您之前偏好{kw}出行，这次也一样吗？"
-            elif domain in ("delivery", "instore") and dimension_idx == 0:
-                # Check if we know a taste preference
-                for kw in ("麻辣", "清淡", "川菜", "粤菜", "火锅", "烧烤"):
-                    if kw in memory_text:
-                        return f"您平时喜欢{kw}，这次有什么特别的口味要求吗？"
-
-        return base_q
-
-    def propose_question(
+    def propose(
         self,
-        instruction: str,
-        memory_text: str,
-        domain: Optional[str],
+        instruction: str = "",
+        memory_text: str = "",
+        domain: Optional[str] = None,
         known_slots: Optional[dict[str, str]] = None,
-    ) -> Optional[str]:
-        """Purely propose a question, or return None if no gap/budget exists.
+        *,
+        context: Optional[QuestionContext] = None,
+    ) -> Optional[Proposal]:
+        """Purely propose a question and its slot, or None when no gap is open.
 
-        This method never consumes budget. Only :meth:`commit_question` records
-        that the agent actually sent a question to the user.
-
-        Precedence:
-        1. Missing critical decision dimension (transport) -> ask, regardless of
-           the domain classifier (which may be None for short/terse queries).
-        2. Instore group dining without headcount -> ask.
-        3. Missing hotel type in OTA accommodation request -> ask.
-        4. Vague instruction + domain not covered by memory -> ask.
-        5. Missing taste type in food tasks -> ask.
+        ``memory_text`` is accepted for call-site compatibility and deliberately
+        unused: deciding from rendered prose is what produced the echoed-dislike
+        defect. Only ``context`` (compiler slots + structured facts) is read.
         """
         if self.asked_this_subtask >= self.max_questions:
             return None
-        known = known_slots or {}
 
-        # Pattern 1: missing transport mode — the highest-value proactive case.
-        # Checked independently of domain classification.
-        if self._missing_transport(instruction) and "transport" not in known:
-            return self._personalized_question("ota", memory_text, 0)
+        if context is None:
+            context = QuestionContext(
+                instruction=instruction or "",
+                domain=domain or "",
+                known_slots=dict(known_slots or {}),
+            )
 
-        domain = domain or "delivery"
-
-        # Pattern 2: coffee + functional signal but no caffeine level.
-        if self._missing_caffeine(instruction) and "caffeine" not in known:
-            return "您需要高咖啡因还是低咖啡因的咖啡？"
-
-        # Pattern 3: time-anchored action but no time-of-day.
-        if self._missing_time(instruction) and "time" not in known:
-            return "您希望什么时间呢？比如下午三点、中午等，我好按时间安排。"
-
-        # Pattern 4: instore group dining without headcount.
-        if domain == "instore" and self._missing_group_size(instruction) and "party_size" not in known:
-            return DOMAIN_QUESTIONS["instore"][0][1]
-
-        # Pattern 5: hotel booking without room type.
-        if domain == "ota" and self._missing_hotel_type(instruction) and "room_type" not in known:
-            return self._personalized_question("ota", memory_text, 1)
-
-        # Pattern 6: vague + memory doesn't cover the domain.
-        if self.is_vague(instruction) and not self._domain_covered(memory_text, domain):
-            return self._personalized_question(domain, memory_text, 0)
-
-        # Pattern 7: missing taste type in food tasks.
-        if domain in ("delivery", "instore") and self._missing_taste(instruction) and "taste" not in known:
-            return self._personalized_question(domain, memory_text, 0)
-
+        for slot in self.open_gaps(context):
+            question = self.question_for_slot(slot, context)
+            if not question or question in self.asked_questions:
+                continue
+            known = (context.known_slots or {}).get(slot, "")
+            return Proposal(
+                question=question,
+                slot=slot,
+                value=known,
+                is_confirmation=bool(known),
+            )
         return None
 
-    def decide_to_ask(self, instruction: str, memory_text: str, domain: Optional[str]) -> Optional[str]:
-        """Backward-compatible pure alias for :meth:`propose_question`."""
+    def propose_question(
+        self,
+        instruction: str = "",
+        memory_text: str = "",
+        domain: Optional[str] = None,
+        known_slots: Optional[dict[str, str]] = None,
+        *,
+        context: Optional[QuestionContext] = None,
+    ) -> Optional[str]:
+        """String-returning wrapper around :meth:`propose`."""
+        proposal = self.propose(
+            instruction,
+            memory_text,
+            domain,
+            known_slots,
+            context=context,
+        )
+        return proposal.question if proposal else None
+
+    def decide_to_ask(
+        self, instruction: str, memory_text: str, domain: Optional[str]
+    ) -> Optional[str]:
+        """Backward-compatible alias for :meth:`propose_question`."""
         return self.propose_question(instruction, memory_text, domain)
 
-    def commit_question(self, question: str) -> bool:
-        """Record a question only when it was actually sent to the user."""
+    # -- budget and answer association --------------------------------------
+
+    def commit_question(
+        self,
+        question: str,
+        *,
+        slot: str = "",
+        value: str = "",
+        polarity: str = "",
+        is_confirmation: bool = False,
+    ) -> bool:
+        """Record a question only when it was actually sent to the user.
+
+        ``slot``/``value`` describe what the question was about, so the reply can
+        be resolved to a dimension instead of being stored as a bare "yes".
+        """
         normalized = (question or "").strip()
         if not normalized or normalized in self.asked_questions:
             return False
@@ -251,16 +465,33 @@ class ProactiveEngine:
             return False
         self.asked_questions.add(normalized)
         self.asked_this_subtask += 1
-        self.pending_question = normalized
+        self.pending = PendingQuestion(
+            question=normalized,
+            slot=slot,
+            value=value,
+            polarity=polarity,
+            is_confirmation=is_confirmation,
+        )
         return True
 
-    def record_answer(self, question: str, answer: str, memory) -> None:
-        """Store a confirmed preference from a user answer back into memory."""
+    def record_answer(self, question: str, answer: str, memory) -> tuple[str, str]:
+        """Store the answer as a resolved fact. Returns ``(slot, value)``.
+
+        The stored value is what the reply *means* for the slot, not the reply
+        text: an affirmative answer to a confirmation stores the confirmed value.
+        A reply that resolves to nothing usable leaves memory unchanged.
+        """
         from agent.memory.signals import Signal
+
+        pending = self.pending
+        slot, value = resolve_answer(pending, answer)
+        self.pending = None
+        if not value:
+            return (slot, "")
 
         sig = Signal(
             predicate="explicit_preference",
-            object=answer.strip()[:80],
+            object=value,
             confidence=0.95,
             timestamp="",
             type="conversation",
@@ -268,4 +499,4 @@ class ProactiveEngine:
             importance=8.0,
         )
         memory.stream.add(sig)
-        self.pending_question = None
+        return (slot, value)

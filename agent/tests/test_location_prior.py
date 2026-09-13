@@ -8,7 +8,8 @@ was observed first.
 
 from __future__ import annotations
 
-from agent.decision import Candidate, CandidateLedger, DecisionCard, TaskSpec
+from agent.decision import Candidate, DecisionCard, TaskSpec
+from agent.candidate_ledger import CandidateLedger
 from agent.runtime.location import (
     CITY_MATCH,
     DISTRICT_MATCH,
@@ -217,24 +218,6 @@ class _Debug:
         self.events.append({"event": event, **payload})
 
 
-def build_recommender(ledger: CandidateLedger, card: DecisionCard):
-    from agent.adapt_agent import ADAPTAgent
-    from agent.runtime.state import RuntimePhase, TaskRuntime
-
-    agent = ADAPTAgent.__new__(ADAPTAgent)
-    agent.ledger = ledger
-    agent.decision_card = card
-    agent.task_spec = TaskSpec.compile("推荐一个适合的采摘园")
-    agent.runtime = TaskRuntime.begin(agent.task_spec)
-    agent.runtime.phase = RuntimePhase.SELECT
-    agent._recommendation_delivered = False
-    agent._select_turns = 2
-    # The framework recommendation is the legacy governor path; these tests pin
-    # its ordering behaviour, so it is switched on explicitly (E-048).
-    agent.framework_speech = True
-    agent.home_tokens = home_tokens(PROFILE)
-    agent.debug = _Debug()
-    return agent
 
 
 def strawberry_ledger() -> CandidateLedger:
@@ -253,22 +236,5 @@ def strawberry_ledger() -> CandidateLedger:
     return ledger
 
 
-def test_non_decisive_coverage_does_not_hide_a_nearer_option():
-    """A weak pool match must not drop a nearer, better-rated candidate."""
-    agent = build_recommender(
-        strawberry_ledger(), DecisionCard(preference_pool=["草莓采摘"])
-    )
-    message = agent._framework_recommendation()
-    assert message is not None
-    assert "小红帽草莓采摘园(温江涌泉店)" in message.content
 
 
-def test_decisive_preference_still_leads_the_recommendation():
-    """A decisive remembered preference keeps its precedence (E-038 boundary)."""
-    agent = build_recommender(
-        strawberry_ledger(), DecisionCard(prefer=["绿野仙踪草莓采摘园"])
-    )
-    message = agent._framework_recommendation()
-    assert message is not None
-    assert "绿野仙踪草莓采摘园(双流店)" in message.content
-    assert "小红帽" not in message.content

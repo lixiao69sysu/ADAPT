@@ -8,11 +8,9 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-import pytest
 
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.memory.drift import DriftDetector
-from agent.memory.proactive import ProactiveEngine
 from agent.memory.signals import Signal
 
 
@@ -40,13 +38,18 @@ class TestProactiveAsking:
         m = ADAPTMemory(language="chinese")
         out = m.read("下周6号要去逛迪斯尼了，帮我买去迪的票")
         assert "ASK:" in out
-        assert "飞机还是高铁" in out
+        # The gap is declared by the compiler as the ``transport`` slot, so
+        # assert on the substance (a transport question) rather than on one
+        # fixed sentence: the policy no longer ships canned per-domain wording.
+        ask_lines = [line for line in out.splitlines() if line.startswith("ASK:")]
+        assert ask_lines
+        assert any(mode in ask_lines[0] for mode in ("高铁", "飞机", "出行"))
 
     def test_ota_specified_transport_no_ask(self):
-        """OTA trip WITH transport specified should NOT ask."""
+        """OTA trip WITH transport specified should NOT ask about transport."""
         m = ADAPTMemory(language="chinese")
         out = m.read("帮我订下周一北京到上海的经济舱机票")
-        assert "飞机还是高铁" not in out
+        assert "出行" not in out
 
     def test_vague_food_asks(self):
         """Vague food request should ask for taste."""
@@ -55,10 +58,20 @@ class TestProactiveAsking:
         assert "ASK:" in out
 
     def test_cold_start_instore_asks(self):
-        """Cold-start vague instore request should ask."""
+        """A generic shop request must not be answered with a food question.
+
+        This test previously asserted that *some* question appeared here. What
+        appeared was the delivery taste question ("清淡、麻辣、烧烤") for
+        "帮我推荐家店" -- the P1 defect class. The gap-driven policy declares no
+        user-only gap for this input, so the correct assertion is that no
+        off-domain question is produced. Losing this ask is a recorded coverage
+        boundary (E-068): recommendation-type subtasks with a generic subject
+        currently produce no question.
+        """
         m = ADAPTMemory(language="chinese")
         out = m.read("小美同学没去过梦幻城堡。帮我推荐家店")
-        assert "ASK:" in out
+        for marker in ("清淡", "麻辣", "烧烤", "口味", "几个人", "包间"):
+            assert marker not in out
 
     def test_specified_food_no_ask(self):
         """Specific food request should NOT ask."""
@@ -68,13 +81,12 @@ class TestProactiveAsking:
 
     def test_boyfriend_slang_no_transport_ask(self):
         """男票 contains 票 but is romance slang — must NOT trigger the OTA
-        transport question (飞机/高铁) on a delivery query."""
+        transport question on a delivery query."""
         m = ADAPTMemory(language="chinese")
         out = m.read("晚上给我点个双人餐外卖，在家和男票一起吃！")
         # No OTA transport question (男票 is slang, not a ticket).
-        assert "飞机还是高铁" not in out
         assert "出行" not in out
-        # A taste ask may still fire (vague + cold start) — that's fine.
+        assert "飞机" not in out
 
 
 # ---------------------------------------------------------------------------

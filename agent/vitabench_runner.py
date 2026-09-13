@@ -36,15 +36,37 @@ import vita.agent.llm_agent as llm_agent_module
 import vita.memory.rewrite_memory as rewrite_memory_module
 import vita.utils.llm_utils as llm_utils
 
-from agent.adapt_agent import ADAPTAgent
+from agent.adapt_agent import AdaptAgent
 from agent.evaluation_integrity import (
     IntegrityPersonalizationOrchestrator,
     patch_evaluator_extracter,
 )
 from agent.memory.adapt_memory import ADAPTMemory
-from agent.v2 import ADAPTV2, HybridMemory, V2FeatureFlags
 
 SPLIT_SEED = "ADAPT-2026"
+
+# Identity of the one ADAPT agent implementation, recorded in the checkpoint so
+# a resumed run cannot silently mix agent versions.
+ADAPT_AGENT_VERSION = "adapt_agent_v1"
+
+
+def runtime_fingerprint() -> str:
+    """Freeze executable sources, excluding tests and generated artifacts."""
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for source in sorted(root.rglob("*.py")):
+        if "tests" in source.relative_to(root).parts:
+            continue
+        digest.update(source.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(source.read_bytes())
+    return digest.hexdigest()
+
+
+def model_settings(names: list[str | None]) -> dict:
+    """Persist effective inference settings without credentials."""
+    keys = {"temperature", "max_tokens", "max_input_tokens", "extra_body", "base_url", "model"}
+    return {name: {k: v for k, v in (models.get(name, {}) or {}).items() if k in keys}
+            for name in names if name}
 
 _AGENT_OVERFLOW_RE = re.compile(
     r"maximum context length is (\d+) tokens.*?"
@@ -212,100 +234,7 @@ def stable_user_split(tasks: Iterable[PersonalizationTask]) -> dict[str, list[st
     return {"dev": ids[:8], "blind": ids[8:16], "final": ids[16:], "all": ids}
 
 
-def run_adapt_personalization_task(
-    task: PersonalizationTask,
-    *,
-    llm_agent: str,
-    llm_user: str,
-    llm_evaluator: str | None = None,
-    llm_args_agent: dict | None = None,
-    llm_args_user: dict | None = None,
-    llm_args_evaluator: dict | None = None,
-    max_steps: int = 100,
-    max_errors: int = 10,
-    evaluation_type: str = "trajectory",
-    seed: int | None = None,
-    enable_think: bool = False,
-    language: str = "chinese",
-    enable_candidate_validation: bool = True,
-    enable_lessons: bool = True,
-    enable_tiered_compaction: bool = True,
-    enable_adapt_prompt: bool = True,
-    gate_phases: bool = True,
-    focus_write_phase: bool = True,
-    framework_speech: bool = False,
-    enable_profile_summary: bool = False,
-    summary_max_chars: int = 800,
-    evaluator_retries: int = 2,
-    evaluator_retry_backoff_seconds: float = 1.0,
-    debug_path: Path | None = None,
-) -> SimulationRun:
-    """Compose frozen ADAPT V1 with unchanged VitaBench components.
-
-    ``enable_adapt_prompt`` and ``gate_phases`` exist for the isolation rig: the
-    first drops ADAPT's own prompt blocks (policy, decision card, runtime state,
-    lessons, ledger) so only the stock prompt remains, the second stops cropping
-    the tool set per phase. They let one factor be varied at a time when
-    comparing against the stock baseline (E-046).
-    """
-    user_id = task.user_profile.get("user_id") if task.user_profile else task.id
-    memory = ADAPTMemory(
-        language=language,
-        user_id=user_id,
-        enable_summary_rewrite=enable_profile_summary,
-        summary_max_chars=summary_max_chars,
-        enable_tiered_compaction=enable_tiered_compaction,
-    )
-    prompts = get_prompts(language)
-    time = task.subtasks[0].environment.get("time") if task.subtasks else None
-    agent = ADAPTAgent(
-        tools=[],
-        domain_policy=prompts.personalization_agent_system_prompt,
-        memory=memory,
-        user_profile=task.user_profile,
-        llm=llm_agent,
-        llm_args=deepcopy(llm_args_agent) if llm_args_agent else {},
-        time=time,
-        enable_think=enable_think,
-        language=language,
-        enable_candidate_validation=enable_candidate_validation,
-        enable_lessons=enable_lessons,
-        enable_adapt_prompt=enable_adapt_prompt,
-        gate_phases=gate_phases,
-    )
-    user = PersonalizationUser(
-        subtasks=task.subtasks,
-        persona=str(task.user_profile),
-        instructions=None,
-        llm=llm_user,
-        llm_args=deepcopy(llm_args_user) if llm_args_user else {},
-        language=language,
-    )
-    if seed is not None:
-        agent.set_seed(seed)
-        user.set_seed(seed)
-    orchestrator = IntegrityPersonalizationOrchestrator(
-        task=task,
-        agent=agent,
-        user=user,
-        max_steps_per_subtask=max_steps,
-        max_errors=max_errors,
-        seed=seed,
-        evaluation_type=evaluation_type,
-        llm_evaluator=llm_evaluator,
-        llm_args_evaluator=deepcopy(llm_args_evaluator) if llm_args_evaluator else {},
-        language=language,
-        enable_outcome_reward=False,
-        evaluator_retries=evaluator_retries,
-        evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
-    )
-    simulation = orchestrator.run()
-    if debug_path is not None:
-        agent.dump_debug_trace(debug_path, append=True)
-    return simulation
-
-
-def run_stock_or_v2_personalization_task(
+def run_stock_personalization_task(
     task: PersonalizationTask,
     *,
     agent_kind: str,
@@ -321,7 +250,6 @@ def run_stock_or_v2_personalization_task(
     seed: int | None = None,
     enable_think: bool = False,
     language: str = "chinese",
-    feature_flags: V2FeatureFlags | None = None,
     memory_type: str = "rewrite",
     evaluator_retries: int = 2,
     evaluator_retry_backoff_seconds: float = 1.0,
@@ -329,23 +257,18 @@ def run_stock_or_v2_personalization_task(
     agent_context_guard: bool = True,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
+    enable_proactive_loop: bool = False,
+    enable_candidate_evidence: bool = False,
+    enable_task_state: bool = False,
 ) -> SimulationRun:
-    """Run stock or ADAPT V2 through the same integrity-aware harness."""
-    if agent_kind not in {"stock", "adapt_v2"}:
-        raise ValueError(f"Unsupported stock/V2 agent kind: {agent_kind}")
-    flags = feature_flags or V2FeatureFlags()
+    """Run the stock skeleton through the integrity-aware harness."""
+    if agent_kind not in {"stock", "adapt"}:
+        raise ValueError(f"Unsupported agent kind: {agent_kind}")
     user_id = task.user_profile.get("user_id") if task.user_profile else task.id
     if memory_type == "groundtruth":
-        if flags.hybrid_memory:
-            raise ValueError("hybrid_memory and groundtruth memory are separate ablations")
         memory = GroundtruthMemory(language=language, user_id=user_id)
     elif memory_type == "rewrite":
-        rewrite = RewriteMemory(language=language, user_id=user_id)
-        memory = (
-            HybridMemory(language=language, rewrite=rewrite, user_id=user_id)
-            if agent_kind == "adapt_v2" and flags.hybrid_memory
-            else rewrite
-        )
+        memory = RewriteMemory(language=language, user_id=user_id)
     elif memory_type == "adapt":
         # Isolation rig (E-046): the stock agent, unchanged, but with ADAPT's
         # memory backend. This isolates the cost of the memory *representation*
@@ -371,11 +294,17 @@ def run_stock_or_v2_personalization_task(
         "enable_think": enable_think,
         "language": language,
     }
-    agent = (
-        ADAPTV2(**common_agent_args, feature_flags=flags)
-        if agent_kind == "adapt_v2"
-        else PersonalizationAgent(**common_agent_args)
-    )
+    if agent_kind == "adapt":
+        # Each ADAPT mechanism sits behind its own off-by-default switch so its
+        # effect is measured against a clean pass-through base (E-086, E-087).
+        agent = AdaptAgent(
+            **common_agent_args,
+            enable_proactive_loop=enable_proactive_loop,
+            enable_candidate_evidence=enable_candidate_evidence,
+            enable_task_state=enable_task_state,
+        )
+    else:
+        agent = PersonalizationAgent(**common_agent_args)
     user = PersonalizationUser(
         subtasks=task.subtasks,
         persona=str(task.user_profile),
@@ -419,10 +348,10 @@ def run_stock_or_v2_personalization_task(
     finally:
         if originals is not None:
             llm_utils.generate, llm_agent_module.generate, rewrite_memory_module.generate = originals
-    if isinstance(agent, ADAPTV2):
-        simulation.states["adapt_v2"] = agent.debug_snapshot()
-    if debug_path is not None and isinstance(agent, ADAPTV2):
-        agent.dump_debug_trace(debug_path, append=True)
+    if isinstance(agent, AdaptAgent):
+        # Per-subtask attribution: a single simulation-level block cannot say
+        # which unit asked or answered.
+        simulation.states["adapt_agent"] = agent.loop_events
     return simulation
 
 
@@ -437,45 +366,18 @@ def _run_one_simulation(
     max_steps: int,
     seed: int,
     language: str,
-    enable_candidate_validation: bool,
-    enable_lessons: bool,
-    enable_tiered_compaction: bool,
     evaluator_retries: int,
     evaluator_retry_backoff_seconds: float,
-    feature_flags: V2FeatureFlags,
     memory_type: str,
     debug_path: Path | None,
     agent_context_guard: bool,
-    enable_adapt_prompt: bool = True,
-    gate_phases: bool = True,
-    focus_write_phase: bool = True,
-    framework_speech: bool = False,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
+    enable_proactive_loop: bool = False,
+    enable_candidate_evidence: bool = False,
+    enable_task_state: bool = False,
 ) -> SimulationRun:
-    if agent_kind == "adapt_v1":
-        return run_adapt_personalization_task(
-            task,
-            llm_agent=llm_agent,
-            llm_user=llm_user,
-            llm_evaluator=llm_evaluator,
-            llm_args_evaluator=evaluator_args,
-            max_steps=max_steps,
-            seed=seed,
-            language=language,
-            enable_candidate_validation=enable_candidate_validation,
-            enable_lessons=enable_lessons,
-            enable_tiered_compaction=enable_tiered_compaction,
-            enable_adapt_prompt=enable_adapt_prompt,
-            gate_phases=gate_phases,
-            enable_profile_summary=enable_profile_summary,
-            summary_max_chars=summary_max_chars,
-            evaluator_retries=evaluator_retries,
-            evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
-            debug_path=debug_path,
-        )
-    return run_stock_or_v2_personalization_task(
-        task,
+    return run_stock_personalization_task(        task,
         agent_kind=agent_kind,
         llm_agent=llm_agent,
         llm_user=llm_user,
@@ -484,7 +386,6 @@ def _run_one_simulation(
         llm_evaluator=llm_evaluator,
         llm_args_evaluator=evaluator_args,
         language=language,
-        feature_flags=feature_flags,
         memory_type=memory_type,
         evaluator_retries=evaluator_retries,
         evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
@@ -492,6 +393,9 @@ def _run_one_simulation(
         agent_context_guard=agent_context_guard,
         enable_profile_summary=enable_profile_summary,
         summary_max_chars=summary_max_chars,
+        enable_proactive_loop=enable_proactive_loop,
+        enable_candidate_evidence=enable_candidate_evidence,
+        enable_task_state=enable_task_state,
     )
 
 
@@ -509,35 +413,23 @@ def run_selected(
     seed: int,
     num_trials: int,
     language: str,
-    enable_candidate_validation: bool,
-    enable_lessons: bool,
-    enable_tiered_compaction: bool = True,
     memory_type: str = "rewrite",
-    v2_feature_flags: V2FeatureFlags | None = None,
     evaluator_retries: int = 2,
     evaluator_retry_backoff_seconds: float = 1.0,
     debug_to: Path | None = None,
     agent_context_guard: bool = True,
-    enable_adapt_prompt: bool = True,
-    gate_phases: bool = True,
-    focus_write_phase: bool = True,
-    framework_speech: bool = False,
     enable_profile_summary: bool = False,
     summary_max_chars: int = 800,
+    enable_proactive_loop: bool = False,
+    enable_candidate_evidence: bool = False,
+    enable_task_state: bool = False,
 ) -> dict:
-    if agent_kind == "adapt":
-        # Backward-compatible CLI spelling. V1 remains frozen and explicit in
-        # newly written checkpoint metadata.
-        agent_kind = "adapt_v1"
-    flags = v2_feature_flags or V2FeatureFlags()
-    if agent_kind == "adapt_v1" and memory_type != "rewrite":
-        raise ValueError("Frozen ADAPT V1 supports only its native ADAPTMemory")
     tasks = get_tasks(language)
     split = stable_user_split(tasks)
     selected_ids = set(task_ids or split[cohort])
     selected = [task for task in tasks if task.id in selected_ids]
     if len(selected) != len(selected_ids):
-        missing = sorted(selected_ids - {task.id for task in selected})
+        missing = sorted(selected_ids - {task.id for task in tasks})
         raise ValueError(f"Unknown task ids: {missing}")
     if subtask_ids:
         requested_subtasks = set(subtask_ids)
@@ -563,6 +455,12 @@ def run_selected(
         "timestamp": get_now(),
         "info": {
             "agent_kind": agent_kind,
+            "implementation": (
+                ADAPT_AGENT_VERSION if agent_kind == "adapt" else "stock"
+            ),
+            "runtime_fingerprint": runtime_fingerprint(),
+            "model_settings": model_settings([llm_agent, llm_user, llm_evaluator]),
+            "summary_max_chars": summary_max_chars,
             "cohort": cohort,
             "split_seed": SPLIT_SEED,
             "llm_agent": llm_agent,
@@ -571,11 +469,14 @@ def run_selected(
             "max_steps": max_steps,
             "seed": seed,
             "num_trials": num_trials,
-            "candidate_validation": enable_candidate_validation,
-            "lessons": enable_lessons,
-            "tiered_compaction": enable_tiered_compaction,
             "memory_type": memory_type,
-            "v2_feature_flags": flags.as_dict(),
+            "profile_summary": enable_profile_summary,
+            "adapt_agent": {
+                "proactive_loop": enable_proactive_loop,
+                "candidate_evidence": enable_candidate_evidence,
+                "task_state": enable_task_state,
+            },
+            "feature_flags": {},
             "evaluator_retries": evaluator_retries,
             "evaluator_retry_backoff_seconds": evaluator_retry_backoff_seconds,
             "debug_sidecar": str(debug_to) if debug_to else None,
@@ -616,21 +517,16 @@ def run_selected(
                     max_steps=max_steps,
                     seed=trial_seed,
                     language=language,
-                    enable_candidate_validation=enable_candidate_validation,
-                    enable_lessons=enable_lessons,
-                    enable_tiered_compaction=enable_tiered_compaction,
                     evaluator_retries=evaluator_retries,
                     evaluator_retry_backoff_seconds=evaluator_retry_backoff_seconds,
-                    feature_flags=flags,
                     memory_type=memory_type,
                     debug_path=debug_to,
                     agent_context_guard=agent_context_guard,
-                    enable_adapt_prompt=enable_adapt_prompt,
-                    gate_phases=gate_phases,
-                    focus_write_phase=focus_write_phase,
-                    framework_speech=framework_speech,
                     enable_profile_summary=enable_profile_summary,
                     summary_max_chars=summary_max_chars,
+                    enable_proactive_loop=enable_proactive_loop,
+                    enable_candidate_evidence=enable_candidate_evidence,
+                    enable_task_state=enable_task_state,
                 )
             except Exception:
                 # One user crashing (e.g. agent context overflow) must not
@@ -649,8 +545,10 @@ def run_selected(
                     "evaluation_attempts": integrity.get("evaluation_attempts", 0),
                     "evaluator_error": integrity.get("evaluator_error"),
                     "trajectory_hash": _trajectory_hash(serialized),
-                    "agent_version": agent_kind,
-                    "feature_flags": flags.as_dict() if agent_kind == "adapt_v2" else {},
+                    "agent_version": (
+                        ADAPT_AGENT_VERSION if agent_kind == "adapt" else agent_kind
+                    ),
+                    "feature_flags": {},
                 }
             )
             checkpoint["simulations"].append(serialized)
@@ -775,8 +673,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--agent",
-        choices=("stock", "adapt", "adapt_v1", "adapt_v2"),
-        default="adapt_v2",
+        choices=("stock", "adapt"),
+        default="stock",
     )
     parser.add_argument(
         "--cohort", choices=("dev", "blind", "final", "all"), default="dev"
@@ -815,50 +713,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--summary-max-chars", type=int, default=800)
     parser.add_argument(
-        "--framework-speech",
+        "--proactive-loop",
         action="store_true",
         help=(
-            "legacy governor path: the framework asks the clarifying question "
-            "and finalises the recommendation itself (off by default, E-048)"
+            "AdaptAgent: observe the proactive question loop (record a sent "
+            "question and link the user's reply); off by default so the agent "
+            "stays a verified pass-through (E-086)"
         ),
     )
     parser.add_argument(
-        "--keep-write-phase-history",
+        "--candidate-evidence",
         action="store_true",
         help=(
-            "isolation rig: keep the full transcript in the write phases instead "
-            "of replacing it with the system prompt, the latest user turn and a "
-            "controller directive (E-047)"
-        ),
-    )
-    parser.add_argument("--no-candidate-validation", action="store_true")
-    parser.add_argument("--no-lessons", action="store_true")
-    parser.add_argument("--no-tiered-compaction", action="store_true")
-    parser.add_argument(
-        "--no-adapt-prompt",
-        action="store_true",
-        help=(
-            "isolation rig: drop ADAPT's own prompt blocks (policy, decision "
-            "card, runtime state, lessons, ledger) and keep only the stock "
-            "prompt, so the prompt tax can be measured separately"
+            "AdaptAgent: append a bounded three-valued candidate/constraint "
+            "observation to a copy of each tool result; off by default and "
+            "unmeasured (E-087)"
         ),
     )
     parser.add_argument(
-        "--no-phase-gating",
+        "--task-state",
         action="store_true",
         help=(
-            "isolation rig: stop cropping the tool set per phase (every tool "
-            "stays visible); write-time validation is unchanged"
-        ),
-    )
-    parser.add_argument(
-        "--v2-features",
-        nargs="*",
-        default=[],
-        metavar="FEATURE",
-        help=(
-            "opt-in V2 flags: hybrid_memory decision_workspace planner "
-            "voi_questions transaction_enforcement and shadow_* variants"
+            "AdaptAgent: append a bounded, non-directive statement of this "
+            "subtask's required slots, observed candidates and whether a write "
+            "or a question has happened yet; off by default and unmeasured "
+            "(E-091)"
         ),
     )
     parser.add_argument("--evaluator-retries", type=int, default=2)
@@ -891,7 +770,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    flags = V2FeatureFlags.from_names(args.v2_features)
     if not args.no_normalize_extracter:
         # Config-parity neutral: only the shape of the evaluator payload is
         # normalized; rubric text and reward semantics are untouched.
@@ -909,21 +787,16 @@ def main() -> None:
         seed=args.seed,
         num_trials=args.num_trials,
         language=args.language,
-        enable_candidate_validation=not args.no_candidate_validation,
-        enable_lessons=not args.no_lessons,
-        enable_tiered_compaction=not args.no_tiered_compaction,
         memory_type=args.memory_type,
-        v2_feature_flags=flags,
         evaluator_retries=args.evaluator_retries,
         evaluator_retry_backoff_seconds=args.evaluator_retry_backoff_seconds,
         debug_to=args.debug_to,
         agent_context_guard=not args.no_agent_context_guard,
-        enable_adapt_prompt=not args.no_adapt_prompt,
-        gate_phases=not args.no_phase_gating,
         enable_profile_summary=args.profile_summary,
         summary_max_chars=args.summary_max_chars,
-        focus_write_phase=not args.keep_write_phase_history,
-        framework_speech=args.framework_speech,
+        enable_proactive_loop=args.proactive_loop,
+        enable_candidate_evidence=args.candidate_evidence,
+        enable_task_state=args.task_state,
     )
 
 

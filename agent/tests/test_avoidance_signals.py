@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent.decision import CandidateLedger, DecisionCard
+from agent.decision import DecisionCard
+from agent.candidate_ledger import CandidateLedger
 from agent.memory.adapt_memory import ADAPTMemory
 from agent.memory.facts import fact_from_signal
 from agent.memory.signals import SignalParser

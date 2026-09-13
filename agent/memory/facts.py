@@ -16,6 +16,31 @@ from hashlib import sha1
 from agent.memory.signals import Signal
 
 
+# Dimensions that are genuinely single-valued *within* one
+# ``(scope, facet, category)`` slot: a user has one current 温度, not two.
+# Everything outside this set is a multi-valued set (``avoid``, ``safety``,
+# ``brand``, ``product``, ``like``, ``searches``, ...) and must accumulate
+# instead of evicting its own earlier values.
+#
+# This is the single authority for that distinction.  ``FactStore`` reads it to
+# decide what may be superseded, ``DriftDetector`` reads it to decide what may
+# drift, and the zero-model audits read it to decide which surviving conflicts
+# are failures.  Keeping separate copies of this list is how the drift slot key
+# and the store's supersession key came to disagree (E-090): the store listed
+# one set, each audit listed another, and the detector derived a third notion
+# from a single predicate.
+SCALAR_DIMENSIONS = {
+    "temperature",
+    "sweetness",
+    "taste",
+    "topping",
+    "room_type",
+    "transport",
+    "budget",
+    "time",
+}
+
+
 @dataclass
 class PreferenceFact:
     """A scoped preference derived from one or more observable interactions."""

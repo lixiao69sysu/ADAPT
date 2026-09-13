@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from agent.memory.stream import MemoryEvent, MemoryStream, parse_timestamp
-from agent.memory.signals import Signal, TYPE_IMPORTANCE
+from agent.memory.stream import MemoryStream, parse_timestamp
+from agent.memory.signals import Signal
 
 # Half-lives (in days) per lifetime type.
 HALF_LIFE_DAYS = {

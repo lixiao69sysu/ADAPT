@@ -17,6 +17,8 @@ from vita.data_model.message import Message
 from vita.data_model.simulation import RewardInfo, SimulationRun
 from vita.orchestrator.personalization_orchestrator import PersonalizationOrchestrator
 
+from agent.rubric_detail import condition_record, summarize
+
 
 class EvaluationIntegrityError(RuntimeError):
     """Raised when a saved item cannot be re-evaluated without agent replay."""
@@ -121,6 +123,18 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
         self.evaluator_retry_backoff_seconds = evaluator_retry_backoff_seconds
         self.evaluation_records: list[dict[str, Any]] = []
         self.saved_subtask_trajectories: list[dict[str, Any]] = []
+        self.rubric_details: dict[str, dict[str, Any]] = {}
+
+    def _record_rubric_detail(self, subtask: Any, reward_info: RewardInfo) -> None:
+        """Persist a content-free per-condition record for this subtask.
+
+        The vendored aggregator keeps only ``subtask_{i}_reward``, so without
+        this every artifact degrades to 0/1 per subtask and the graded verdict
+        the evaluator already computed is lost (see ``agent/rubric_detail.py``).
+        Costs no model calls: the data exists at this point already.
+        """
+        key = str(getattr(subtask, "subtask_id", None) or f"subtask_{len(self.rubric_details)}")
+        self.rubric_details[key] = condition_record(reward_info)
 
     def _run_subtask(self, subtask: Any, environment: Any, subtask_idx: int) -> dict[str, Any]:
         result = super()._run_subtask(subtask, environment, subtask_idx)
@@ -145,6 +159,7 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
                         "evaluator_error": None,
                     }
                 )
+                self._record_rubric_detail(subtask, reward_info)
                 return reward_info
             last_note = note
             if attempt < self.evaluator_retries:
@@ -160,7 +175,7 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
                 "evaluator_error": last_note,
             }
         )
-        return RewardInfo(
+        fallback = RewardInfo(
             reward=0.0,
             info={
                 "evaluation_status": "evaluation_failed",
@@ -169,6 +184,9 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
                 "note": "Evaluation unavailable; this is not an agent reward.",
             },
         )
+        # Recorded as `unavailable`, never as a legitimate zero.
+        self._record_rubric_detail(subtask, fallback)
+        return fallback
 
     def _aggregate_rewards(self, reward_infos: list[RewardInfo | None]) -> RewardInfo:
         # The whole simulation is later marked unscoreable if any evaluated
@@ -185,6 +203,7 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
         summary = self.integrity_summary()
         simulation.states["evaluation_integrity"] = summary
         simulation.states["integrity_subtask_trajectories"] = self.saved_subtask_trajectories
+        simulation.states["rubric_detail"] = summarize(self.rubric_details)
         if summary["evaluation_status"] == "evaluation_failed":
             # A missing reward cannot be mistaken for a legitimate zero by
             # normal metric readers.
@@ -217,6 +236,9 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
         by_id = {str(item.get("subtask_id")): item for item in trajectories}
         rewards: list[RewardInfo | None] = []
         self.evaluation_records.clear()
+        # Cleared for the same reason as the records: a reused orchestrator must
+        # not carry another simulation's detail into this one.
+        self.rubric_details.clear()
         adapter = TypeAdapter(Message)
         for subtask in self.task.subtasks:
             saved = by_id.get(str(subtask.subtask_id))
@@ -234,6 +256,10 @@ class IntegrityPersonalizationOrchestrator(PersonalizationOrchestrator):
                 rewards.append(self._evaluate_subtask(subtask, restored))
         summary = self.integrity_summary()
         simulation.states["evaluation_integrity"] = summary
+        # This path does not go through ``run()``, so the detail has to be
+        # published here too; otherwise a re-evaluated artifact keeps only the
+        # binary reward exactly like the original run did.
+        simulation.states["rubric_detail"] = summarize(self.rubric_details)
         simulation.reward_info = (
             None
             if summary["evaluation_status"] == "evaluation_failed"
