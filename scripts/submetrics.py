@@ -39,13 +39,19 @@ BOOK_TOOLS = {"instore_book", "instore_reservation"}
 
 
 def subtasks(path, trial=None):
-    """(task_id, idx) -> {memory, messages, reward, writes, creates, order_status}."""
+    """(task_id, trial, idx) -> record.
+
+    The key carries the trial: without it a 4-trial baseline collapses onto 100
+    keys and the "all trials" column silently becomes the last trial only, which
+    is exactly the artifact that made the arm look chattier than it is.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     out = {}
     for sim in data.get("simulations") or []:
         if trial is not None and (sim.get("trial", 0) or 0) != trial:
             continue
         tid = str(sim["task_id"])
+        sim_trial = sim.get("trial", 0) or 0
         states = sim.get("states") or {}
         mems = states.get("memory_snapshots") or {}
         rewards = ((sim.get("reward_info") or {}).get("info") or {}).get(
@@ -70,7 +76,7 @@ def subtasks(path, trial=None):
                         writes.append((name, args))
                     if name.startswith(CREATE_PREFIXES) or name in BOOK_TOOLS:
                         creates.append((name, args))
-            out[(tid, idx)] = {
+            out[(tid, sim_trial, idx)] = {
                 "memory": mems.get(f"subtask_{idx}_memory") or "",
                 "messages": msgs,
                 "reward": float(rewards.get(f"subtask_{idx}_reward", 0.0)),
@@ -163,9 +169,12 @@ def pct(num, den):
 
 
 def main() -> None:
-    A = subtasks(ARM)
-    B0 = subtasks(BASE, trial=0)
+    A3 = subtasks(ARM)
+    B03 = subtasks(BASE, trial=0)
     B = subtasks(BASE)
+    # Flat (task, idx) views for the like-for-like arm-vs-baseline rows.
+    A = {(t, i): r for (t, _tr, i), r in A3.items()}
+    B0 = {(t, i): r for (t, _tr, i), r in B03.items()}
 
     n = len(A)
     print("=" * 78)
@@ -195,16 +204,20 @@ def main() -> None:
 
     print()
     print("B. GROUNDING -- are writes made against ids the environment printed?")
-    for label, data in (("arm ", A), ("base", B0)):
+    for label, data in (("arm     ", A), ("base t0 ", B0), ("base all", B)):
         g = [x for x in (grounded(r) for r in data.values()) if x is not None]
         writes = [r for r in data.values() if r["writes"]]
+        ungrounded = sum(
+            len(ordered_ids(r)) - sum(1 for i in ordered_ids(r) if i in observed_ids(r))
+            for r in data.values()
+        )
         print(f"  {label}: units with >=1 write {pct(len(writes), len(data))}   "
-              f"ordered-id grounding {statistics.mean(g):.3f}   "
-              f"(n={len(g)} units that ordered)")
+              f"ordered-id grounding {statistics.mean(g):.4f}   "
+              f"ungrounded ids {ungrounded}   (n={len(g)} units that ordered)")
 
     print()
     print("C. TRANSACTION COMPLETION")
-    for label, data in (("arm ", A), ("base", B0)):
+    for label, data in (("arm     ", A), ("base t0 ", B0), ("base all", B)):
         creates = [r for r in data.values() if r["creates"]]
         unpaid = [r for r in creates if not paid(r)]
         print(f"  {label}: units that created something {pct(len(creates), len(data))}   "
@@ -230,12 +243,15 @@ def main() -> None:
 
     print()
     print("E. EFFICIENCY / THRASH")
-    for label, data in (("arm ", A), ("base", B0)):
+    print("   NOTE: the baseline's four trials are four draws of one script, so the")
+    print("   all-trials column (n=400) is the fair comparator. Reading only trial 0")
+    print("   made the arm look 9% chattier and 47% searchier; both were artifacts.")
+    for label, data in (("arm     ", A), ("base t0 ", B0), ("base all", B)):
         turns = [len(r["messages"]) for r in data.values()]
         thr = [r for r in data.values() if max_repeat(r) >= 3]
         sigs = [len(search_signatures(r)) for r in data.values()]
         print(f"  {label}: messages per subtask mean {statistics.mean(turns):5.1f}   "
-              f"search calls mean {statistics.mean(sigs):4.1f}   "
+              f"search calls mean {statistics.mean(sigs):4.2f}   "
               f"units with >=3 identical search signatures {pct(len(thr), len(data))}")
 
     print()
