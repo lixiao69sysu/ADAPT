@@ -95,6 +95,19 @@ def sign_test(wins: int, losses: int) -> tuple[float, float]:
     return z, p
 
 
+def required_net(discordant: int) -> int:
+    """Smallest net (wins - losses) that clears p < 0.05 at this discordance.
+
+    The analytic bound net >= 1.96*sqrt(n) is optimistic because the device uses
+    the normal approximation, so the minimum is found by search. Returns 0 when
+    no split of this many discordant pairs can clear the gate.
+    """
+    for wins in range(discordant // 2, discordant + 1):
+        if sign_test(wins, discordant - wins)[1] < 0.05:
+            return 2 * wins - discordant
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", required=True)
@@ -306,6 +319,14 @@ def main() -> None:
         print(f"  arm breaks (base 1 -> arm 0): {len(losses)}")
         print(f"  sign test z={z:+.2f} p={p:.4f}  "
               f"{'GATE PASSED' if len(wins) > len(losses) and p < 0.05 else 'gate NOT passed'}")
+        discordant = len(wins) + len(losses)
+        need_net = required_net(discordant)
+        if discordant:
+            print(f"  gate arithmetic: {discordant} discordant pairs -> the sign test "
+                  f"needs net >= {need_net} (delta >= {need_net / len(b_off):+.4f}); "
+                  f"observed net {len(wins) - len(losses)}")
+            print(f"    (a net of +6 -- exactly the +0.0575 the target needs -- clears "
+                  f"the gate only while discordance stays <= 9)")
         by_user: dict[str, list[float]] = defaultdict(list)
         for k in shared:
             by_user[k[0]].append(a_off_t0[k] - b_off_t0[k])
