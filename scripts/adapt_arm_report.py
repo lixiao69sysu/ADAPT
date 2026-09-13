@@ -157,6 +157,14 @@ def main() -> None:
     print()
     print(f"cohort   arm={arm_tasks}")
     print(f"         base={base_tasks}")
+    if arm_tasks == list(EXPECTED_TASKS):
+        print("         ok the 8 pre-registered users")
+    elif args.allow_partial_cohort:
+        print("         !! not the pre-registered 8 users; partial override in effect")
+    else:
+        problems.append(
+            f"arm cohort is not the pre-registered 8 users: {arm_tasks}"
+        )
     if arm_tasks == base_tasks:
         print("         identical task sets -> cohorted comparison")
     elif args.allow_partial_cohort:
