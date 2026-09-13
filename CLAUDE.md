@@ -11,8 +11,21 @@ architecture and the requirement to run 56 users before this eight-user Avg@4.
 Keep benchmark sources and hidden evaluation data out of runtime decisions.
 The --agent adapt branch is the single ADAPT agent, a pure observer of the
 proactive question loop (`agent/adapt_agent.py`): it may only observe and carry
-state, never decide, and it is not the retired controller. No score improvement
-is established yet.
+state, never decide, and it is not the retired controller.
+
+**Measured 2026-09-14 (E-093)**: the arm
+`adapt + --proactive-loop + --memory-type adapt + --profile-summary`, 1 trial on
+exactly those eight users, scored a pooled **0.3300** on the 100 official units
+against the cached baseline's 0.2925 / trial-0 slice 0.2900 — a delta of
+**+0.0375**, i.e. **inside the +-0.0582 cohort floor: NOT RESOLVABLE**, and short
+of the 0.35 target. The paired contrast was 14 fixes / 10 breaks, p=0.4142
+(gate not passed). So: **no score improvement is established, and none is
+excluded.** Two mechanism-level facts did come out of it and are the reason the
+arm is not simply "flat": the proactive loop committed 11 questions and resolved
+only **3 into a slot value (27%)**, never firing at all for one user; and the
+failure class it is not supposed to touch, `state_loss`, stayed at 44.9% -> 46.3%.
+A single-trial eight-user arm is structurally too weak to read the target
+(pre-registration section 6b); the next score claim needs 4 trials.
 
 ## Goal
 
