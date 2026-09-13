@@ -117,6 +117,25 @@ python -m agent.vitabench_runner `
   即"问出去的 6 个问题里只有 2 个真正落成了一个值"。本次要看这个比例是否改善，
   因为**问句只有落成值才可能影响选择**。
 - 记忆层：取代计数（E-090 修复前 0，修复后 8 用户共 27）。
+- **失败机制分布**：`python scripts/mechanism_attribution.py data/simulations/adapt8_1t.json`
+  （互斥主标签，机械判定，无模型）。**该设备已在基线上校准**，逐位复现 E-089：
+
+  | mechanism | capability | runs | share |
+  |---|---|---|---|
+  | state_loss | personalization / long-term memory | 127 | 44.9% |
+  | planning_defect | planning / task decomposition | 66 | 23.3% |
+  | over_asking | proactiveness (over-asking) | 42 | 14.8% |
+  | tool_hallucination | tool calling / grounding | 14 | 5.0% |
+  | dead_loop_no_recovery | long-horizon control | 13 | 4.6% |
+  | transaction_left_unfinished | execution / commitment | 11 | 3.9% |
+  | unattributed | – | 8 | 2.8% |
+  | missed_question | proactiveness (under-asking) | 2 | 0.7% |
+
+  `graded_runs=400 / failing_runs=283 / pass_rate=0.2925`。
+  **这是本轮最强的归因证据**：若本臂的 `state_loss` 占比相对上表明显下降，
+  则"长期记忆/状态"这条路径真的被推动了；若 `over_asking` 上升，则主动性机制在**帮倒忙**。
+  注意本臂只有 1 试次（100 条评分运行、失败约 70 条），份额的区间比基线宽，
+  只做**方向性**比较，不做显著性声称。
 - 逐用户 delta 对基线逐用户值：
 
 | user | 基线 Avg@4 | 基线 trial0 |
