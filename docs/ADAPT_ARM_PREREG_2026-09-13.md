@@ -207,3 +207,32 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
 - Checkpoint **增量原子落盘**（每个用户完成后写一次，`:555`），所以
   `data/simulations/adapt8_1t.json` 里 `simulations` 的长度就是已完成用户数（0→8）。
 - 实测基线耗时 **86.4 min/(用户·试次)**，预期本臂 5–12 小时。
+- 守候作业 `scripts/_arm_watch.ps1` 会在 runner 退出后自动写出
+  `data/simulations/adapt8_1t_report.txt` 与 `adapt8_1t_attribution.json`，
+  并打印实际落地了几个用户。
+
+## 10. 若用户被跳过：如何补齐（不改动任何配置）
+
+runner 对单个用户的异常是 `logger.exception` + `continue`（`:531-536`），
+该用户**不出现在 checkpoint 里**，而 `adapt_arm_report.py` 会因为缺人**中止**
+（这是刻意的：不允许把 7 人的均值当 8 人队列的结果）。补齐办法是
+
+**原样重跑同一条命令**：
+
+```powershell
+$env:VITA_MODEL_CONFIG_PATH = (Resolve-Path models_adapt.yaml).Path
+$env:VITA_MEMORY_CONFIG_PATH = (Resolve-Path memory_adapt.yaml).Path
+python -m agent.vitabench_runner `
+  --agent adapt --cohort dev --num-trials 1 `
+  --task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828 `
+  --memory-type adapt --profile-summary --proactive-loop `
+  --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
+  --save-to data/simulations/adapt8_1t.json `
+  --debug-to data/simulations/adapt8_1t.log
+```
+
+`run_selected` 在 `save_to` 已存在、且 `info` 与 `tasks` **完全一致**时，
+从 `done` 集合（键为 `(task_id, trial, seed)`）继续，只补跑缺失的那几项
+（`:488-498`）；若配置有任何不一致会直接 `raise ValueError`，
+**所以这条命令必须逐字与首次运行相同**——包括 `--debug-to`，因为它会写进 `info["debug_sidecar"]`。
+不要为了"补一个用户"而修改任何 flag。
