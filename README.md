@@ -230,10 +230,8 @@ flowchart TB
     end
 
     A["AdaptAgent<br/>observer only · three switches, all off by default"]
-    R["RewriteMemory<br/>the baseline backend"]
 
     T --> S
-    S --> R
     S --> A
     S --> SG
     TS --> CARD
