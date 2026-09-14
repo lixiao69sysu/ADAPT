@@ -32,19 +32,108 @@ without being one. `rewrite`, the benchmark's own `Agentic Memory` backend, hold
 the context budget comparable across every row, so what the table compares is the
 agent, not the memory footprint.
 
-| Agents | Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---|---:|:---:|:---:|:---:|:---:|
-| ***Non-thinking Models*** | | | | | | |
-| baseline agent (rewrite) | Qwen3.8-27B (w/o thinking) | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
-| baseline agent (rewrite) | GLM-4.6 (w/o thinking) | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
-| baseline agent (rewrite) | Kimi-K2.6 (w/o thinking) | 1T-A32B | 0.397 | **0.674** | 0.145 | 56 / 819 |
-| baseline agent (rewrite) | DeepSeek-V4-Pro (w/o thinking) | 1.6T-A49B | **0.456** | 0.652 | **0.267** | 56 / 819 |
-| ***Thinking Models*** | | | | | | |
-| baseline agent (rewrite) | Gemini-2.5-Flash (w/ thinking) | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
-| baseline agent (rewrite) | Qwen3-Max (w/ thinking) | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
-| baseline agent (rewrite) | GLM-5.1 (w/ thinking) | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| baseline agent (rewrite) | Claude-Opus-4.6 (w/ thinking) | Unknown | **0.454** | **0.645** | **0.259** | 56 / 819 |
-| **ADAPT** | **Qwen3.8-27B (w/o thinking)** | **27B** | **0.364** | **0.632** | **0.212** | **56 / 819** |
+<table>
+  <thead>
+    <tr>
+      <th align="left">Agents</th>
+      <th align="left">Backbone</th>
+      <th align="right">Params</th>
+      <th align="center">Avg@4</th>
+      <th align="center">Pass@4</th>
+      <th align="center">Pass^4</th>
+      <th align="center">People / Subtasks</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td colspan="7" align="center"><em><strong>Non-thinking Models</strong></em></td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>Qwen3.8-27B (w/o thinking)</td>
+      <td align="right">27B</td>
+      <td align="center">0.293</td>
+      <td align="center">0.600</td>
+      <td align="center">0.200</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>GLM-4.6 (w/o thinking)</td>
+      <td align="right">355B-A32B</td>
+      <td align="center">0.336</td>
+      <td align="center">0.623</td>
+      <td align="center">0.084</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>Kimi-K2.6 (w/o thinking)</td>
+      <td align="right">1T-A32B</td>
+      <td align="center">0.397</td>
+      <td align="center"><strong>0.674</strong></td>
+      <td align="center">0.145</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>DeepSeek-V4-Pro (w/o thinking)</td>
+      <td align="right">1.6T-A49B</td>
+      <td align="center"><strong>0.456</strong></td>
+      <td align="center">0.652</td>
+      <td align="center"><strong>0.267</strong></td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td colspan="7" align="center"><em><strong>Thinking Models</strong></em></td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>Gemini-2.5-Flash (w/ thinking)</td>
+      <td align="right">Unknown</td>
+      <td align="center">0.312</td>
+      <td align="center">0.567</td>
+      <td align="center">0.098</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>Qwen3-Max (w/ thinking)</td>
+      <td align="right">&gt;1T</td>
+      <td align="center">0.324</td>
+      <td align="center">0.599</td>
+      <td align="center">0.091</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>GLM-5.1 (w/ thinking)</td>
+      <td align="right">744B-A40B</td>
+      <td align="center">0.352</td>
+      <td align="center">0.556</td>
+      <td align="center">0.150</td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td>baseline agent (rewrite)</td>
+      <td>Claude-Opus-4.6 (w/ thinking)</td>
+      <td align="right">Unknown</td>
+      <td align="center"><strong>0.454</strong></td>
+      <td align="center"><strong>0.645</strong></td>
+      <td align="center"><strong>0.259</strong></td>
+      <td align="center">56 / 819</td>
+    </tr>
+    <tr>
+      <td><strong>ADAPT</strong></td>
+      <td><strong>Qwen3.8-27B (w/o thinking)</strong></td>
+      <td align="right"><strong>27B</strong></td>
+      <td align="center"><strong>0.364</strong></td>
+      <td align="center"><strong>0.632</strong></td>
+      <td align="center"><strong>0.212</strong></td>
+      <td align="center"><strong>56 / 819</strong></td>
+    </tr>
+  </tbody>
+</table>
 
 **Bold** marks the best value in a column; the ADAPT row is bold to mark it as
 ours, so within `Avg@4`, `Pass@4` and `Pass^4` the best baseline value is what is
