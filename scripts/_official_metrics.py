@@ -30,7 +30,7 @@ _ap = argparse.ArgumentParser(description=__doc__)
 _ap.add_argument(
     "checkpoint",
     nargs="?",
-    default="data/simulations/stock_avg4_8u.json",
+    default="data/simulations/stock_dev.json",
     help="checkpoint to score (default: the cached baseline)",
 )
 CP = Path(_ap.parse_args().checkpoint)

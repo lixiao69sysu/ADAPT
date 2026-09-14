@@ -157,7 +157,7 @@ def analyse(checkpoint: dict | None, tasks_by_id: dict[str, Any]) -> dict[str, A
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint", default="data/simulations/stock_avg4_8u.json")
+    parser.add_argument("--checkpoint", default="data/simulations/stock_dev.json")
     parser.add_argument("--language", default="chinese")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()

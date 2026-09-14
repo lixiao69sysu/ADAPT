@@ -18,7 +18,7 @@ Target/distraction annotations and rubric text are read for offline attribution
 only; the agent never sees them, and this report keeps to counts and ranks.
 
 Usage:
-    python scripts/candidate_selection_audit.py data/simulations/stock_avg4_8u.json
+    python scripts/candidate_selection_audit.py data/simulations/stock_dev.json
     python scripts/candidate_selection_audit.py stock.json --json
 """
 

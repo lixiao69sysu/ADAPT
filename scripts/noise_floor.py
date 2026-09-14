@@ -23,7 +23,7 @@ Reports, for one or more checkpoints:
 - the N needed to resolve a given target delta, given the between-user SD.
 
 Usage:
-    python scripts/noise_floor.py data/simulations/stock_avg4_8u.json
+    python scripts/noise_floor.py data/simulations/stock_dev.json
     python scripts/noise_floor.py baseline.json candidate.json --target 0.05
 """
 
@@ -103,7 +103,7 @@ def hierarchy(payload: dict[str, Any]) -> dict[str, Any]:
             "flat_subtask_trial_mean is the OFFICIAL Avg: it is the mean over "
             "(task_id, subtask_idx) units of that unit's per-trial mean, which "
             "is what _compute_subtask_pass_metrics/average_at_k in the vendored "
-            "metrics compute (stock_avg4_8u: 0.2925). user_weighted_avg is a "
+            "metrics compute (stock_dev: 0.2925). user_weighted_avg is a "
             "different quantity -- the equal-user-weight mean (0.2940) -- and "
             "must never be quoted as the official Avg. The two differ because "
             "users carry unequal subtask counts."

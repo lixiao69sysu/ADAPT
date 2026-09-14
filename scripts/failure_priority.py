@@ -1,6 +1,6 @@
 """Failure attribution ranked by priority = frequency x impact x addressability.
 
-Reads the stock 8-user checkpoint and decomposes every failing subtask run into
+Reads the stock dev-cohort checkpoint and decomposes every failing subtask run into
 measurable failure *flags*, then ranks the flags by
 
     priority = frequency x impact x addressability
@@ -22,7 +22,7 @@ Flags are not mutually exclusive; a run can thrash and also never see its target
 Co-occurrence is reported rather than hidden by forcing one primary label.
 
 Usage:
-    python scripts/failure_priority.py data/simulations/stock_avg4_8u.json
+    python scripts/failure_priority.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations

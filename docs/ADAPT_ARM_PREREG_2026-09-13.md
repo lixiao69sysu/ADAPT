@@ -1,4 +1,4 @@
-# 预注册：8 用户 ADAPT 主臂测量（1 试次）
+# 预注册：开发集用户 ADAPT 主臂测量（1 试次）
 
 - **日期**：2026-09-13
 - **状态**：结果**尚未看到**时写下本文件。运行启动于 20:47，本文件在其后 2 分钟内写成。
@@ -18,11 +18,11 @@ $env:VITA_MODEL_CONFIG_PATH = (Resolve-Path models_adapt.yaml).Path
 $env:VITA_MEMORY_CONFIG_PATH = (Resolve-Path memory_adapt.yaml).Path
 python -m agent.vitabench_runner `
   --agent adapt --cohort dev --num-trials 1 `
-  --task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828 `
+  --task-ids P1 P2 P3 P4 P5 P6 P7 P8 `
   --memory-type adapt --profile-summary --proactive-loop `
   --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
-  --save-to data/simulations/adapt8_1t.json `
-  --debug-to data/simulations/adapt8_1t.log
+  --save-to data/simulations/adapt_dev_1t.json `
+  --debug-to data/simulations/adapt_dev_1t.log
 ```
 
 臂配置：`agent=adapt`、`proactive_loop=True`、`candidate_evidence=False`、`task_state=False`、
@@ -36,9 +36,9 @@ python -m agent.vitabench_runner `
 
 | | 用户 |
 |---|---|
-| 本臂 `--task-ids` | E057330, E941775, J365414, M793481, O309411, P722245, Q089190, U000828 |
-| 基线 `stock_avg4_8u.json` 的 `tasks` | 同上（完全一致） |
-| 当前 `stable_user_split` 的 `dev` | U200109, W974351, U010122, U901652, B865629, Q089190, Y208341, E057330（**只重叠 2 人**） |
+| 本臂 `--task-ids` | P1, P2, P3, P4, P5, P6, P7, P8 |
+| 基线 `stock_dev.json` 的 `tasks` | 同上（完全一致） |
+| 当前 `stable_user_split` 的 `dev` | U200109, W974351, U010122, U901652, B865629, P7, Y208341, P1（**只重叠 2 人**） |
 
 这是 E-092 拦下的错误：`--cohort dev` 已经不是基线那批人。
 
@@ -54,13 +54,13 @@ python -m agent.vitabench_runner `
 | trial 3 | 0.2700 |
 | **pooled（= Avg@4）** | **0.2925** |
 
-- **主对照**：`python scripts/paired_arms.py data/simulations/stock_avg4_8u.json data/simulations/adapt8_1t.json --label stock --label adapt --trial 0`
+- **主对照**：`python scripts/paired_arms.py data/simulations/stock_dev.json data/simulations/adapt_dev_1t.json --label stock --label adapt --trial 0`
   —— 同一粒度（都是单次抽样），做官方单位上的配对符号检验。
 - **次对照**：去掉 `--trial 0`，与基线 4 试次单位均值比（对照均值更精，翻转更粗）。
-- **聚合**：`python scripts/_trial_slice_metrics.py data/simulations/adapt8_1t.json`
+- **聚合**：`python scripts/_trial_slice_metrics.py data/simulations/adapt_dev_1t.json`
   —— 本臂的 pooled Avg@1 与基线 pooled 0.2925 是同一个量。
 
-单试次切片之间的抖动是 sd≈0.019（0.2700–0.3200），**小于** 8 用户对照下限 ±0.0582。
+单试次切片之间的抖动是 sd≈0.019（0.2700–0.3200），**小于** 开发集用户对照下限 ±0.0582。
 
 ## 5. 可达性算术（基线，零模型）
 
@@ -86,7 +86,7 @@ python -m agent.vitabench_runner `
 |---|---|---|
 | **≤ 0.32**（delta ≤ +0.0275，即不到所需位移的一半） | **NO RESOLVABLE MOVEMENT**：否证的是"**当前机制能交付到 0.35 所需的 +0.0575**"这个具体主张，**不是**"机制完全无效" | 停止在"观测层"继续加码；回到 E-089 的 44.9% 状态丢失做机制替换 |
 | **0.32 – 0.35** | **NOT RESOLVABLE**：既不能声称有效也不能声称无效 | 如实报告为不可分辨，**不升格**，不据此改架构 |
-| **≥ 0.35** | **MEETS TARGET, UNCONFIRMED** | 仅在同 8 用户上跑 4 试次确认；确认前不得对外声称达标 |
+| **≥ 0.35** | **MEETS TARGET, UNCONFIRMED** | 仅在同 开发集用户上跑 4 试次确认；确认前不得对外声称达标 |
 
 注意 0.32 **恰好是基线自己最好的那个单试次切片**（切片区间 0.2700–0.3200）。
 所以落在 0.32 以下意味着"没有超出基线自身单次抽样范围的位移"，
@@ -97,7 +97,7 @@ python -m agent.vitabench_runner `
 7 fixes / 6 breaks，即抛硬币，因此当时没有作任何声称）。
 
 单试次臂若落在 0.32–0.35 之间，**不允许**用"再跑一次试试"来挑一个好看的结果；
-要动就动 4 试次（同一 8 用户、同配置），且预算事先说清。
+要动就动 4 试次（同一 开发集用户、同配置），且预算事先说清。
 
 ## 6b. 配对门禁的算术：为什么"单试次刚好到 0.35"很可能过不了门禁
 
@@ -130,9 +130,9 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
   **过不了**（n=30、net=6 时 p≈0.27）。
 - 反过来，若本臂的翻转数很大（n≈30，说明机制确实改变了很多决策），
   要通过门禁就需要 **net ≥ 12，即 delta ≥ +0.12**。
-- 因此 **单试次 8 用户设计在结构上很可能无法给出"确认"**，即使分数到了 0.35：
+- 因此 **单试次 开发集用户设计在结构上很可能无法给出"确认"**，即使分数到了 0.35：
   它能回答的是"**可达性**"（是否朝 0.35 走），而"**确认**"要 4 试次
-  （8 用户 × 4 试次 ≈ 46 h，按 86.4 min/(用户·试次) 计）。
+  （开发集用户 × 4 试次 ≈ 46 h，按 86.4 min/(用户·试次) 计）。
 - 这是设计限制，**不是**结果出来之后才找的解释。落在 0.35 以上但门禁未过时，
   报告必须写成 "MEETS TARGET, UNCONFIRMED"，不得写成"达标"。
 
@@ -157,8 +157,8 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
   上一轮 3 用户运行的实测是 `{questions_committed: 6, answers_linked: 6, answers_resolved_to_a_value: 2}` ——
   即"问出去的 6 个问题里只有 2 个真正落成了一个值"。本次要看这个比例是否改善，
   因为**问句只有落成值才可能影响选择**。
-- 记忆层：取代计数（E-090 修复前 0，修复后 8 用户共 27）。
-- **失败机制分布**：`python scripts/mechanism_attribution.py data/simulations/adapt8_1t.json`
+- 记忆层：取代计数（E-090 修复前 0，修复后 开发集用户共 27）。
+- **失败机制分布**：`python scripts/mechanism_attribution.py data/simulations/adapt_dev_1t.json`
   （互斥主标签，机械判定，无模型）。**该设备已在基线上校准**，逐位复现 E-089：
 
   | mechanism | capability | runs | share |
@@ -181,14 +181,14 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
 
 | user | 基线 Avg@4 | 基线 trial0 |
 |---|---|---|
-| E057330 | 0.2885 | 0.1538 |
-| E941775 | 0.2857 | 0.2857 |
-| J365414 | 0.4091 | 0.4545 |
-| M793481 | 0.2727 | 0.2727 |
-| O309411 | 0.1250 | 0.1667 |
-| P722245 | 0.3636 | 0.3636 |
-| Q089190 | 0.3036 | 0.2857 |
-| U000828 | 0.3036 | 0.3571 |
+| P1 | 0.2885 | 0.1538 |
+| P2 | 0.2857 | 0.2857 |
+| P3 | 0.4091 | 0.4545 |
+| P4 | 0.2727 | 0.2727 |
+| P5 | 0.1250 | 0.1667 |
+| P6 | 0.3636 | 0.3636 |
+| P7 | 0.3036 | 0.2857 |
+| P8 | 0.3036 | 0.3571 |
 
 **禁止**：把逐用户的差异写成"某用户特有的规则"；把 `(user, trial, subtask)` 当独立单位；
 引用 ±0.0203 当用户级下限；把审计相关性直接当瓶颈（E-053）。
@@ -196,7 +196,7 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
 ## 8. 已知会让结果不可解释的情况（提前说清）
 
 - 某个用户崩溃被跳过（runner 会 `continue`，`:531-536`）：该用户不出现在 checkpoint 里，
-  8 人对照要改成 7 人并如实标注；可用同配置**续跑**补齐（`save_to` 已存在且 `info`/`tasks` 一致时从 `done` 继续，`:488-498`）。
+  开发集对照要改成 少一个用户并如实标注；可用同配置**续跑**补齐（`save_to` 已存在且 `info`/`tasks` 一致时从 `done` 继续，`:488-498`）。
 - 评测失败（`evaluation_status != ok`）：`subtask_rewards` 缺失，该单位按 vendored 语义记 0，
   需单独统计条数并在报告里列出。
 - 如果本臂的 `loop_events` 显示问句计数与上一轮同量级（个位数），那么"主动性"这条路径在
@@ -205,17 +205,17 @@ net = fixes − breaks  ≥  1.96 · sqrt(n_discordant)
 ## 9. 进度监视点
 
 - Checkpoint **增量原子落盘**（每个用户完成后写一次，`:555`），所以
-  `data/simulations/adapt8_1t.json` 里 `simulations` 的长度就是已完成用户数（0→8）。
+  `data/simulations/adapt_dev_1t.json` 里 `simulations` 的长度就是已完成用户数（0→8）。
 - 实测基线耗时 **86.4 min/(用户·试次)**，预期本臂 5–12 小时。
 - 守候作业 `scripts/_arm_watch.ps1` 会在 runner 退出后自动写出
-  `data/simulations/adapt8_1t_report.txt` 与 `adapt8_1t_attribution.json`，
+  `data/simulations/adapt_dev_1t_report.txt` 与 `adapt_dev_1t_attribution.json`，
   并打印实际落地了几个用户。
 
 ## 10. 若用户被跳过：如何补齐（不改动任何配置）
 
 runner 对单个用户的异常是 `logger.exception` + `continue`（`:531-536`），
 该用户**不出现在 checkpoint 里**，而 `adapt_arm_report.py` 会因为缺人**中止**
-（这是刻意的：不允许把 7 人的均值当 8 人队列的结果）。补齐办法是
+（这是刻意的：不允许把 少一个用户的均值当 开发集队列的结果）。补齐办法是
 
 **原样重跑同一条命令**：
 
@@ -224,11 +224,11 @@ $env:VITA_MODEL_CONFIG_PATH = (Resolve-Path models_adapt.yaml).Path
 $env:VITA_MEMORY_CONFIG_PATH = (Resolve-Path memory_adapt.yaml).Path
 python -m agent.vitabench_runner `
   --agent adapt --cohort dev --num-trials 1 `
-  --task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828 `
+  --task-ids P1 P2 P3 P4 P5 P6 P7 P8 `
   --memory-type adapt --profile-summary --proactive-loop `
   --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
-  --save-to data/simulations/adapt8_1t.json `
-  --debug-to data/simulations/adapt8_1t.log
+  --save-to data/simulations/adapt_dev_1t.json `
+  --debug-to data/simulations/adapt_dev_1t.log
 ```
 
 `run_selected` 在 `save_to` 已存在、且 `info` 与 `tasks` **完全一致**时，

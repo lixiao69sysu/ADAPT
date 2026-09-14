@@ -1,6 +1,6 @@
 """Read a runner log and show, per unit, what the agent said before the reward.
 
-Usage: python scripts/_unit_dialogue.py data/simulations/iso_R8.log [E057330]
+Usage: python scripts/_unit_dialogue.py data/simulations/iso_R8.log [P1]
 
 The log is Tee-Object output: UTF-16, and hard-wrapped at the console width, so
 identifiers and prose can be split mid-token. Patterns below tolerate that.

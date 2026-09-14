@@ -31,14 +31,14 @@ REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 SCRIPT = REPO / "scripts" / "adapt_arm_report.py"
 
 USERS = [
-    "E057330",
-    "E941775",
-    "J365414",
-    "M793481",
-    "O309411",
-    "P722245",
-    "Q089190",
-    "U000828",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P6",
+    "P7",
+    "P8",
 ]
 
 
@@ -135,7 +135,7 @@ def test_a_sub_floor_arm_is_reported_as_not_resolvable(tmp_path):
 
 
 def test_wrong_cohort_aborts(tmp_path):
-    """A cohort that is not the pre-registered eight users must not be scored."""
+    """A cohort that is not the pre-registered the dev cohort must not be scored."""
     tasks = USERS[:2]
     base = _baseline(tmp_path, tasks)
     arm = _write(
@@ -144,7 +144,7 @@ def test_wrong_cohort_aborts(tmp_path):
     )
     done = _run(tmp_path, arm, base)
     assert done.returncode == 2
-    assert "arm cohort is not the pre-registered 8 users" in done.stdout
+    assert "arm cohort is not the pre-registered the dev cohort" in done.stdout
     assert "VERDICT" not in done.stdout
 
 
@@ -158,7 +158,7 @@ def test_missing_user_aborts_instead_of_scoring_a_smaller_cohort(tmp_path):
     done = _run(tmp_path, arm, base)
     assert done.returncode == 2
     assert "missing users" in done.stdout
-    assert "U000828" in done.stdout
+    assert "P8" in done.stdout
 
 
 def test_evaluator_failure_is_reported_not_hidden(tmp_path):
@@ -167,7 +167,7 @@ def test_evaluator_failure_is_reported_not_hidden(tmp_path):
     sims = [_sim(t, 0, [1, 1]) for t in tasks]
     # One sim failed evaluation; its rewards are absent entirely.
     broken = {
-        "task_id": "U000828",
+        "task_id": "P8",
         "trial": 0,
         "evaluation_status": "evaluation_failed",
         "reward_info": {"info": {}},

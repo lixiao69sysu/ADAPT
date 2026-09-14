@@ -13,7 +13,7 @@ Reads only instructions, replayed structured facts, and the compiler's own
 constraint list; never ``user_intention``.
 
 Usage:
-    python scripts/instruction_conflict_audit.py data/simulations/stock_avg4_8u.json
+    python scripts/instruction_conflict_audit.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Audit completeness and official-unit Avg@4 against the cached eight users.
+"""Audit completeness and official-unit Avg@4 against the cached the dev cohort.
 
 No model calls; do not label incomplete runs Avg@4. Trials are replicates,
 and the by-user differences below are descriptive, not a seed-pairing test.
@@ -35,7 +35,7 @@ def audit(candidate, baseline):
     errors += issues
     expected_users = set(baseline["tasks"])
     if set(candidate["tasks"]) != expected_users:
-        errors.append("cohort differs from the cached eight users")
+        errors.append("cohort differs from the cached the dev cohort")
     if set(treatment) != set(control):
         errors.append(f"unit coverage: {len(treatment)}/{len(control)}")
     if candidate["info"].get("num_trials") != 4:
@@ -72,7 +72,7 @@ def audit(candidate, baseline):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path)
-    parser.add_argument("--baseline", type=Path, default=Path("data/simulations/stock_avg4_8u.json"))
+    parser.add_argument("--baseline", type=Path, default=Path("data/simulations/stock_dev.json"))
     args = parser.parse_args()
     print(json.dumps(audit(json.loads(args.checkpoint.read_text(encoding="utf-8")),
                            json.loads(args.baseline.read_text(encoding="utf-8"))), indent=2))

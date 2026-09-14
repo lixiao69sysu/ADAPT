@@ -21,7 +21,7 @@ CLASS 2  ended_asking_the_user (116 failing runs)
       * recommend -> no write was owed, so ending on a question is not the defect
 
 Usage:
-    python scripts/failure_cause_split.py data/simulations/stock_avg4_8u.json
+    python scripts/failure_cause_split.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations

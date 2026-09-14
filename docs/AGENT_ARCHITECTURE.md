@@ -1,6 +1,6 @@
 # ADAPT 整体数据流与 agent 流
 
-2026-09-13 用户重新明确目标：允许自研 agent 架构，在 stock 已跑的同八用户上
+2026-09-13 用户重新明确目标：允许自研 agent 架构，在 stock 已跑的同开发集用户上
 达到官方 Avg@4 >= 0.35。agent 侧随后收敛为**唯一一个** agent：`--agent adapt` →
 `AdaptAgent`（`agent/adapt_agent.py`），即 stock 骨架加每回合对主动提问闭环的
 **观察**。它只观察、只记账，不做任何决定：不改写、不替换、不重排、不抢占模型消息，
@@ -35,7 +35,7 @@ $ python -m agent.vitabench_runner \
      ├─ patch_evaluator_extracter()          ← 评测器输出归一化（E-037）
      │
      └─ run_selected()                                          def @509
-          │  选用户：stable_user_split("ADAPT-2026") → dev 8 / blind 8 / final 40
+          │  选用户：stable_user_split("ADAPT-2026") → dev / blind / final
           │  读 checkpoint（同 info+tasks 才可续跑，否则报错）
           │
           └─ for trial in range(num_trials):        ★ L0 批量循环【A】      @617

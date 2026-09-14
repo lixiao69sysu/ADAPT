@@ -16,7 +16,7 @@ import agent.vitabench_bootstrap as bootstrap
 bootstrap.enable_vitabench_utf8()
 from vita.domains.personalization.environment import get_tasks
 
-CP = Path('data/simulations/stock_avg4_8u.json')
+CP = Path('data/simulations/stock_dev.json')
 d = json.loads(CP.read_text(encoding='utf-8'))
 
 # subtask index -> domain

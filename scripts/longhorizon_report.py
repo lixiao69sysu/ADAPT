@@ -17,7 +17,7 @@ Everything is mechanical: tool names, argument signatures and result text. No
 rubric, no reward-as-signal, no ``user_intention``.
 
 Usage:
-    python scripts/longhorizon_report.py data/simulations/stock_avg4_8u.json
+    python scripts/longhorizon_report.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations

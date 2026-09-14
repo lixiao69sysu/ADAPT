@@ -6,8 +6,8 @@ Repository guidance for agents working on ADAPT.
 
 The user explicitly authorizes improving our own ADAPT agent without requiring
 the stock/plugin architecture. The acceptance target is official Avg@4 >= 0.35
-on exactly the eight users in stock_avg4_8u.json. This supersedes the stock-only
-architecture and the requirement to run 56 users before this eight-user Avg@4.
+on exactly the dev-cohort users in `stock_dev.json`. This supersedes the stock-only
+architecture and the requirement to run 56 users before this dev-cohort Avg@4.
 Keep benchmark sources and hidden evaluation data out of runtime decisions.
 The --agent adapt branch is the single ADAPT agent, a pure observer of the
 proactive question loop (`agent/adapt_agent.py`): it may only observe and carry
@@ -15,7 +15,7 @@ state, never decide, and it is not the retired controller.
 
 **Measured 2026-09-14 (E-093)**: the arm
 `adapt + --proactive-loop + --memory-type adapt + --profile-summary`, 1 trial on
-exactly those eight users, scored a pooled **0.3300** on the 100 official units
+exactly those dev-cohort users, scored a pooled **0.3300** on the 100 official units
 against the cached baseline's 0.2925 / trial-0 slice 0.2900 — a delta of
 **+0.0375**, i.e. **inside the +-0.0582 cohort floor: NOT RESOLVABLE**, and short
 of the 0.35 target. The paired contrast was 14 fixes / 10 breaks, p=0.4142
@@ -24,7 +24,7 @@ excluded.** Two mechanism-level facts did come out of it and are the reason the
 arm is not simply "flat": the proactive loop committed 11 questions and resolved
 only **3 into a slot value (27%)**, never firing at all for one user; and the
 failure class it is not supposed to touch, `state_loss`, stayed at 44.9% -> 46.3%.
-A single-trial eight-user arm is structurally too weak to read the target
+A single-trial dev-cohort arm is structurally too weak to read the target
 (pre-registration section 6b); the next score claim needs 4 trials.
 
 ## Goal
@@ -37,23 +37,23 @@ trial count, the same agent/user/evaluator models and the same runner. The targe
 is Avg >= 0.35 on all 56 personalization users with the configured Qwen agent
 model, reported as Avg@4 once the code is frozen.
 
-An absolute number alone is not a result. The stock reference for the 8-dev-user
-cohort is `data/simulations/stock_avg4_8u.json` (official Avg@4 = 0.2925,
+An absolute number alone is not a result. The stock reference for the dev-cohort
+cohort is `data/simulations/stock_dev.json` (official Avg@4 = 0.2925,
 user-level 4-trial mean = 0.2940). A stock baseline for all 56 users does not
 exist yet; it must be produced with the same command before any 56-user relative
 claim is made.
 
 Because the goal is relative, the measurement has to be able to resolve the
 difference. Measured on that same stock data the between-user sd is 0.0823, so
-an unpaired 8-user comparison carries 2*SE = +-0.0582. The target delta of
+an unpaired dev-cohort comparison carries 2*SE = +-0.0582. The target delta of
 +0.06 therefore sits exactly at the edge of what this cohort can resolve: the
 cohort is the minimum viable design for the goal, with no margin, and a change
 whose expected effect is below ~0.06 is not worth building. See "The evaluation
 unit", "Noise floor" and "Reproducibility" below; the older +-0.0203 figure was
 the within-user trial component and must not be quoted as a user-level floor.
 
-Two cohorts are both called "8 dev users" in older artifacts and overlap by only
-two users (`E057330`, `Q089190`). Check a baseline's user list before comparing
+Two different cohorts are both called "the dev cohort" in older artifacts and overlap by only
+two users (`P1`, `P7`). Check a baseline's user list before comparing
 against it; cross-cohort numbers are not comparable.
 
 Current `qwen38_*_56u` checkpoints are described in older notes but are not in the
@@ -288,7 +288,7 @@ R2/R5a isolation experiments). `--num-trials 4` is required for any score claim
 by the promotion criteria below; use `--num-trials 1` only for smoke runs that
 claim no score.
 
-Control arm. The cached `stock_avg4_8u.json` is a valid **unpaired** reference, so
+Control arm. The cached `stock_dev.json` is a valid **unpaired** reference, so
 re-running it is optional; what is forbidden is pairing the two arms by seed
 (E-057):
 
@@ -303,8 +303,7 @@ python -m agent.vitabench_runner `
 
 Run both arms at the same `--num-trials`; the cached reference already has 4.
 
-The stable hash split seed is `ADAPT-2026`: 8 dev users, 8 blind users and 40
-remaining users. Inspect dev traces only. Blind traces remain unopened until an
+The stable hash split seed is `ADAPT-2026`: the dev cohort, the blind cohort and the remaining users. Inspect dev traces only. Blind traces remain unopened until an
 architecture milestone. Run all 56 Avg@1 only after blind passes, and full
 Avg@4 once after the code is frozen using `--cohort all --num-trials 4`.
 
@@ -313,11 +312,11 @@ Do not run broad ablation matrices or add rules for individual user IDs.
 ## The evaluation unit
 
 Four levels coexist in one checkpoint, and "unit" is meaningless without naming
-one. On `stock_avg4_8u.json`:
+one. On `stock_dev.json`:
 
 | level | key | count | reward attached | role |
 | --- | --- | --- | --- | --- |
-| user | `task_id` | 8 | none (derived) | cohort definition |
+| user | `task_id` | - | none (derived) | cohort definition |
 | simulation record | `(user, trial)` | 32 | mean over that user's subtasks | what the runner writes |
 | subtask-trial | `(user, trial, subtask)` | 400 | binary | **a replicate, not a unit** |
 | **official unit** | `(task_id, subtask_idx)` | **100** | vector of `num_trials` binary rewards | the official metric |
@@ -331,10 +330,10 @@ mean.
 
 ```powershell
 python scripts/_official_metrics.py   # -> evaluation units (task_id, subtask_idx): 100, Avg@4=0.2925
-python scripts/noise_floor.py data/simulations/stock_avg4_8u.json   # -> the four level counts
+python scripts/noise_floor.py data/simulations/stock_dev.json   # -> the four level counts
 ```
 
-`0.2940` is a different quantity: the equal-user-weight mean over 8 users. It is
+`0.2940` is a different quantity: the equal-user-weight mean over the dev cohort. It is
 not the official `Avg@4` (`0.2925`) because the official unit count is
 proportional to a user's subtask count. Never mix the two in one sentence.
 
@@ -348,11 +347,11 @@ repository and produced an apparent "0 of 13 passing" result that was really
 
 Two variance components, from `scripts/noise_floor.py`:
 
-| quantity | value (stock 8u x 4t) |
+| quantity | value (stock dev x 4t) |
 | --- | --- |
 | `between_user_sd` | 0.0823 |
 | `within_user_sd` | 0.0573 |
-| unpaired 2*SE over 8 users | **+-0.0582** |
+| unpaired 2*SE over the dev cohort | **+-0.0582** |
 | within-user trial 2*SE | +-0.0203 |
 
 **The promotion floor is +-0.0582, not +-0.0203.** The +-0.0203 figure is the
@@ -365,10 +364,9 @@ Two further facts constrain what a trial can tell us: the four trials of a user
 replay the *same* script (identical subtask count, opening instruction and
 `opensig`), and `temperature` is `0.0` for the agent, evaluator and user model
 alike. So trials estimate sampling noise only. Because the same seed does not
-reproduce (see "Reproducibility" below), `users_with_zero_trial_variance` (3 of 8
-here) must be reported but read as luck, not as determinism.
+reproduce (see "Reproducibility" below), `users_with_zero_trial_variance` (a minority here) must be reported but read as luck, not as determinism.
 
-Consequence, for an unpaired comparison: on 8 users only a delta of roughly
+Consequence, for an unpaired comparison: on the dev cohort only a delta of roughly
 0.06 or more is resolvable. **A delta below +-0.0582 in either direction is not a
 result on this cohort** — it is "not resolvable", which is not the same as "no
 effect".
@@ -385,8 +383,8 @@ the user model are non-deterministic here.
 
 What this does and does not change:
 
-- **The cached baseline stays usable as an unpaired control.** `stock_avg4_8u.json`
-  is a sample of 8 users x 4 trials; comparing a new arm against it at the user
+- **The cached baseline stays usable as an unpaired control.** `stock_dev.json`
+  is a sample of the dev cohort across 4 trials; comparing a new arm against it at the user
   level is a valid unpaired comparison, and its floor is the +-0.0582 above. Do
   not re-run the baseline to "match" anything.
 - **Only matched-seed *pairing* is dead.** Pairing trial i of one arm with trial i
@@ -396,13 +394,13 @@ What this does and does not change:
 - **`seed` is not a matching key.** The four trials of a user are four replicate
   draws from one condition, so `within_user_sd` (0.0573) is already the run-to-run
   jitter estimate: one user's `Avg` moves by about that much on a rerun. No new
-  runs are needed to obtain it. `users_with_zero_trial_variance = 3/8` was luck.
+  runs are needed to obtain it. `users_with_zero_trial_variance` being a minority was luck.
 - **`trajectory_hash` cannot detect reproducibility.** It hashes `messages`
   verbatim, which carry `timestamp` and a per-call `chatcmpl-*` id, so it differs
   between runs by construction. Use `scripts/reproducibility_check.py`, which
   strips `timestamp`/`cost`/`raw_data`/`id` first.
 
-Practical consequence: because the floor on 8 users is +-0.0582, **a change whose
+Practical consequence: because the floor on the dev cohort is +-0.0582, **a change whose
 expected effect is below ~0.06 is not worth building**, since no affordable run
 could read it either way.
 
@@ -417,7 +415,7 @@ python scripts/reproducibility_check.py data/simulations/rep_s0_run*.json
 python scripts/paired_arms.py stock.json adapt.json --label stock --label adapt
 
 # thrash / decoding autopsy; clustered and within-cluster contrasts
-python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json --repeat-threshold 3
+python scripts/runaway_autopsy.py data/simulations/stock_dev.json --repeat-threshold 3
 
 # graded diagnosis (per-condition hits and missed dimensions)
 python scripts/rubric_breakdown.py data/simulations/adapt_dev.json --per-subtask
@@ -444,7 +442,7 @@ Every claimed number must come with a zero-model command that reproduces it.
 
 Prohibited in any comparison: treating `(user, trial, subtask)` as independent;
 quoting +-0.0203 as a user-level floor; comparing across the two different
-"8 dev users" cohorts (they overlap by only 2 users); claiming a score from one
+"the dev cohort" cohorts (they overlap by only 2 users); claiming a score from one
 trial; promoting an audit correlation to a bottleneck without an intervention
 (E-053); mixing official `Avg@4` with equal-user-weight means.
 

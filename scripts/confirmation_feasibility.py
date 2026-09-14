@@ -19,7 +19,7 @@ Reads only instructions, tool calls and message text; never rubric or
 ``user_intention``.
 
 Usage:
-    python scripts/confirmation_feasibility.py data/simulations/stock_avg4_8u.json
+    python scripts/confirmation_feasibility.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations

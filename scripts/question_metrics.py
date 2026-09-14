@@ -38,8 +38,8 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ARM = pathlib.Path("data/simulations/adapt8_1t.json")
-BASE = pathlib.Path("data/simulations/stock_avg4_8u.json")
+ARM = pathlib.Path("data/simulations/adapt_dev_1t.json")
+BASE = pathlib.Path("data/simulations/stock_dev.json")
 
 CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
 ALNUM = re.compile(r"[A-Za-z0-9]{4,}")
@@ -71,7 +71,7 @@ def analyse(path, trial=None):
     # A subtask trajectory carries the accumulated conversation, so "the next
     # user message" after a question can be the *next subtask's instruction*
     # rather than an answer -- the first cut of this script scored exactly that
-    # by mistake (it reported the E057330 idx1 instruction as an answer inside
+    # by mistake (it reported the P1 idx1 instruction as an answer inside
     # idx2). Instructions recur across the trajectories that hold them as
     # history; genuine answers do not. So a user message seen in two or more
     # trajectories is treated as an instruction and never as an answer.

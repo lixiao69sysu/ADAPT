@@ -9,7 +9,7 @@ decide whether they are (a) a new general-logic mechanism worth naming, or
 Reads target annotations for offline attribution only; the agent never sees them.
 
 Usage:
-    python scripts/_unattributed_probe.py data/simulations/stock_avg4_8u.json
+    python scripts/_unattributed_probe.py data/simulations/stock_dev.json
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ _ID_LIKE = __import__("re").compile(r"^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+$")
 
 
 def main() -> int:
-    path = sys.argv[1] if len(sys.argv) > 1 else "data/simulations/stock_avg4_8u.json"
+    path = sys.argv[1] if len(sys.argv) > 1 else "data/simulations/stock_dev.json"
     with open(path, encoding="utf-8") as handle:
         checkpoint = json.load(handle)
     from agent.vitabench_runner import get_tasks

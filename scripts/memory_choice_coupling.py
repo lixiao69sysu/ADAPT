@@ -29,8 +29,8 @@ from collections import defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ARM = pathlib.Path("data/simulations/adapt8_1t.json")
-BASE = pathlib.Path("data/simulations/stock_avg4_8u.json")
+ARM = pathlib.Path("data/simulations/adapt_dev_1t.json")
+BASE = pathlib.Path("data/simulations/stock_dev.json")
 
 
 def per_subtask(path, trial_filter=None):

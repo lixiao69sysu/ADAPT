@@ -15,8 +15,8 @@ finish_reason). It never reads rewards, rubrics or target annotations, so it is
 safe to run on any checkpoint.
 
 Usage:
-    python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json
-    python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json --tail 30
+    python scripts/runaway_autopsy.py data/simulations/stock_dev.json
+    python scripts/runaway_autopsy.py data/simulations/stock_dev.json --tail 30
 """
 
 from __future__ import annotations

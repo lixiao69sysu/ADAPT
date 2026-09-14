@@ -1,7 +1,7 @@
 """Sub-metrics aligned with what this change actually touches.
 
 The official metric (Avg@4 over the 100 personalization units) is too coarse and
-too noisy on 8 users to describe a data-layer change. These sub-metrics each
+too noisy on the dev cohort to describe a data-layer change. These sub-metrics each
 correspond to one thing the arm does differently, and every one is computable
 from the two saved checkpoints with no model call.
 
@@ -30,8 +30,8 @@ from collections import defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ARM = pathlib.Path("data/simulations/adapt8_1t.json")
-BASE = pathlib.Path("data/simulations/stock_avg4_8u.json")
+ARM = pathlib.Path("data/simulations/adapt_dev_1t.json")
+BASE = pathlib.Path("data/simulations/stock_dev.json")
 
 WRITE_PREFIXES = ("create_", "pay_", "modify_", "cancel_")
 CREATE_PREFIXES = ("create_",)

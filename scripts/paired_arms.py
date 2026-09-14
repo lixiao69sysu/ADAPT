@@ -75,7 +75,7 @@ def load_tasks(path: pathlib.Path) -> tuple[str, ...]:
     ``info["cohort"]`` is only a CLI label. Two runs whose labels are both
     ``dev`` can still have been drawn from different user sets -- that happened
     in this repository (E-092: the same label covered two cohorts overlapping by
-    2 of 8 users), so the label must never be used as identity.
+    2 of the dev cohort), so the label must never be used as identity.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
     out = []
@@ -298,7 +298,7 @@ def main() -> None:
 
     # Guard attribution. The agent records per-subtask state, so a unit where
     # the guard stayed silent is distinguishable from one where it had no reason
-    # to fire -- the gap that made the first P722245 experiment unattributable.
+    # to fire -- the gap that made the first P6 experiment unattributable.
     print("\n-- arm B guard attribution --")
     totals = collections.Counter()
     seen_sims: set[tuple] = set()

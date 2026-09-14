@@ -1,6 +1,6 @@
 """Per-subtask summary of the agent-visible debug sidecar (JSONL).
 
-Usage: python scripts/_unit_events.py data/simulations/iso_R8.jsonl [E057330]
+Usage: python scripts/_unit_events.py data/simulations/iso_R8.jsonl [P1]
 """
 
 from __future__ import annotations
