@@ -530,7 +530,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-10
 - **状态**：VERIFIED
 - **难点**：开发集用户 × 4 trial 的 dev 基线跑完后，自写工具 `agent/trace_metrics.py` 报出 `pass_at_4 = 0`，而官方论文表格中同类任务存在非零 Pass 值，容易被误读为"agent 完全没通过任何任务"。
-- **证据**：`data/simulations/stock_dev.json`（32 次模拟全部可评分）。`trace_metrics._pass_at_four` 按**用户级**分组，仅当 4 次 trial 的 reward 全部 ≥ 1.0 时判定通过；该数据单次 trial 最高 0.4545，从未达到 1.0，故通过数恒为 0。
+- **证据**：`data/simulations/stock_dev.json`（该 checkpoint 的全部模拟均可评分）。`trace_metrics._pass_at_four` 按**用户级**分组，仅当 4 次 trial 的 reward 全部 ≥ 1.0 时判定通过；该数据单次 trial 最高 0.4545，从未达到 1.0，故通过数恒为 0。
 - **根因**：口径与粒度双重不一致。(1) 粒度：官方 personalization 指标以 `(task_id, subtask_index)` 为评估单元，`trace_metrics` 以整个用户为单元；(2) 实现：官方 `vita.metrics.agent_metrics` 使用无偏估计 `pass@k = 1 - C(n-c,k)/C(n,k)` 与 `pass^k = C(c,k)/C(n,k)`，`trace_metrics` 用简化布尔。
 - **有效方案**：对外汇报一律走官方入口 `vita.metrics.agent_metrics.compute_metrics(results)`（构造原生 `Results` 对象），并明确标注 task 级 / subtask 级；`trace_metrics` 降级为开发期粗筛工具，不用于最终指标。
 - **验证**：同一次运行的两条独立路径数值一致——直接调用 `_compute_subtask_pass_metrics` 与官方完整 `compute_metrics` 均得 subtask 级 Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000（100 个单元）；task 级 Pass 为 0。
@@ -1415,7 +1415,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **修正 2：单臂区间被当成双臂门槛。** `unpaired_2se_over_users = 0.0582` 是**单臂**用户均值的 2SE。等方差同 n 的双臂差值 2SE 为 √2 倍，即 **0.0823**，现已作为独立字段 `two_arm_unpaired_2se` 输出；
   `decompose()` 的 note 明确写出"两者都不是普适检测下限，子任务共享用户历史，100 个聚合单元不是 100 个独立样本"。
   **受影响结论**：E-062 曾用"0.051 < 0.0582 所以读不出来"来降低该干预的优先级，该推理已撤回。
-- **修正 3：配对发生在伪重复层级。** `paired()` 原先在 `(user, trial)` 上配对（32 个键），把同一脚本的 4 个 trial 当作 4 个独立观测。
+- **修正 3：配对发生在伪重复层级。** `paired()` 原先在 `(user, trial)` 上配对（每个 (用户, 试次) 一个键），把同一脚本的 4 个 trial 当作 4 个独立观测。
   现改为在**官方单元 `(task_id, subtask_idx)`** 上配对（100 个键），并额外给出**用户级聚类稳健**汇总：
   - `official_unit`：功效更高，但同一用户内的单元相关，区间偏乐观；
   - `user_cluster`：先取每用户自身均值再配对，对用户内相关性稳健，**小队列下应以此为主报告**。
@@ -2589,7 +2589,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
     **dev 与基线重叠 2 人**（`P1`、`P7`），且 `P2`、`P5` 现在被分到 blind。
   - `python -c "json.load(open('data/simulations/stock_dev.json'))['tasks']"` →
     `['P1','P2','P3','P4','P5','P6','P7','P8']`；
-    `simulations` 里的 `task_id` 集合与之一致（开发集、32 条 (user,trial)）。
+    `simulations` 里的 `task_id` 集合与之一致（开发集，(user,trial) 键集合一致）。
 - **根因**：`stable_user_split` 对**当前** `get_tasks(language)` 的**全集**按 `sha256(f"{SPLIT_SEED}:{user_id}")`
   排序取前 8（`vitabench_runner.py:226-234`，`SPLIT_SEED = "ADAPT-2026"`）。种子没变，
   **但被排序的全集变了**：基线是 2026-09-06 的快照，此后任务集合发生了变动，于是"dev"这个名字指向了另一批人。
