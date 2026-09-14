@@ -157,11 +157,6 @@ as successful only when its reward is exactly `1.0`.
 | **Pass@k** | fraction of units successful **at least once** in `k` trials | "can it ever solve this" |
 | **Pass^k** | fraction of units successful **in every one** of `k` trials | "does it solve this reliably" |
 
-`Avg@1 = Pass@1 = Pass^1` by definition, so a single-trial run reports one number,
-not three. `Pass@k` and `Pass^k` only separate for `k ≥ 2`; the gap between them
-(`Pass@4 = 0.600` vs `Pass^4 = 0.200` for the Qwen baseline) is the **reliability
-gap** — solvable by luck far more often than solvable on demand.
-
 ---
 
 ## Preference modelling
