@@ -220,24 +220,34 @@ with their evidence**. It does not rank for the model, hide tools, auto-ask, or
 auto-terminate. At runtime nothing reads rewards, rubrics, target ids or
 target/distraction annotations.
 
-### Where the gain comes from
+### Innovations
 
-The measured contribution is on the **recall** side, not the asking side. On the
-evaluation cohort the memory block is **68% smaller** than the `rewrite` baseline's
-(≈0.9k vs ≈3.0k characters per turn) while carrying a **structured, polarity-tagged
-slot list of concrete prior purchases** that the baseline's free-text memory has no
-equivalent of — e.g. an exact product-with-spec entry the model can pass straight
-into a booking call. Two observations support reading the gain as recall-driven:
-
-- subtasks whose chosen item came from the agent's own slot list were
-  **won 3 : lost 0** (small, but the only clean win/loss asymmetry measured);
-- the gains concentrate on **repeat-purchase and preference-driven choice**
-  subtasks, which is the class the memory layer is built for.
-
-The proactive-question loop, by contrast, is instrumented and **measured to be
-near-inert**: in the audited sample it committed 11 questions and resolved only
-**3 into a usable slot value (27%)**. See the engineering log for the full
-ledger, including the falsified and the unsupported mechanisms.
+- **A structured, polarity-typed fact layer instead of preference prose.** Facts
+  are scoped by `(scope, facet, dimension, category)` and carry the evidence they
+  came from. Single-valued dimensions supersede an older value; genuinely
+  multi-valued ones — avoids, allergies, brands — accumulate instead. Every fact
+  keeps a typed polarity, so a dislike can never be rendered as a preference, and
+  the two read paths both go through the same renderer.
+- **A priority-bounded Decision Card.** Budgeting is by priority, not position:
+  `MUST` and `AVOID` are the conditions the current instruction is graded on, so
+  they always render in full, and the fact budget bounds only the soft sections.
+  A constraint dropped at render time was never seen by the model and cannot be
+  recovered downstream, so no positional cut is allowed to drop one.
+- **Recall that stays bounded.** A single LLM-maintained profile summary is
+  prepended as one block of at most `summary_max_chars` characters. It is the
+  recall half of the data layer and never a substitute for the fact-level card,
+  which is what keeps the injected context from growing with the user's history.
+- **An observer-only controller.** The agent may only (a) pass through observed
+  values, (b) withhold an irreversible action, or (c) hand the question back to
+  the user. It never invents a value, never decides for the user or the model,
+  never reorders or preempts the model's message and never blocks a tool call.
+  With every switch off it is a byte-identical pass-through of the stock skeleton,
+  which is asserted by a test rather than by intent.
+- **Mechanisms that are instrumented, and claims that are pre-registered.**
+  Each mechanism exposes its own counters — questions committed, answers linked,
+  answers resolved into a slot value — and every score claim is gated by a paired
+  unit-level test fixed in advance. That is what let one mechanism be measured as
+  near-inert and reported as such instead of being assumed to work.
 
 ---
 
