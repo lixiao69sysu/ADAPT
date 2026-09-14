@@ -10,8 +10,8 @@
 #   & scripts/_arm_progress_watch.ps1 -Arm data/simulations/foo.json
 
 param(
-    [string]$Arm = 'data/simulations/adapt_dev_1t.json',
-    [string]$Baseline = 'data/simulations/stock_dev.json',
+    [string]$Arm = 'data/simulations/adapt8_1t.json',
+    [string]$Baseline = 'data/simulations/stock_avg4_8u.json',
     [int]$PollSeconds = 45
 )
 

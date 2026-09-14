@@ -54,7 +54,7 @@ E-053 额外确立一条方法论纪律：**审计得到的相关性不得直接
 | A5 | I1 | `_write_phase_directive` 指名框架候选 | 值可追溯到偏好原子，合规；但它是控制层最后的"强提示"，与"只建议"之间存在差异 | 待测量 |
 | A6 | D1 | 画像摘要默认关闭 | 所有已测量配置都显式传 `--profile-summary`，而文档里的标准命令不传 → "默认 ADAPT"少了数据层的一半（实测值 ±0.11） | 与 56 用户命令一起改默认（对齐已测量的配置，不引入新行为） |
 | A7 | I1 | `_DATE_RE` 对日期列表只取最后一天 | 「先定30和31号的」只生成 `31号`，卡片把"订到31号"变成硬约束 | **已修（E-052）** |
-| A8 | I4 | 派生约束可以无限否决 | P3 单元 2：103 次同一拒绝、78 步、35 个用户回合、终局拒绝文案重复 12 次直到步数耗尽 | **已修（E-052）** |
+| A8 | I4 | 派生约束可以无限否决 | J365414 单元 2：103 次同一拒绝、78 步、35 个用户回合、终局拒绝文案重复 12 次直到步数耗尽 | **已修（E-052）** |
 
 ### 变更协议（每次改动必须带这四项，否则不进主干）
 
@@ -97,7 +97,7 @@ E-053 额外确立一条方法论纪律：**审计得到的相关性不得直接
 
 ## 当前可复现基线（2026-09-10 更新）
 
-记录日期：2026-09-10。权威产物 `data/simulations/stock_dev.json`。
+记录日期：2026-09-10。权威产物 `data/simulations/stock_avg4_8u.json`。
 
 - VitaBench 边界：`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
 - **baseline**：stock agent（`PersonalizationAgent` + `RewriteMemory`，与本项目同一 runner、同一模型、同一 seed），官方 subtask 级指标 **Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000**；task 级 Pass 为 0（官方 `is_successful` 要求 reward == 1.0）。逐用户结果见产物文件。
@@ -137,7 +137,7 @@ ADAPT 在开发子集上的逐轮配对（1 trial，`data/simulations/ab_guard*.
 
 隔离实验（同 2 用户、同 seed、1 trial，`data/simulations/iso_*.json`；R1 = 上表 baseline 行）：
 
-| 轮次 | 配置 | P1 | P2 | 合计 |
+| 轮次 | 配置 | E057330 | E941775 | 合计 |
 | --- | --- | --- | --- | --- |
 | R1 baseline | stock + RewriteMemory | 0.308 | 0.286 | **0.2963** |
 | R2 | stock + ADAPTMemory（条目级） | 0.1538 | 0.2143 | 0.1852 |
@@ -156,21 +156,21 @@ R8 逐单元（`data/simulations/iso_R8_choice_settlement.json`，`scripts/_unit
 
 | 用户 | 得分单元 | stock 四次 | R5a（stock+我们的记忆） | R5b（E-048 前） | R8 |
 | --- | --- | --- | --- | --- | --- |
-| P1（13 单元） | 1、5 | 0.2885 | 0.3846 | 0.1538 | 0.1538 |
-| P2（14 单元） | 7、12、13、14 | 0.2857 | 0.2143 | 0.0714 | **0.2857** |
+| E057330（13 单元） | 1、5 | 0.2885 | 0.3846 | 0.1538 | 0.1538 |
+| E941775（14 单元） | 7、12、13、14 | 0.2857 | 0.2143 | 0.0714 | **0.2857** |
 
 两个用户合计（27 单元）：stock 0.2870、R5a 0.2963、R5b 0.1111、R8 0.2222、**R9 0.2222**。
-P2 上 R8 追平 stock，且拿到**没有任何 ADAPT 配置拿过的单元 13、14**（单元 14 是 stock 4/4 全对的单元），
+E941775 上 R8 追平 stock，且拿到**没有任何 ADAPT 配置拿过的单元 13、14**（单元 14 是 stock 4/4 全对的单元），
 其中单元 12/13 是 `create_instore_product_order` 成功落单——本文件此前记录的"ADAPT 从不出 venue 级写操作（0/20）"这条负债在 R8 中消失了。
 
 R5a 扩展（4 个新用户、1 trial、`iso_R5a_ext.json`，对照为同用户同 seed 的 stock 缓存）：
 
 | 用户 | stock + RewriteMemory | stock + ADAPTMemory + 画像 |
 | --- | --- | --- |
-| P3 | 0.3636 | **0.5455** |
-| P4 | 0.2727 | 0.1818 |
-| P6 | 0.3636 | 0.3636 |
-| P7 | 0.2857 | 0.2857 |
+| J365414 | 0.3636 | **0.5455** |
+| M793481 | 0.2727 | 0.1818 |
+| P722245 | 0.3636 | 0.3636 |
+| Q089190 | 0.2857 | 0.2857 |
 | 合计 | 0.3191 | **0.3404** |
 
 **结论口径**：ADAPT 目前约为 baseline 的 50–75%（单 trial，方差约 ±1 个单元）；
@@ -178,8 +178,8 @@ R5a 扩展（4 个新用户、1 trial、`iso_R5a_ext.json`，对照为同用户�
 R6a/R6b 与 R5b 完全同分（三条轨迹互不相同），**推翻"prompt 税/上下文裁剪"假设**：裁剪不是亏损来源。
 R5a 在 6 个用户上的净差为 +0.016（±1 单元的噪声量级）→ 记忆改造达到**持平**，**不声称超过 baseline**。
 
-R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 单元时按要求终止，前缀为 2/8 全对
-（同用户 `R5b` 全程 2/13）；`P2` 未开始，**因此 R7 没有用户级分数，只有前缀观测**。
+R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/13 单元时按要求终止，前缀为 2/8 全对
+（同用户 `R5b` 全程 2/13）；`E941775` 未开始，**因此 R7 没有用户级分数，只有前缀观测**。
 前缀观测到的行为变化是：模型自己提问"你想选哪款？还是就来最经典的瑞士莲牛奶巧克力100g（¥29.9）？"，
 用户回答"随便，你看着办吧"——即 E-048 之后模型确实会先问再决定，这正是 E-049 要固化的形状。
 
@@ -409,8 +409,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **已实现方案**：新增候选诱导的开放世界 `PreferenceAtom -> CandidateAttributeMap -> EvidenceAlignment`。属性键和值只从本子任务工具返回的 name/dynamic fields/tags 中生成，不枚举品牌、口味、材质、连接方式等领域维度。Decision Card 增加不直接渲染的当前指令源和本用户 active positive fact pool；搜索后只有能落到当前候选属性的原子才进入排序、shortlist 证据和 WRITE 前覆盖检查。相同属性原子跨多条记忆去重，避免重复文本虚增覆盖数。
 - **开放世界类别边界**：若某 category 在候选集中至少有一个可观察字面证据，仍执行严格过滤；若它对整批候选都不可落地，则不因上位词/具体类词面不同清空整个 shortlist。该规则基于证据集可落地性，不包含“衣服→卫衣”等领域映射。
 - **当前验证**：新增未见属性键、复合原子覆盖、跨候选集隔离、错 facet 记忆在候选证据下恢复、当前指令动态属性、上位类不清空候选，以及原子去重/可观察事实置信度继承等测试；全量 `174 passed`，VitaBench `src/vita` diff 为空。
-- **smoke 证据**：修改前的 `adapt_open_world_smoke_P7` 两个子任务均 reward=0。第一段因“衣服”与“卫衣/外套”词面不同没有暴露 CREATE；第二段 memory 已含“青岛啤酒经典”，但旧 Decision Card 因 facet 预过滤只保留地址和授权，最终创建了雪花候选。该 smoke 是修复动机，不是修复后收益证据。
-- **修复后配对 smoke**：`adapt_open_world_smoke_P7_postfix` 已出现 `preference_alignment` 事件和动态键 `tag/品牌/类型/规格`，证明错 facet 事实池已穿透到候选证据层；但该版本仍将池内事实降成等权字符串，`atom_count=41`、shortlist 前 8 项 `best_coverage=4`全并列，最终 reward 仍为 0。因此追加“只接受候选可落地 pool atom + 继承 PreferenceFact confidence + 相同属性跨文本去重”；追加修复后仅完成单测，未再消耗一次模型 smoke。
+- **smoke 证据**：修改前的 `adapt_open_world_smoke_Q089190` 两个子任务均 reward=0。第一段因“衣服”与“卫衣/外套”词面不同没有暴露 CREATE；第二段 memory 已含“青岛啤酒经典”，但旧 Decision Card 因 facet 预过滤只保留地址和授权，最终创建了雪花候选。该 smoke 是修复动机，不是修复后收益证据。
+- **修复后配对 smoke**：`adapt_open_world_smoke_Q089190_postfix` 已出现 `preference_alignment` 事件和动态键 `tag/品牌/类型/规格`，证明错 facet 事实池已穿透到候选证据层；但该版本仍将池内事实降成等权字符串，`atom_count=41`、shortlist 前 8 项 `best_coverage=4`全并列，最终 reward 仍为 0。因此追加“只接受候选可落地 pool atom + 继承 PreferenceFact confidence + 相同属性跨文本去重”；追加修复后仅完成单测，未再消耗一次模型 smoke。
 - **后续风险/下一步**：精确候选词汇只能覆盖字面落地；“秋天”与“秋季”、“不会太冷”与“保暖”这类语义关系仍依赖 policy model。需在另一个开发用户上做修复后 smoke，确认 trace 出现动态 alignment 且 WRITE 使用最大可观察偏好覆盖集，才可升级为 VERIFIED。
 - **能力抽象**：preference-to-candidate grounding / preference utilization。
 
@@ -426,7 +426,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **验证**：实际开发用户 interactions 的无 evaluator 集成检查已恢复 4 条相关事实：两条 search 为弱证据、一条 high-frequency browse 为弱证据、一条 favorite 为强证据，并全部进入 task-local preference pool。新增测试覆盖字段归一化、单弱证据只排序不锁定、favorite 锁定、多源弱证据升级和商家名后缀误匹配防护；全量 `177 passed`，VitaBench `src/vita` diff 为空。
 - **同案例配对 smoke**：在 U901652 相同子任务、agent/user/evaluator 模型、seed=42 和 max_steps=12 不变时，修复前 `adapt_open_world_smoke_U901652` reward=0.0，修复后 `adapt_interest_smoke_U901652_postfix` reward=1.0。Decision Card 新增由 favorite 支撑的可观察兴趣；搜索词自动结合任务类别与兴趣属性。`preference_alignment` 从 atom_count=3、best_score=6.8、best_candidate_count=8 变为 atom_count=4、best_score=8.6、best_decisive_score=8.6、best_candidate_count=1；最终 CREATE 从普通体考鞋切换为同时满足任务硬约束和可观察兴趣的候选。
 - **剩余问题/下一步**：修复后 trace 仍有 1 次 `candidate_choice_reask` preflight rejection，框架成功重规划且未影响 reward，但说明生成前 action routing 尚未完全代替生成后否决。当前仅为单个开发 bad case 配对改善，状态保持 PARTIAL；需在另一个用户/领域复现兴趣证据打破候选并列，才能宣称泛化。
-- **跨用户/跨领域 smoke**：`P7/sub_P7_13`（instore 服务）使用相同 seed/model/max_steps 运行后，开放世界 alignment 从该用户此前可见的采耳下单和评价行为生成 6 个可落地 atom，在 129 个搜索结果中得到唯一最高分候选（`best_coverage=3`、`best_score=2.05`、`best_decisive_score=2.05`、`best_candidate_count=1`）；最终 CREATE 选择“经典采耳套餐（30分钟）”，而不是搜索结果首位的通用按摩套餐。该证据表明兴趣 grounding 的机制能跨用户和 delivery→instore 迁移，但子任务因创建后未支付得到 reward=0，不能作为端到端泛化成功，且仍不足以将本条升级为 VERIFIED。产物：`data/simulations/adapt_interest_generalization_P7.json`、`data/traces/adapt_interest_generalization_P7.jsonl`。
+- **跨用户/跨领域 smoke**：`Q089190/sub_Q089190_13`（instore 服务）使用相同 seed/model/max_steps 运行后，开放世界 alignment 从该用户此前可见的采耳下单和评价行为生成 6 个可落地 atom，在 129 个搜索结果中得到唯一最高分候选（`best_coverage=3`、`best_score=2.05`、`best_decisive_score=2.05`、`best_candidate_count=1`）；最终 CREATE 选择“经典采耳套餐（30分钟）”，而不是搜索结果首位的通用按摩套餐。该证据表明兴趣 grounding 的机制能跨用户和 delivery→instore 迁移，但子任务因创建后未支付得到 reward=0，不能作为端到端泛化成功，且仍不足以将本条升级为 VERIFIED。产物：`data/simulations/adapt_interest_generalization_Q089190.json`、`data/traces/adapt_interest_generalization_Q089190.jsonl`。
 - **能力抽象**：preference extraction / preference-to-candidate grounding。
 
 ## E-023：提交型自然语言与支付授权边界不一致
@@ -434,7 +434,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-08-23
 - **状态**：OPEN
 - **难点**：用户说“给我团个券”时，TaskSpec 将其识别为 `action=commit`，框架成功搜索并创建团购订单；订单返回 unpaid 后，框架仍固定询问“需要我现在支付吗？”，用户模拟器随即停止，最终 reward=0。
-- **证据**：`data/traces/adapt_interest_generalization_P7.jsonl` 中 phase 依次为 `search -> wait_create_result -> ready_to_pay`，随后出现 `payment_question`；`data/simulations/adapt_interest_generalization_P7.json` 的该子任务 reward=0。分析只使用可见指令、工具状态和聚合 reward，未读取 rubric 或 target 标记。
+- **证据**：`data/traces/adapt_interest_generalization_Q089190.jsonl` 中 phase 依次为 `search -> wait_create_result -> ready_to_pay`，随后出现 `payment_question`；`data/simulations/adapt_interest_generalization_Q089190.json` 的该子任务 reward=0。分析只使用可见指令、工具状态和聚合 reward，未读取 rubric 或 target 标记。
 - **根因**：当前授权模型只有通用的 `commit -> create_authorized`，并将所有 PAY 视为必须二次确认的独立不可逆边界；它没有表达“某些明确完成式购买动词是否同时授权支付”的类型化语义。因而这不是模型漏调工具，而是状态机主动不暴露 PAY 工具。
 - **风险**：直接令所有 commit 自动授权支付会扩大不可逆操作权限，并可能损害需要二次确认的订单、预约和高金额场景；不能用单个 benchmark case 改写全局安全规则。
 - **候选方案**：引入 typed authorization scope，区分 `select/create/pay`，只从明确的完成式交易表达和领域动作语义推导 scope；同时保留金额、修改、预约等风险门禁。先用可见语句构造正反例单测，再做多个领域的 paired smoke，确认收益和误支付率。
@@ -446,11 +446,11 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-08-23
 - **状态**：PARTIAL
 - **难点**：OTA 酒店 smoke 已搜索到 11 月 13 日有库存的房型，但 WRITE preflight 连续三次报告 `date argument does not satisfy required value: 11月13日`，最终错误声明没有合规候选且未创建订单。
-- **证据**：`data/traces/adapt_interest_generalization_P1_ota.jsonl` 的 seq 20/22/24；`data/simulations/adapt_interest_generalization_P1_ota.json` reward=0。候选详情明确返回 `HotelProduct(... date=2027-11-13 ...)`。
+- **证据**：`data/traces/adapt_interest_generalization_E057330_ota.jsonl` 的 seq 20/22/24；`data/simulations/adapt_interest_generalization_E057330_ota.json` reward=0。候选详情明确返回 `HotelProduct(... date=2027-11-13 ...)`。
 - **根因**：TaskSpec 将自然语言日期统一编译为 `ConstraintTarget.ARGUMENT`。但未修改的 VitaBench `create_hotel_order` schema 只有 `hotel_id/room_id/user_id`，入住日期绑定在已观察的 `room_id` 候选上；`_validate_argument_constraint()` 因 WRITE arguments 不含 date 必然失败。这不是日期格式归一化问题。
 - **已实现方案**：日期可以由 WRITE 参数直接满足，也可以由所选候选中的显式 `date=...` 字段满足。酒店 CREATE 校验 room candidate 的 date；航班、火车和景点在存在实际 date 参数时，同时校验参数与所选 ticket/seat candidate 的日期，避免只放宽缺失参数而放过错误日期。
 - **风险**：不能简单跳过缺失 date 参数，否则会放过选错日期的 room/ticket/seat；必须保留候选来源和精确日期证据。
-- **验证**：新增酒店候选绑定正确日期、错误房型日期拒绝、显式航班日期与 seat candidate 冲突拒绝测试；全量 `180 passed`，compileall 通过，VitaBench `src/vita` diff 为空。同 seed/model 的修复后 smoke `adapt_interest_generalization_P1_ota_datefix` 不再出现任何 date preflight rejection，成功创建 `2027-11-13` 酒店订单并进入 `ready_to_pay`。reward 仍为 0，原因已分离为 E-025 偏好未落地和 E-023 支付授权，因此本条暂标 PARTIAL，等待另一个 OTA 类型回归后再升级。
+- **验证**：新增酒店候选绑定正确日期、错误房型日期拒绝、显式航班日期与 seat candidate 冲突拒绝测试；全量 `180 passed`，compileall 通过，VitaBench `src/vita` diff 为空。同 seed/model 的修复后 smoke `adapt_interest_generalization_E057330_ota_datefix` 不再出现任何 date preflight rejection，成功创建 `2027-11-13` 酒店订单并进入 `ready_to_pay`。reward 仍为 0，原因已分离为 E-025 偏好未落地和 E-023 支付授权，因此本条暂标 PARTIAL，等待另一个 OTA 类型回归后再升级。
 - **能力抽象**：candidate-to-action execution / typed constraint binding。
 
 ## E-025：结构化 OTA 历史中的场景字段未进入 facet 推断
@@ -458,12 +458,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-08-23
 - **状态**：PARTIAL
 - **难点**：同一 OTA smoke 的可见历史含酒店订单、双床房和近地铁标签；当前酒店候选也含“近地铁口”，但每次 `preference_alignment` 均为 `atom_count=0`，无法利用已存在的通用酒店偏好。
-- **证据**：`data/traces/adapt_interest_generalization_P1_ota.jsonl` seq 6/9/11/13/15/17/19。零成本投影检查确认 `SignalParser` 已生成 `双床房4晚（10.1-10.5）` 和 `近地铁`，且它们在 Decision Card 的 task-local pool 中；但对应 PreferenceFact 被标为 `scope=general/facet=general`。
+- **证据**：`data/traces/adapt_interest_generalization_E057330_ota.jsonl` seq 6/9/11/13/15/17/19。零成本投影检查确认 `SignalParser` 已生成 `双床房4晚（10.1-10.5）` 和 `近地铁`，且它们在 Decision Card 的 task-local pool 中；但对应 PreferenceFact 被标为 `scope=general/facet=general`。
 - **已确认的贡献因素**：`fact_from_signal()` 主要靠中文自由文本 marker 推断 facet，没有读取订单中可观察的结构化 `scenario=hotel`。酒店 marker 还包含“大床房”却遗漏“双床房”；当商家名称不含“酒店”时，即使 JSON 明确声明 hotel 且商品为双床房，也会落入 general/general。开放世界 pool 理论上允许错 facet 事实在候选返回后重新落地，因此该误分类本身尚不足以完全解释真实 trace 的 `atom_count=0`；修复时还需单独回放“近地铁”与候选 tag“近地铁口”的 atomization 链路，不能把两个现象草率归为一个根因。
 - **已实现方案**：优先解析可观察的结构化 `scenario`，文本 marker 只作 fallback；直接 OTA scenario 映射到对应 facet，`travel_ticket` 再由可观察交通证据细分 flight/train，delivery/instore 继承结构化 scope。候选 atomization 增加同一候选属性键内的单向具体化匹配，使较抽象的历史值可以匹配当前候选的更具体可观察值，而不引入领域同义词表。
 - **验证**：通用最小复现使用虚构商家、商品和 ID，证明未知房型名称仍由 `scenario=hotel` 得到 `scope=ota/facet=hotel`，`travel_ticket + 飞机` 得到 flight，且“近地铁”可对齐候选 tag“近地铁口”；既有跨候选集不转移测试保持通过。全量 `183 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
-- **修复 E-024 后的隔离证据**：`adapt_interest_generalization_P1_ota_datefix.jsonl` 已成功 CREATE，但 alignment 仍在全部父候选和房型候选阶段保持 `atom_count=0`，最终选择大床房；说明本问题没有被日期修复掩盖，仍需独立处理。
-- **修复后 smoke**：`adapt_interest_generalization_P1_ota_scopefix.jsonl` 中 Decision Card 恢复“双床房/近地铁”等酒店偏好，alignment 从全程 `atom_count=0` 变为 `atom_count=3`、dynamic key=`tag`、`best_score=2.0`；日期校验继续通过并成功 CREATE。最终仍选大床房且 reward=0，新的主导原因是父候选并列时固定展开的 6 家没有暴露双床子候选，见 E-026；支付停止仍见 E-023。因此本条保持 PARTIAL，不把单案例结果升级为完整泛化成功。
+- **修复 E-024 后的隔离证据**：`adapt_interest_generalization_E057330_ota_datefix.jsonl` 已成功 CREATE，但 alignment 仍在全部父候选和房型候选阶段保持 `atom_count=0`，最终选择大床房；说明本问题没有被日期修复掩盖，仍需独立处理。
+- **修复后 smoke**：`adapt_interest_generalization_E057330_ota_scopefix.jsonl` 中 Decision Card 恢复“双床房/近地铁”等酒店偏好，alignment 从全程 `atom_count=0` 变为 `atom_count=3`、dynamic key=`tag`、`best_score=2.0`；日期校验继续通过并成功 CREATE。最终仍选大床房且 reward=0，新的主导原因是父候选并列时固定展开的 6 家没有暴露双床子候选，见 E-026；支付停止仍见 E-023。因此本条保持 PARTIAL，不把单案例结果升级为完整泛化成功。
 
 ## E-026：偏好只在子候选可见时，固定父候选展开预算可能提前停止
 
@@ -471,7 +471,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：OPEN
 - **通用性判定**：`UNRESOLVED`。当前现象符合通用 hierarchical search failure，但尚未用无数据集实体的酒店/航班/景点父子候选最小复现证明，禁止直接修改展开数量或为双床房增加搜索规则。
 - **难点**：父候选只暴露酒店级 tags，房型偏好只在详情工具返回的子候选上可见。当父层偏好证据并列时，框架固定展开前 6 个父候选；若相关子候选只在未展开父项中出现，Agent 会把“尚未观察到”误当成“不可满足”。
-- **证据**：`data/traces/adapt_interest_generalization_P1_ota_scopefix.jsonl` 中父层 `best_candidate_count=8`，随后 `hierarchical_enrichment count=6`；展开后房型候选的最大覆盖仍只有酒店 tag，最终 CREATE 大床房。分析未使用隐藏 target 或 rubric。
+- **证据**：`data/traces/adapt_interest_generalization_E057330_ota_scopefix.jsonl` 中父层 `best_candidate_count=8`，随后 `hierarchical_enrichment count=6`；展开后房型候选的最大覆盖仍只有酒店 tag，最终 CREATE 大床房。分析未使用隐藏 target 或 rubric。
 - **下一步**：先构造通用父子候选测试，比较“固定 top-k 展开”和“围绕尚未落地的 decisive preference 继续有界展开”。只有在至少两个层级工具形态或一个明确 schema 不变量上成立，才实现自适应展开；预算仍需有硬上限。
 - **能力抽象**：preference-to-candidate grounding / hierarchical exploration。
 - **能力抽象**：preference extraction / preference scoping / preference-to-candidate grounding。
@@ -480,13 +480,13 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-08-23
 - **状态**：OPEN
-- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自固定 开发集用户开发集的聚合可观察轨迹，并有不含数据集实体的已知房型合成测试；未读取逐案例隐藏字段，也不据此生成用户、商品或商家规则。
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自固定 8 用户开发集的聚合可观察轨迹，并有不含数据集实体的已知房型合成测试；未读取逐案例隐藏字段，也不据此生成用户、商品或商家规则。
 - **难点**：FactStore 能保存大量历史事实，但全局事实池、任务召回和 ProactiveEngine 各自使用不同的相关性/槽位口径。结果是长期序列中事实容量接近饱和，当前任务的相关事实可能在 64 条开放世界池之前被截断，同时询问策略仍可能对已有稳定证据的语义槽重复提问。
-- **证据**：零模型审计产物 `data/analysis/memory_audit_dev.json` 与 `docs/MEMORY_AUDIT_DEV.md`。开发集用户、112 子任务中，7 个用户到达 500 条 FactStore 上限，6 个用户到达 500 条 stream 上限；109/112 个子任务发生 preference pool 截断；结构化可观察召回为 6088/7958（0.765）；43 次通用问题建议中 28 次检测到同槽强证据（0.6512）。最终 active facts 的主体是 product=1942、brand=1342，而真正的 room_type=5、transport=23、safety=1。结构化 scenario scope 检查 3519 次、错配 0 次，说明 E-025 修复有效，当前主导问题已转为容量和任务条件化，而非 scenario scope。
+- **证据**：零模型审计产物 `data/analysis/memory_audit_dev.json` 与 `docs/MEMORY_AUDIT_DEV.md`。8 用户、112 子任务中，7 个用户到达 500 条 FactStore 上限，6 个用户到达 500 条 stream 上限；109/112 个子任务发生 preference pool 截断；结构化可观察召回为 6088/7958（0.765）；43 次通用问题建议中 28 次检测到同槽强证据（0.6512）。最终 active facts 的主体是 product=1942、brand=1342，而真正的 room_type=5、transport=23、safety=1。结构化 scenario scope 检查 3519 次、错配 0 次，说明 E-025 修复有效，当前主导问题已转为容量和任务条件化，而非 scenario scope。
 - **审计边界**：审计只读取 `task.id/subtask_id/domain/instruction/interactions`，模型和 evaluator 调用均为 0，不读取 `evaluation_criteria/user_intention/skill_tested/reward/target_product_ids/target-distraction`，只输出聚合结果。召回率是结构性可见性指标，不是 benchmark reward；“同槽冲突”也只说明应先解析已有证据，不代表所有确认问题都错误。
 - **根因**：`build_decision_card()` 先对全部 active positive facts 按 confidence/time 全局排序，再截断到 64；高频 product/brand 事实因此占据大部分容量。`ProactiveEngine` 读取格式化文本并使用独立关键词检测，不消费 TaskSpec 与 PreferenceFact 的已解析槽状态。FactStore 的单值维度集合与 DriftDetector 的 predicate 白名单也不一致，导致 31 个单值槽仍有多个 active 值，最终仅 1 条事实被 superseded。
 - **已实现方案**：新增 `agent.memory_audit`，可用固定 hash cohort 重放可观察历史，聚合检查 scope、任务相关召回、pool 截断、单值槽冲突、近重复事实、问题维度与已知槽冲突。新增共享 typed-slot resolver，由 Decision Card、ProactiveEngine 和 TaskRuntime 使用同一强证据状态；只有 task-relevant、decision-eligible 且语义值唯一的偏好选择槽可以从历史解析，弱搜索/浏览和多值冲突不能抑制询问。日期、路线、数量、地址和预约时间等任务实例槽禁止由历史自动补齐；当前会话答案不会被历史覆盖。
-- **聚合验证**：对照产物 `data/analysis/memory_audit_dev_comparison.json`。同一 开发集用户、112 子任务中，建议问题 43→37，已有稳定同槽证据的重复问题 28→0，结构召回保持 0.765；当前完整结果见 `data/analysis/memory_audit_dev.json`。虚构酒店正反例覆盖强房型事实直接解 gap、弱浏览不解 gap、双床/大床冲突仍询问；全量 `188 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
+- **聚合验证**：对照产物 `data/analysis/memory_audit_dev_comparison.json`。同一 8 用户、112 子任务中，建议问题 43→37，已有稳定同槽证据的重复问题 28→0，结构召回保持 0.765；当前完整结果见 `data/analysis/memory_audit_dev.json`。虚构酒店正反例覆盖强房型事实直接解 gap、弱浏览不解 gap、双床/大床冲突仍询问；全量 `188 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
 - **尝试过但已撤回的方案**：曾将 64 条 pool 改为“48 task-relevant + 16 fallback”和“56 + 8”。结构召回分别降至 0.7349 和 0.7315，原因是当前词面 TaskSpec domain/facet 与可见 subtask domain 仍可能错位，提前分层会挤掉分类错误但可在候选阶段落地的开放世界事实。两版 runtime 改动和对应强制测试均已撤回，不以单 facet 改善掩盖整体回退。
 - **后续处理**：固定 pool 分层保持撤回；候选返回后的二阶段 memory retrieval 已由 E-028 实现。product/brand 历史仍需按实体证据合并并设置分层容量；drift 仍需直接使用 `(scope, facet, dimension, category)`，仅由同槽明确新证据确认 supersede。
 - **反例门禁**：弱浏览/单次搜索不能阻止必要询问；已有偏好与当前明确指令冲突时仍以当前指令为准；不同 facet 的 room type/transport/brand 不能互相覆盖；负向安全集合不能因容量压缩丢失；开放世界未知字段仍必须能在候选 schema 出现后参与 grounding。
@@ -501,7 +501,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **已实现方案**：新增 candidate-induced second-stage retrieval。每次 SEARCH/READ 返回后，从当前 CandidateLedger 的非技术字段构造本候选集局部词汇，回查完整 active PreferenceFact；正向事实按可落地字段数、匹配具体度、置信度和时间排序，最多 64 条并替换 pre-search pool；负向事实若直接落到候选字段，则补充为 candidate exclusion。随后在同一轮重新计算 alignment、shortlist 和 execution readiness。单次弱证据保持非 decisive，同一值的多种弱证据继续合并 evidence types 后才升级。
 - **正反例验证**：虚构测试用 100 条高置信 OTA 历史挤掉一个低置信且错 facet 的零售事实；候选返回精确 name 后该事实被恢复、全部 OTA 噪声被排除，并产生唯一 evidence leader。另一测试证明错 facet 的“近地铁”可匹配更具体 tag“近地铁口”，候选上的负向“临街嘈杂”会被过滤；第三个测试证明 search + high_freq_browse 才能合并为 decisive。所有实体和 ID 均为虚构。
 - **性能边界**：合成上限检查使用 500 facts、128 ledger candidates，二阶段检索耗时约 14.06ms，返回 64 个 bounded positive facts；不产生模型调用。
-- **真实 smoke**：`data/traces/adapt_candidate_retrieval_P7.jsonl` 记录一次 `candidate_memory_retrieval`：137 candidates 中仅 9 个正向历史值落地；随后 alignment 为 6 atoms、dynamic keys=`name/tag`、best coverage=3、best score=4.6、唯一最高候选。Agent 一次搜索后 CREATE 经典采耳套餐，无重复搜索、问题或 preflight rejection。`data/simulations/adapt_candidate_retrieval_P7.json` reward 仍为 0，轨迹明确停在 CREATE 后的支付授权询问，因此该结果只证明 retrieval/grounding 接线和有界筛选，不声称端到端收益。
+- **真实 smoke**：`data/traces/adapt_candidate_retrieval_Q089190.jsonl` 记录一次 `candidate_memory_retrieval`：137 candidates 中仅 9 个正向历史值落地；随后 alignment 为 6 atoms、dynamic keys=`name/tag`、best coverage=3、best score=4.6、唯一最高候选。Agent 一次搜索后 CREATE 经典采耳套餐，无重复搜索、问题或 preflight rejection。`data/simulations/adapt_candidate_retrieval_Q089190.json` reward 仍为 0，轨迹明确停在 CREATE 后的支付授权询问，因此该结果只证明 retrieval/grounding 接线和有界筛选，不声称端到端收益。
 - **验证**：全量 `191 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
 - **适用边界**：只有候选实际暴露的字段才能恢复事实；语义同义但无词面包含关系仍交给模型，不能伪造词典。已被 FactStore 500 条上限提前 prune 的事实无法由本层恢复。父候选不暴露子候选属性时仍属于 E-026 层级探索问题。
 - **下一步**：在另一工具形态上做真实 smoke，确认 candidate retrieval 不会因通用短属性造成错误唯一 leader；随后再处理 product/brand 证据压缩，降低事实进入 500 条上限前的污染。
@@ -511,14 +511,14 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-08-23
 - **状态**：PARTIAL
-- **通用性判定**：`GENERAL-EMPIRICAL`。固定 开发集用户开发集只做零模型反事实重放；策略按事实字段角色、证据类型和动态 `(scope, facet, dimension, category)` 桶定义，不包含用户、商品、品牌或商家特例。
-- **难点**：当前 PreferenceFact、product/brand entity evidence 和弱行为证据共用同一个 500 条 FactStore。开发集中 7/开发集用户到达上限，当前 prune 虽保住了已知 protected facts，但丢失了部分之后本可由候选字段恢复的实体证据。
+- **通用性判定**：`GENERAL-EMPIRICAL`。固定 8 用户开发集只做零模型反事实重放；策略按事实字段角色、证据类型和动态 `(scope, facet, dimension, category)` 桶定义，不包含用户、商品、品牌或商家特例。
+- **难点**：当前 PreferenceFact、product/brand entity evidence 和弱行为证据共用同一个 500 条 FactStore。开发集中 7/8 用户到达上限，当前 prune 虽保住了已知 protected facts，但丢失了部分之后本可由候选字段恢复的实体证据。
 - **审计方法**：新增 `agent.compaction_audit`，从同一份未截断可观察事实宇宙比较三种策略：当前混合 500、保护 PreferenceStore + 精确规范化 EntityEvidenceIndex、以及在此基础上对实体索引按动态 facet/category 桶 round-robin 公平保留。结构化历史中的实体字段被重放为候选词汇，并复用 E-028 grounding 计算召回。只读取 `task.id/subtask_id/domain/instruction/interactions`，模型/evaluator 调用为 0，不输出逐用户结果。
-- **结果**：产物 `data/analysis/memory_compaction_audit_dev.json` 和 `docs/MEMORY_COMPACTION_AUDIT_DEV.md`。未截断宇宙含 4413 个 active facts、3977 个精确规范化实体项。当前策略 PreferenceStore 饱和用户为绝大多数，候选可落地召回 3738/4160=0.8986；无界聚合策略下无饱和用户、召回 1.0、单用户最大 live entries=608；facet 公平且 entity cap=500 的策略下无饱和用户、召回 4034/4160=0.9697、单用户最大 live entries=559。三种策略的 safety、explicit、conditional 保留率均为 1.0；known-slot resolution 均为 89，重复已知槽询问均为 0。
+- **结果**：产物 `data/analysis/memory_compaction_audit_dev.json` 和 `docs/MEMORY_COMPACTION_AUDIT_DEV.md`。未截断宇宙含 4413 个 active facts、3977 个精确规范化实体项。当前策略 PreferenceStore 饱和用户为 7/8，候选可落地召回 3738/4160=0.8986；无界聚合策略为 0/8、召回 1.0、单用户最大 live entries=608；facet 公平且 entity cap=500 的策略为 0/8、召回 4034/4160=0.9697、单用户最大 live entries=559。三种策略的 safety、explicit、conditional 保留率均为 1.0；known-slot resolution 均为 89，重复已知槽询问均为 0。
 - **选择**：推荐 `protected_aggregate_fair`。它满足全部预设门槛，同时相对当前策略把可落地事实召回提高约 7.1 个百分点；相比无界策略牺牲约 3.0 个百分点代理召回，换取每用户实体索引硬上限和较低的最大 live records。所有未知/未来非实体 dimension 继续进入 PreferenceStore，不会因 schema 未知被静默删除。
 - **合并边界**：实体只在相同 typed slot 内做去标点/大小写后的精确规范化合并；不使用包含关系或 fuzzy resolution。公平保留只在实际观察到的桶间 water-fill，桶内再按 decision eligibility、证据类型多样性、source strength、confidence、recency 排序。
 - **runtime 接入**：`ADAPTMemory` 默认启用双层存储；非实体事实进入受保护的 `PreferenceStore`，product/brand/searches/like 按精确 typed slot 进入每用户上限 500 的 `EntityEvidenceIndex`。`CombinedFactView` 保持原有 Decision Card、typed slot 和 E-028 候选二阶检索接口；runner 默认开启，并保留 `--no-tiered-compaction` 回退开关。
-- **runtime audit**：开发集用户/112 子任务重放中，PreferenceStore 到达 500 上限的用户从绝大多数降为 0；实体索引到达独立上限的为少数。safety/explicit/conditional 保留率继续为 100%，known-slot 重复询问为 0。反事实 candidate-groundable recall 从 0.8986 提高到 0.9697。需要区分的是，搜索前结构召回从旧 audit 的约 0.765 小幅降至 0.7612；这不是候选返回后的可落地召回，也不被隐藏。
+- **runtime audit**：8 用户/112 子任务重放中，PreferenceStore 到达 500 上限的用户从 7/8 降为 0/8；实体索引到达独立上限为 3/8。safety/explicit/conditional 保留率继续为 100%，known-slot 重复询问为 0。反事实 candidate-groundable recall 从 0.8986 提高到 0.9697。需要区分的是，搜索前结构召回从旧 audit 的约 0.765 小幅降至 0.7612；这不是候选返回后的可落地召回，也不被隐藏。
 - **真实 smoke**：`data/traces/adapt_tiered_compaction_U901652.jsonl` 在 delivery/retail 工具形态下仅搜索一次；143 个候选诱导恢复 5 个正向历史值，alignment 得到唯一最高候选，随后 CREATE 成功并进入支付授权询问；无重复搜索、工具错误或 preflight rejection，`data/simulations/adapt_tiered_compaction_U901652.json` reward=1.0。该个案只证明非 instore runtime 接线正常，不单独宣称开发集收益。
 - **适用边界**：candidate-groundable recall 是基于历史可观察实体字段的零模型代理，不代表对未见 catalog 同义词的真实召回，也不等于 benchmark reward。独立 entity cap 仍会裁剪高频实体历史，但不再挤占安全、显式和条件偏好的容量。
 - **验证**：新增单测覆盖 520 实体硬上限、小 hotel facet 不被大 retail 桶挤光、feature flag 回退和多弱证据精确聚合。全量 `198 passed`，compileall 通过，VitaBench `src/vita` diff 为空。
@@ -529,8 +529,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-10
 - **状态**：VERIFIED
-- **难点**：开发集用户 × 4 trial 的 dev 基线跑完后，自写工具 `agent/trace_metrics.py` 报出 `pass_at_4 = 0`，而官方论文表格中同类任务存在非零 Pass 值，容易被误读为"agent 完全没通过任何任务"。
-- **证据**：`data/simulations/stock_dev.json`（该 checkpoint 的全部模拟均可评分）。`trace_metrics._pass_at_four` 按**用户级**分组，仅当 4 次 trial 的 reward 全部 ≥ 1.0 时判定通过；该数据单次 trial 最高 0.4545，从未达到 1.0，故通过数恒为 0。
+- **难点**：8 用户 × 4 trial 的 dev 基线跑完后，自写工具 `agent/trace_metrics.py` 报出 `pass_at_4 = 0`，而官方论文表格中同类任务存在非零 Pass 值，容易被误读为"agent 完全没通过任何任务"。
+- **证据**：`data/simulations/stock_avg4_8u.json`（32 次模拟全部可评分）。`trace_metrics._pass_at_four` 按**用户级**分组，仅当 4 次 trial 的 reward 全部 ≥ 1.0 时判定通过；该数据单次 trial 最高 0.4545，从未达到 1.0，故通过数恒为 0。
 - **根因**：口径与粒度双重不一致。(1) 粒度：官方 personalization 指标以 `(task_id, subtask_index)` 为评估单元，`trace_metrics` 以整个用户为单元；(2) 实现：官方 `vita.metrics.agent_metrics` 使用无偏估计 `pass@k = 1 - C(n-c,k)/C(n,k)` 与 `pass^k = C(c,k)/C(n,k)`，`trace_metrics` 用简化布尔。
 - **有效方案**：对外汇报一律走官方入口 `vita.metrics.agent_metrics.compute_metrics(results)`（构造原生 `Results` 对象），并明确标注 task 级 / subtask 级；`trace_metrics` 降级为开发期粗筛工具，不用于最终指标。
 - **验证**：同一次运行的两条独立路径数值一致——直接调用 `_compute_subtask_pass_metrics` 与官方完整 `compute_metrics` 均得 subtask 级 Avg@4 = 0.2925、Pass@4 = 0.4000、Pass^4 = 0.2000（100 个单元）；task 级 Pass 为 0。
@@ -541,13 +541,13 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-10
 - **状态**：OPEN
-- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自固定 开发集用户的聚合可观察轨迹，并设 20 个"4/4 全对"单元作对照组；只使用工具调用名、工具返回状态、错误标记、对话长度与终止原因等可观察事件，不读取 rubric、不把 evaluator reward 作为学习信号，也不使用 target/distraction 标注。
-- **难点**：stock 在同配置下的 开发集用户 Avg@4 仅 0.2925；100 个子任务单元中 60 个"4 次全错"、仅 20 个"4 次全对"，失败呈**系统性**（不是采样抖动）。因此提升必须靠确定性控制，而不是靠重采样。
-- **证据**：`data/simulations/stock_dev.json` 与 `scripts/_t2_cluster.py`。永错组 vs 全对组（每 trial 均值）：搜索 4.99 vs 1.80（2.8×）、写操作 0.87 vs 1.24（−30%）、对话长度 19.6 vs 15.0。按域：delivery 58 单元（29 永错 / 18 全对）、instore 26（19 / 1）、ota 16（12 / 1）；搜索:写 比为 delivery 3.5、instore 10.1、ota 6.9。
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自固定 8 用户的聚合可观察轨迹，并设 20 个"4/4 全对"单元作对照组；只使用工具调用名、工具返回状态、错误标记、对话长度与终止原因等可观察事件，不读取 rubric、不把 evaluator reward 作为学习信号，也不使用 target/distraction 标注。
+- **难点**：stock 在同配置下的 8 用户 Avg@4 仅 0.2925；100 个子任务单元中 60 个"4 次全错"、仅 20 个"4 次全对"，失败呈**系统性**（不是采样抖动）。因此提升必须靠确定性控制，而不是靠重采样。
+- **证据**：`data/simulations/stock_avg4_8u.json` 与 `scripts/_t2_cluster.py`。永错组 vs 全对组（每 trial 均值）：搜索 4.99 vs 1.80（2.8×）、写操作 0.87 vs 1.24（−30%）、对话长度 19.6 vs 15.0。按域：delivery 58 单元（29 永错 / 18 全对）、instore 26（19 / 1）、ota 16（12 / 1）；搜索:写 比为 delivery 3.5、instore 10.1、ota 6.9。
 - **已排除**：不是工具报错（永错 0.02 vs 全对 0.00）；**不是"下单未付款"**——全对组的 unpaid 比例（0.562）反而高于永错组（0.342），说明子任务级的"未付"不必然失分；提问次数亦无判别力（永错 2.35 vs 全对 2.77，方向相反），因此"问太多"不能作为本批的主因结论。
 - **根因假设**：在多步/层级工具形态（instore 服务预约、ota 酒店/机票/景点）下，缺少"候选已足够即应落地下单"的确定性迁移控制，模型倾向继续搜索；长对话又强化继续搜索的锚定（与 E-007、E-008 同类）。
 - **候选方案**：(1) 生成前的确定性 next-action 路由：候选完备即禁止继续搜索，授权已给即禁止再问；(2) 候选级搜索预算与父→子候选的有界展开（呼应 E-026）；(3) 支付闭环降级为次级项，并在**用户级**（而非子任务级）单独验证其影响。
-- **有效性要求**：先在 instore/ota 上做 1–2 用户 smoke，再跑同 开发集用户 × 4 trial 的 paired 对比；要求搜索:写 比下降、永错单元数下降、官方 Avg@4 提升，且不得为具体用户、子任务或候选写规则。
+- **有效性要求**：先在 instore/ota 上做 1–2 用户 smoke，再跑同 8 用户 × 4 trial 的 paired 对比；要求搜索:写 比下降、永错单元数下降、官方 Avg@4 提升，且不得为具体用户、子任务或候选写规则。
 - **能力抽象**：bounded exploration / action routing / preference-to-action grounding。
 
 ---
@@ -644,12 +644,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 ## 本轮开发 smoke 记录（2026-09-10，4 个 instore/ota 子任务）
 
-固定同样 4 个子任务（P2 酒店 + 采摘园推荐、P6 动车票 + 团购券），
+固定同样 4 个子任务（E941775 酒店 + 采摘园推荐、P722245 动车票 + 团购券），
 逐轮加入确定性控制后观察**可观察行为**的变化。reward 在最后一轮仍为 0，但
 失分点已从流程转移到"选哪个候选 / 有没有把选择讲出来"；下表的意义在于把
 **流程性失败**逐条消掉。
 
-| 轮次 | 加入的机制 | P2 酒店 | P2 采摘园推荐 | P6 动车票 | P6 团购券 |
+| 轮次 | 加入的机制 | E941775 酒店 | E941775 采摘园推荐 | P722245 动车票 | P722245 团购券 |
 | --- | --- | --- | --- | --- | --- |
 | fix2 | E-032/E-033 | 建单成功、可评分 | 推荐后认可 → 3 次提问被拒 → 终局拒绝 | 编译成推荐 + 虚假完成语，无写操作 | 用记忆里的 product_id → 3 次拒绝 → 终局拒绝 |
 | fix4 | E-034/E-035/E-036 | 建单成功，但 evaluator 抛错 → `evaluation_failed` | 允许一次确认提问，第二轮仍终局拒绝 | **真实 `create_train_order` 落库** | **`entity_gap_search` 补商品搜索 → 用真实 product_id 下单成功** |
@@ -738,16 +738,16 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-10
 - **状态**：OPEN（修复已实现并单测通过，A/B 验证进行中）
-- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自同 开发集用户、同模型、同端点下的**配对轨迹对比**（ADAPT 1 trial vs stock 4 trial 均值），只用可观察的工具调用/消息/终止原因，不读 rubric、不用 reward 作学习信号。
-- **难点**：本轮修复了 E-032…E-041 十类"必然失败"之后，ADAPT 在已完成的 3 个用户上仍显著落后：**27 个单元 ADAPT 0.1111 vs stock 0.2870（同单元）**，形态是"stock 偶尔做对、ADAPT 从不做对"（LOST 7 : GAINED 1）。用户级：P1 1/13（stock 3.75/13）、P2 2/14（stock 4/14）、P3 1/3 起（stock 4.5/11）。
-- **证据**（`data/simulations/adapt_avg1_dev.json` vs `stock_dev.json`，同一批用户）：
+- **通用性判定**：`GENERAL-EMPIRICAL`。结论来自同 8 用户、同模型、同端点下的**配对轨迹对比**（ADAPT 1 trial vs stock 4 trial 均值），只用可观察的工具调用/消息/终止原因，不读 rubric、不用 reward 作学习信号。
+- **难点**：本轮修复了 E-032…E-041 十类"必然失败"之后，ADAPT 在已完成的 3 个用户上仍显著落后：**27 个单元 ADAPT 0.1111 vs stock 0.2870（同单元）**，形态是"stock 偶尔做对、ADAPT 从不做对"（LOST 7 : GAINED 1）。用户级：E057330 1/13（stock 3.75/13）、E941775 2/14（stock 4/14）、J365414 1/3 起（stock 4.5/11）。
+- **证据**（`data/simulations/adapt_avg1_8u.json` vs `stock_avg4_8u.json`，同一批用户）：
   1. **重复下单**：某单元把同一订单创建 **14 次**；框架 `payment_question` 事件 58 次/27 单元。机制：CREATE 成功 → `observe_tool_result` 重置 `payment_question_sent` → 框架每轮再问支付 → 用户回一句话 → `observe_user` 回落到 SEARCH → **E-033 的提升条件再次成立** → READY_TO_CREATE → 模型再 CREATE。E-033 缺少"写入成功后不得再次提升"的不变量。
   2. **记忆查询能力被移除**：stock 在同批单元调用 `query_preference_memory` **30 次**（常作为第一步，用来生成搜索词与推荐理由），ADAPT **0 次**——`ToolRegistry` 把 MEMORY 角色工具视为框架内部而不暴露。
   3. **探索被压死**：ADAPT 每单元搜索 **1.00 次**（最大 2），stock **3.11 次**（最大 50）；`search_budget_rejection` 的"存在合规候选即停"在第一次搜索后就阻断后续关键词族探索。
   4. **"先说话再动手"被短路**：stock 在 108 个单元中有 **9 个零写操作拿满分**（推荐+理由本身就满足评测）；ADAPT 在 `action=commit` 任务里直接搜索→下单，偏好推理从未出现在对话中，而框架的"推荐定稿"只在 `action=recommend` 时触发且仅列出店名。
 - **根因**：控制层的设计取向是"框架替模型决策"（充分性停搜、框架推荐定稿、按阶段裁剪工具、隐藏记忆工具），在 27B 模型上净负：它用规则替代了模型本来就具备、且在 stock 下被证明有效的能力（按需查记忆、多关键词族探索、先解释后执行）。
 - **有效方案（"护栏而非治理"）**：(1) `observe_user`/`observe_candidates` 的提升条件加入 `not write_succeeded`；(2) `observe_tool_result` 不再重置支付追问标记，且 `_preflight` 用 `attempt_signature` 拒绝**完全相同的已成功写入**；(3) 恢复 `query_preference_memory`/`read_preference_memory` 为可被模型调用的 READ 工具（ADAPTMemory 新增对应 `@is_tool`）；(4) 探索额度从"存在候选即停"改为"族内已用 >3 次不同查询才停"，族预算 2→3、族上限 4→6；(5) 框架推荐降级为兜底（模型在 SELECT 先有 2 轮机会），并在推荐里附上命中的偏好证据；READY_TO_CREATE 指令要求"先用一句话说明选了什么、满足了哪条偏好，再下单"。
-- **验证**：`agent/tests/test_no_self_inflicted_loops.py` 7 个单测（不再提升、支付仅一次、重复写入被拒、不同写入仍允许、记忆读工具可见而记忆写工具仍内部、记忆查询返回有界读取、推荐兜底延后）；全量 327 单测通过。A/B（P1 1 trial，对照其上一版 1/13 与 stock 3.75/13）进行中。
+- **验证**：`agent/tests/test_no_self_inflicted_loops.py` 7 个单测（不再提升、支付仅一次、重复写入被拒、不同写入仍允许、记忆读工具可见而记忆写工具仍内部、记忆查询返回有界读取、推荐兜底延后）；全量 327 单测通过。A/B（E057330 1 trial，对照其上一版 1/13 与 stock 3.75/13）进行中。
 - **适用边界**：这些改动只撤销"框架替代模型"的部分，保留全部写前校验、实体义务、日期算术与完整性护栏；探索额度仍受族预算约束，不会回到 E-031 的搜索 thrash。
 - **后续风险/下一步**：A/B 若仍低于 stock，则按"护栏化"继续下探（例如把阶段裁剪改为全工具暴露+写前校验），并按 P1/P2 的顺序做带开关的消融。
 - **能力抽象**：preference utilization / execution / long-horizon consistency。
@@ -760,7 +760,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：VERIFIED
 - **通用性判定**：`GENERAL-INVARIANT`。按键的语义（地点 vs 街道）取值，不涉及具体用户或任务。
 - **难点**：配送单要么被**误判为地址不合规**，要么被**填成一个无法地理编码的城市名**，两种都由同一个取值错误引起，最终都走到终局拒绝。
-- **证据**：`data/simulations/ab_guard2_P1.log` 中同一个水果拼盘子任务连续两次 `Error: Longitude and latitude not found for address 河南省郑州市`（我新加的地址补全把城市名填了进去）；同轮 preflight 拒绝里 9 次与地址相关（`address does not resolve to the user's home address`、`address argument does not satisfy required value`）。
+- **证据**：`data/simulations/ab_guard2_E057330.log` 中同一个水果拼盘子任务连续两次 `Error: Longitude and latitude not found for address 河南省郑州市`（我新加的地址补全把城市名填了进去）；同轮 preflight 拒绝里 9 次与地址相关（`address does not resolve to the user's home address`、`address argument does not satisfy required value`）。
 - **根因**：`_profile_address` 以标记 `常住` 匹配键，而档案里 `常住地`（城市）排在 `常住住址`（街道）之前，于是：
   (1) 校验器把"模型的完整街道地址"与"城市"比较，互不包含 → 误拒正确地址；
   (2) 地址补全用同一个函数取值 → 把正确地址覆盖成城市 → 环境无法地理编码。
@@ -776,7 +776,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：VERIFIED
 - **通用性判定**：`GENERAL-MECHANICAL`。只依赖句式（把物品放在避让词之前），与用户、任务、品类无关。
 - **难点**：对一位**已确诊食物过敏**的用户，ADAPT 推荐并下单了含该过敏原的商品；同一单元 stock agent 明确避开并拿到分数。
-- **证据**：该用户的可观察行为记录里有原话——"活了快 30 年，才知道自己哈密瓜过敏…我们科室医生让我去查了过敏源，果然中招了"；`data/simulations/ab_guard3_P1.log` 中 ADAPT 的卡片显示 `AVOID: 烧烤`（无哈密瓜）并下单含哈密瓜拼盘；修复后 `data/simulations/ab_guard4.log` 的卡片显示 `AVOID: 哈密瓜`，模型主动说明"不含哈密瓜"，并与 stock 选中**同一家店**。
+- **证据**：该用户的可观察行为记录里有原话——"活了快 30 年，才知道自己哈密瓜过敏…我们科室医生让我去查了过敏源，果然中招了"；`data/simulations/ab_guard3_E057330.log` 中 ADAPT 的卡片显示 `AVOID: 烧烤`（无哈密瓜）并下单含哈密瓜拼盘；修复后 `data/simulations/ab_guard4.log` 的卡片显示 `AVOID: 哈密瓜`，模型主动说明"不含哈密瓜"，并与 stock 选中**同一家店**。
 - **根因**：避让模式只匹配"不吃X/忌口X"这类**前置**说法；中文更常说"**X过敏**"。而"过敏"被当成前置标记时，会把**它后面的整句话**当成避让对象（抓出"，我就说为什么每次吃哈密瓜"这类垃圾），真对象反而丢失。
 - **有效方案**：新增后置模式（`X过敏`/`X忌口`/`X不能吃`/`X吃不了`/`X不碰`），并加一个跨度清洗器：剥掉前导虚词（`才知道自己哈密瓜过敏` → `哈密瓜`），对含标点或虚词的整句跨度直接丢弃（`…让我去查过敏源` → 不产出）。既有维度映射保留：过敏 → `safety`（硬约束，真排除候选），普通不吃 → `avoid`。
 - **验证**：`agent/tests/test_avoidance_signals.py` 9 个单测（真实原句、四种常见句式、三条负例不误报、`safety` 维度、卡片上出现硬 `EXCLUDES` 约束并改变候选排序）；全量 341 单测通过。
@@ -823,7 +823,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **验证**：`agent/tests/test_isolation_rig.py` 3 个单测（默认裁剪 vs 全暴露、框架内部记忆写工具始终隐藏、`--no-adapt-prompt` 时 prompt 与 stock 完全一致）；全量 344 单测通过。
 - **隔离结果（同 2 用户、同 seed、1 trial，`data/simulations/iso_*.json`）**：
 
-  | 变体 | prompt | 门禁 | 记忆 | P1 | P2 | 合计 |
+  | 变体 | prompt | 门禁 | 记忆 | E057330 | E941775 | 合计 |
   | --- | --- | --- | --- | --- | --- | --- |
   | baseline | stock | 无 | RewriteMemory | 0.308 | 0.286 | **0.296** |
   | R2 | stock | 无 | ADAPTMemory | 0.154 | 0.214 | **0.185** |
@@ -882,7 +882,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 5 个失败单元的路径对比 + 5 处独立代码路径的语义一致性审查，不读 rubric。
 - **难点**：用户说"帮我买X"，`TaskSpec.compile` 会把 `action=commit` 同时写成 `create_authorized=True` 和 `candidate_choice_authorized=True`；于是只要搜索返回任何候选，`observe_candidates()` 立刻把 phase 推到 `READY_TO_CREATE`——该阶段**只暴露 CREATE 工具**，并附上"立刻调用 CREATE、不要提问、不要搜索"的控制器指令。模型因此**没有合法动作去问"要哪种口味/送到哪"**，只能凭记忆猜一个候选下单。而 action evaluator 用的是 `min(trajectory, action)`，选错实体就是 0 分。
 - **证据**：
-  1. 路径对比：stock 赢的单元全部是"先问后做"，ADAPT 输的单元是"直接做"或"框架替模型做"。用 `scripts/_unit_dialogue.py` 读 R7 前缀（P1 前 8 个单元）可直接看到：单元 2 搜完鲜花后**没有问**，直接选"粉色康乃馨+百合"下单；单元 3/4/7/8 同样是"搜完立刻选一个下单"；同一前缀里唯一得分的单元 5 也是同一形状（说明这不是"必输"，而是**把可用信息丢掉后赌一把**）；
+  1. 路径对比：stock 赢的单元全部是"先问后做"，ADAPT 输的单元是"直接做"或"框架替模型做"。用 `scripts/_unit_dialogue.py` 读 R7 前缀（E057330 前 8 个单元）可直接看到：单元 2 搜完鲜花后**没有问**，直接选"粉色康乃馨+百合"下单；单元 3/4/7/8 同样是"搜完立刻选一个下单"；同一前缀里唯一得分的单元 5 也是同一形状（说明这不是"必输"，而是**把可用信息丢掉后赌一把**）；
   2. 单元 8 的失败链更直接：模型下单 → 框架拒绝并发出终局文本"现有候选无法满足硬约束，我没有执行下单。" → **之后**用户才回答"随便，你看着办吧"。框架在用户仍愿意接受服务时单方面终止了子任务；
   3. 旧语义被 4 处独立代码写死：`state.observe_candidates`、`state.observe_user`、`question_gate`（`candidate_choice_authorized` 直接否决候选问题）、`_write_phase_directive`（框架指定候选人并要求立即落单）；
   4. 反向激励：`_finalize_visible_trajectory` 把"有可执行候选但没下单"记为 `missed_write`，编译成 `force_decision_after_candidates` 策略，下一子任务里**重新武装**同一行为；
@@ -898,11 +898,11 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   6. **硬否决 → 控制**：学习到的 `require_max_preference_coverage` 不再否决写入，改为在写阶段**指名最大证据覆盖候选**；`validate_ranked_choice` 只保留"用户显式选择"这一条硬否决，排名位置越界只记 `shortlist_position_diverged`。
 - **验证**：`agent/tests/test_choice_settlement.py`（14 个新单测：六个 settle 来源、门禁对称性、有界逃逸、显式选择仍硬锁、位置越界不再否决、`missed_write` 只在 settle 后学习、低覆盖写入不再被否决）；全量 **365 单测通过**；`python -m compileall -q agent` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
 - **配对测量（R8 = E-048 + E-049 组合，`data/simulations/iso_R8_choice_settlement.json`）**：
-  - `P1` 0.1538（2/13），与 R5b 同分同单元 → 该用户上没有变化；
-  - `P2` **0.0714 → 0.2857（1/14 → 4/14）**，追平 stock，并拿到单元 13、14（此前无任何 ADAPT 配置拿过）；
+  - `E057330` 0.1538（2/13），与 R5b 同分同单元 → 该用户上没有变化；
+  - `E941775` **0.0714 → 0.2857（1/14 → 4/14）**，追平 stock，并拿到单元 13、14（此前无任何 ADAPT 配置拿过）；
   - 单元 12/13 由 `create_instore_product_order` 落单成功——此前记录的"venue 级写操作 0/20"负债消失；
   - 单元 13、14 都出现 `preference_leader_diverged` 且**得分为 1.0**，即"领先者降级为建议"确实没有阻止正确选择；
-  - 但 R8 仍有三处 `question gate: a question is already waiting for the user's answer` 造成的零工具调用死路（见 E-050），其中 `P2` 单元 2 是 stock 4/4 的单元，说明 E-049 的收益被 E-050 掩盖了一部分；
+  - 但 R8 仍有三处 `question gate: a question is already waiting for the user's answer` 造成的零工具调用死路（见 E-050），其中 `E941775` 单元 2 是 stock 4/4 的单元，说明 E-049 的收益被 E-050 掩盖了一部分；
   - **口径**：R8 相对 R5b 同时包含 E-048 与 E-049（及各自的伴随改动），不是 E-049 单项的贡献。
 - **适用边界**：只对 `create_authorized` 的成交类子任务生效；推荐类任务（无写授权）行为不变，问题门禁不介入。settle 的每一个来源都必须来自可观察证据，不含任何 user/task/candidate 特例。
 - **后续风险/下一步**：多一次澄清往返可能消耗 `max_steps`（长序列末尾尤其），需要用 R8 的单元轨迹确认；若某单元因"多问一轮"而超步，需要把问题预算进一步下调。
@@ -915,7 +915,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-12
 - **状态**：OPEN（机制已由单元轨迹与单测锁定；配对测量 R9 待跑）
 - **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 R8 逐单元 debug sidecar 与对话轨迹，可零模型复现。
-- **难点**：R8 里 `P1` 单元 6（`instore/wellness`「又得去理发店了，帮我买个套餐。」）与 `P2` 单元 2（`ota`「想订张机票去旅游，你有什么好地方推荐吗？」，**stock 4/4 全对**）都是：一次工具调用都没有（单元 6 只有一次 `query_preference_memory`），直接输出终局文本"现有候选无法满足硬约束，我没有执行下单。"，用户随后 `###STOP###` 结束。单元 2 的日志里可以看到同一句被拒三次：
+- **难点**：R8 里 `E057330` 单元 6（`instore/wellness`「又得去理发店了，帮我买个套餐。」）与 `E941775` 单元 2（`ota`「想订张机票去旅游，你有什么好地方推荐吗？」，**stock 4/4 全对**）都是：一次工具调用都没有（单元 6 只有一次 `query_preference_memory`），直接输出终局文本"现有候选无法满足硬约束，我没有执行下单。"，用户随后 `###STOP###` 结束。单元 2 的日志里可以看到同一句被拒三次：
   `question gate: a question is already waiting for the user's answer`。
 - **根因（三处叠加，全部可零模型复现）**：
   1. `TaskSpec.compile` 判定该指令有未决的关键槽（单元 6 = `['time']`，单元 2 = `['departure','date','quantity']`），`TaskRuntime.begin` 因此把 phase 直接置为 `NEED_INFO`；
@@ -925,8 +925,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **为什么是 E-048 引入的**：E-048 之前，框架自己会用 `_framework_question()` + `_GAP_QUESTIONS`（"请告诉我出发地。"）把这类槽问掉。同一单元在 R5b（E-048 之前）的轨迹是：`请告诉我出发地。` → 用户"随便吧，你看着办。" → 搜航班 → 下单（该单元仍因实体不符得 0，但**有完整动作链**）。E-048 关掉框架发言后，原本唯一的"合法动作"消失了，而门禁与工具裁剪仍在假设"框架会问"。
 - **证据**：`data/simulations/iso_R8.log`（两个单元的完整对话与三次同因拒绝）、`data/simulations/iso_R8.jsonl`（单元 6 只有 1 次 tool_result、0 次 question_committed）、`scripts/_unit_events.py`、`scripts/_unit_dialogue.py`；对照 `data/simulations/iso_R5b.log` 同单元。
   R8 中同一死路共出现 **3 次**（`scripts/_unit_events.py` 逐单元可见三连 `question gate: a question is already waiting`）：
-  `P1` 单元 6（`time` 槽；stock 0/0/0/0）、`P2` 单元 2（`departure/date/quantity` 槽；**stock 4/4**）、`P2` 单元 10（"帮我订张这周五的动车票"；stock 0/0/0/0）。
-  其中 `P2` 单元 2 是 E-049 本可以得分、却被本死路吃掉的那一格。
+  `E057330` 单元 6（`time` 槽；stock 0/0/0/0）、`E941775` 单元 2（`departure/date/quantity` 槽；**stock 4/4**）、`E941775` 单元 10（"帮我订张这周五的动车票"；stock 0/0/0/0）。
+  其中 `E941775` 单元 2 是 E-049 本可以得分、却被本死路吃掉的那一格。
 - **有效方案**：
   1. `QuestionGate`：`NEED_INFO` 只在**确实有问题挂着**（`pending_question_dimension` 非空）时拒绝新问题；由未决槽导致的 `NEED_INFO` 允许模型自己提问——这正是"缺失信息检测"能力本身；
   2. `ToolRegistry.allowed_tools`：`NEED_INFO` 同时放行 SEARCH（观察不等于承诺），只保留不可逆写操作隐藏；
@@ -934,9 +934,9 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **验证**：`agent/tests/test_open_slot_questions.py`（5 个单测：未决槽起始 NEED_INFO 且无挂起问题、模型可提问、已提交问题仍拦第二次、"NEED_INFO 仍暴露 SEARCH 但隐藏 CREATE"、回答后离开 NEED_INFO）；全量 **371 单测通过**；`compileall` 与 vendored 纯净检查通过。
 - **配对测量（R9，`data/simulations/iso_R9_open_slots.json`）**：
   - 死路**类**被清零：整轮 27 个单元中 `a question is already waiting` 出现 **0 次**（R8 为 3 次），三个原本零工具调用的单元现在都产生了完整动作链；
-  - `P2` 单元 2（stock 4/4）按预测**转为 1.0**：模型问"时间"槽 → 用户委托 → 搜航班 → `create_flight_order`；
-  - 但用户级总分不变（合计仍 0.2222）：同样的 1 单元损失在别处出现——`P2` 单元 13 从 1.0 变成 0.0，机制完全相同（`unique preference-evidence leader` 结算 + `create_instore_product_order`），差别只在选中的候选，属单 trial 噪声量级（±1 单元）；
-  - 新增可观测性（`choice_state` 事件）显示结算来源已按预期工作：单元 17/18/25/26/27 由 `unique preference-evidence leader` 结算、单元 15/19 由用户委托结算、`P1` 单元 13 由学习到的 force-decision 策略结算；单元 20 出现 5 次 `question budget exhausted` 拒绝但仍得分。
+  - `E941775` 单元 2（stock 4/4）按预测**转为 1.0**：模型问"时间"槽 → 用户委托 → 搜航班 → `create_flight_order`；
+  - 但用户级总分不变（合计仍 0.2222）：同样的 1 单元损失在别处出现——`E941775` 单元 13 从 1.0 变成 0.0，机制完全相同（`unique preference-evidence leader` 结算 + `create_instore_product_order`），差别只在选中的候选，属单 trial 噪声量级（±1 单元）；
+  - 新增可观测性（`choice_state` 事件）显示结算来源已按预期工作：单元 17/18/25/26/27 由 `unique preference-evidence leader` 结算、单元 15/19 由用户委托结算、`E057330` 单元 13 由学习到的 force-decision 策略结算；单元 20 出现 5 次 `question budget exhausted` 拒绝但仍得分。
   - **结论口径**：E-050 消除的是一整类**确定性的零工具调用失败**（机制已验证），其分数效应在当前 2 用户 1 trial 装置上被同量级的噪声掩盖（+1 单元 / −1 单元）。要给出分数结论需要多 trial 或更宽用户范围。
 - **适用边界**：只放宽"由未决槽引起的 NEED_INFO"；真正挂起的问题、重复维度、预算耗尽仍然拦截。终局拒绝文案只保留给"确实存在候选但都不合规"的情况。
 - **后续风险/下一步**：`_dimension_for` 的维度词表较粗（"从哪出发"会落到 `candidate_choice`），可能出现"同一维度只能问一次"过严；R9 的单元轨迹会显示是否需要细化。另外单元 12 的终局拒绝来自"没有任何航班候选"，需要在 R9 复查是否仍走到拒绝。
@@ -950,8 +950,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：OPEN（机制已由单测与离线编译锁定；配对测量 R10 进行中）
 - **通用性判定**：`GENERAL-EMPIRICAL`。两个失败单元都可用零模型编译复现，且分别对应 stock 3/4 与 4/4 的单元。
 - **难点（两个独立缺陷）**：
-  1. **地址别名被当成字面地址**：`P1` 单元 8「今天中午还是吃粉，给我点个粉送到单位来吧。」→ `_ADDRESS_RE` 把"送到"之后的文本整段捕获为 `单位来`（只剥了句尾"吧"），于是决策卡写成 `MUST: address=单位来` 且 operator=`contains`。模型照抄 `"address": "单位来"`，环境 `address_to_longitude_latitude` 抛 `Longitude and latitude not found for address 单位来`，重试同一参数被工具失败护栏拦下，子任务以终局拒绝结束。**stock 在 3/4 次试验中解出该单元。**
-  2. **"送"不是交易动词**：`P1` 单元 10「好热，给我送个奶茶的到家来。」→ `_ORDER_VERB` 里没有"送"，`is_transaction_request` 为假，`TaskSpec.action` 编译成 **recommend**，`create_authorized=False`。模型给出了正确的对比表、接着宣布"我直接帮你下单了"，却被**我们自己的授权门禁**判为不允许写，随后反复读商品详情（23 次工具调用）而零产出。**stock 在 4/4 次试验中解出该单元。**
+  1. **地址别名被当成字面地址**：`E057330` 单元 8「今天中午还是吃粉，给我点个粉送到单位来吧。」→ `_ADDRESS_RE` 把"送到"之后的文本整段捕获为 `单位来`（只剥了句尾"吧"），于是决策卡写成 `MUST: address=单位来` 且 operator=`contains`。模型照抄 `"address": "单位来"`，环境 `address_to_longitude_latitude` 抛 `Longitude and latitude not found for address 单位来`，重试同一参数被工具失败护栏拦下，子任务以终局拒绝结束。**stock 在 3/4 次试验中解出该单元。**
+  2. **"送"不是交易动词**：`E057330` 单元 10「好热，给我送个奶茶的到家来。」→ `_ORDER_VERB` 里没有"送"，`is_transaction_request` 为假，`TaskSpec.action` 编译成 **recommend**，`create_authorized=False`。模型给出了正确的对比表、接着宣布"我直接帮你下单了"，却被**我们自己的授权门禁**判为不允许写，随后反复读商品详情（23 次工具调用）而零产出。**stock 在 4/4 次试验中解出该单元。**
 - **根因**：两处都是"框架的表示层说谎"——一处把用户的地点别名变成环境无法地理编码的字面串，一处把明确的履约请求降级成信息咨询。模型在这两种情况下都按框架给的错误前提行动，失败看起来像模型能力问题，实际是框架造成的。
 - **证据**：`data/simulations/iso_R9.log`（单元 8 的 `单位来` 报错与后续护栏拒绝；单元 10 的对比表 + "我直接帮你下单了" + 23 次工具调用）、`data/simulations/iso_R9.jsonl`（单元 8：`create proposals 2`、`tool failure guard` ×4；单元 10：无 create 提案）、`scripts/_unit_events.py`、`scripts/_unit_dialogue.py`。
 - **有效方案**：
@@ -970,7 +970,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-12
 - **状态**：PARTIAL（机制已由单测锁定；R11 待跑）
 - **通用性判定**：`GENERAL-EMPIRICAL`。同一指令可零模型编译复现，R10 提供了完整现场计数。
-- **难点**：R10 首个用户 `P3` 单元 2「后天要去遵义喝朋友的喜酒，顺便在那玩几天，你给我在会议会址3km范围内订个酒店吗，**先定30和31号的就行**」（子任务时间 2026-01-28）：
+- **难点**：R10 首个用户 `J365414` 单元 2「后天要去遵义喝朋友的喜酒，顺便在那玩几天，你给我在会议会址3km范围内订个酒店吗，**先定30和31号的就行**」（子任务时间 2026-01-28）：
   - `_DATE_RE` 的 `\d{1,2}号` 只在"30和31号"里匹配到 **31号**，"30"被丢掉；
   - 于是决策卡把"必须订到 31 号"当成硬约束，而模型合理地先订 30 号（房间产品的 `date` 是每晚一条）；
   - 每次写操作都被 `selected candidate does not satisfy required date: 31号` 否决 → 同一拒绝 **103 次**、**78 步**、**35 个用户回合**，终局拒绝文案对用户重复约 12 次，直到 `max_steps` 耗尽；用户两次坚持"那不行，你看着办，必须得在3km范围内，30号和31号都要有"。
@@ -985,7 +985,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   4. 兜底文案独立为 `_fallback_message()`：若本轮唯一的拦截来自已上限化的派生约束，不再输出"无法满足硬约束"这种假拒绝，而是回到 SELECT 让模型继续（E-050 的槽未决分支保留在前）。
 - **验证**：`agent/tests/test_unbounded_veto.py`（7 个单测：日期列表两条且非硬约束、只覆盖其中一晚的房型可通过、ID 溯源仍被拦、第 4 次重复被上限化并记录、五类事实否决永不被上限化、上限化后兜底不再假拒绝、真约束仍拒绝）；全量 **385 单测通过**。
 - **适用边界**：只给**派生**约束加上限，且上限只影响"继续否决"这一动作；硬约束与事实校验原样保留。
-- **运行观测（R11，同指令同用户，被中止前的两个单元）**：`P3` 单元 2 从 R10 的 **78 步 / 103 次同因拒绝 / 35 个用户回合 / 12 次重复假拒绝**，变为 **17 条消息**：读完 6 家酒店后选中 `遵义全季酒店(会议会址红花岗店)` 并**成功 `create_hotel_order`**（1 月 30 日入住），没有出现任何重复否决。该单元得分仍为 0.0（评分还要求覆盖 31 日等条件），因此这是**机制验证，不是分数证据**；R11 因人工中止未跑完，日志产物已清理，数字取自运行输出。
+- **运行观测（R11，同指令同用户，被中止前的两个单元）**：`J365414` 单元 2 从 R10 的 **78 步 / 103 次同因拒绝 / 35 个用户回合 / 12 次重复假拒绝**，变为 **17 条消息**：读完 6 家酒店后选中 `遵义全季酒店(会议会址红花岗店)` 并**成功 `create_hotel_order`**（1 月 30 日入住），没有出现任何重复否决。该单元得分仍为 0.0（评分还要求覆盖 31 日等条件），因此这是**机制验证，不是分数证据**；R11 因人工中止未跑完，日志产物已清理，数字取自运行输出。
 - **后续风险/下一步**：多晚预订本身仍只完成其中一晚（框架无法在一次 CREATE 里表达两晚）；R11 需确认该单元不再烧步数、用户不再被重复假拒绝。
 - **能力抽象**：long-horizon consistency / execution。
 
@@ -996,7 +996,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-12
 - **状态**：`SUPERSEDED`（假设被受控干预实验推翻）。机制保留为 `--landing-guard` 可选开关，**默认关闭**，不再作为主线。
 - **通用性判定**：`GENERAL-EMPIRICAL`。结论来自**预注册的单用户配对干预实验**，只用可观察的工具调用、末尾消息类型、终止原因与步数；reward 仅用于配对分桶，不作学习信号。
-- **难点**：`stock_dev.json`（8 dev 用户 × 4 trial = 400 单元）的离线审计给出一个很强的相关性：
+- **难点**：`stock_avg4_8u.json`（8 dev 用户 × 4 trial = 400 单元）的离线审计给出一个很强的相关性：
 
   | 末尾消息类型 | n | 通过率 | 写入率 |
   | --- | --- | --- | --- |
@@ -1005,8 +1005,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 推荐/列表 | 155 | 0.194 | 57% |
 
   340/400 单元零模型编译为 `action=commit`。其中 **53 个单元以确认请求收尾、从未写入任何工具调用，通过率 0.057**，而同批"写入后声明完成"的同侪通过 **0.427**。若全部按同侪比率转化，上限 **+0.049** —— 几乎等于 0.2925 → 0.35 的缺口。当时据此推断：**模型已选定实体却把执行写成问句，用户模拟器读作"服务完成"即发 `###STOP###`，于是订单从未创建**；用户模拟器提示词确实写着"明确给出推荐后表示接受"、"满意时生成 STOP"。
-- **预注册预测**（跑之前钉死，事后不得改口）：选 **P6**（11 单元，其中 3 个目标型失败在 4 个 trial 里稳定复现，为 开发集用户中最多）。预测 `sub_P6_1` / `_3` / `_5` 上守卫开火、三单元 0 → 1。判读表同样预注册：翻转且 `accepted: true` 才算机制成立；**翻转但无事件不算**；**未翻转但有事件 = 落地不是瓶颈**；未翻转且无事件 = 目标桶不稳定。
-- **证据**（`data/simulations/pair_P6_B_landing.json`，对照为 `stock_dev.json` 同用户 `trial 0`，两侧同为 `trial_seed=42`；`scripts/paired_arms.py --trial 0`）：
+- **预注册预测**（跑之前钉死，事后不得改口）：选 **P722245**（11 单元，其中 3 个目标型失败在 4 个 trial 里稳定复现，为 8 个 dev 用户中最多）。预测 `sub_P722245_1` / `_3` / `_5` 上守卫开火、三单元 0 → 1。判读表同样预注册：翻转且 `accepted: true` 才算机制成立；**翻转但无事件不算**；**未翻转但有事件 = 落地不是瓶颈**；未翻转且无事件 = 目标桶不稳定。
+- **证据**（`data/simulations/pair_P722245_B_landing.json`，对照为 `stock_avg4_8u.json` 同用户 `trial 0`，两侧同为 `trial_seed=42`；`scripts/paired_arms.py --trial 0`）：
 
   | 指标 | 基线 | 守卫臂 |
   | --- | --- | --- |
@@ -1019,12 +1019,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
   | 单元 | 基线 | 守卫臂 |
   | --- | --- | --- |
-  | `sub_P6_1` 绵阳车票 | 确认式，未写入，0 | **完成声明，已写入，仍 0** |
-  | `sub_P6_3` 西安酒店 | 确认式，未写入，0 | **已写入，仍 0**，121 条消息、`max_steps` 崩掉 |
-  | `sub_P6_5` 养生团购券 | 确认式，未写入，0 | **已写入，仍 0**，`agent_stop` |
+  | `sub_P722245_1` 绵阳车票 | 确认式，未写入，0 | **完成声明，已写入，仍 0** |
+  | `sub_P722245_3` 西安酒店 | 确认式，未写入，0 | **已写入，仍 0**，121 条消息、`max_steps` 崩掉 |
+  | `sub_P722245_5` 养生团购券 | 确认式，未写入，0 | **已写入，仍 0**，`agent_stop` |
 
   **机制按预测方向生效（三个单元从"从不写入"变为"写入"），分数一动不动。**
-- **根因（修正后）**：原推断把相关性当成了因果。**"从不写入"是症状，不是原因。** 模型之所以问"确认一下？"，恰恰因为它**不确定选中的实体是否合规**；逼它执行不会让它选对，只是把"没写"换成"写错"。最干净的反证是 `sub_P6_1`：两次 rollout 选中**同一个实体 G8701**，基线没下单得 0，守卫臂下了单也得 0 —— 守卫把一个 0 换成了另一个 0。
+- **根因（修正后）**：原推断把相关性当成了因果。**"从不写入"是症状，不是原因。** 模型之所以问"确认一下？"，恰恰因为它**不确定选中的实体是否合规**；逼它执行不会让它选对，只是把"没写"换成"写错"。最干净的反证是 `sub_P722245_1`：两次 rollout 选中**同一个实体 G8701**，基线没下单得 0，守卫臂下了单也得 0 —— 守卫把一个 0 换成了另一个 0。
 - **尝试过但无效的方案（本条目本身就是该方案）**：在 stock 骨架上加一层"执行时序"薄层（`agent/landing.py`，`LandingGuardAgent`）：成交类指令 + 已观察候选 + 尚未写入 + 消息以确认请求收尾 → 用一条执行时序指令**有界重生成一次**；重试未变好则保留原答案；指令只进本次生成的局部消息、不写入对话状态。设计上刻意只改"什么时候做"、不改"做什么"，且**独立复现了 E-049 的陷阱**：拿不确定的实体去写，撞上 `min(轨迹分, 动作分)`。E-042 记下的 `LOST 7 : GAINED 1` 形态在本轮再次出现（0 修复 / 1 打断）。
 - **有效方案**：无。守卫降级为可选开关，默认关闭；不再在"让写入发生"这个方向上投入。
 - **验证**：`agent/tests/test_landing_guard.py` 20 个零模型单测（含"关闭时与 stock 逐字段等价"、指令不进状态、重试无改善则保留原答案、无候选则弃权）；全量 **405 单测通过**；`compileall` 与 `git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 通过。
@@ -1032,7 +1032,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **未取证的其余一半**：同一机制里的搜索预算分支（`search_budget=6`）在本轮 **0 次预算型开火**，因此"搜索 thrash 压死长单元"这条同样**没有干预证据**，不得当作有效。
 - **适用边界**：结论覆盖 1 用户 / 1 trial / 11 单元，总分差 −0.0909 在统计上不显著（单对不一致，符号检验 z = −1.00）。**但机制证据强于分数证据**：三个目标单元在预测方向上改变行为而分数完全不动，这一组合本身就否证了"落地是瓶颈"。任何在更多用户上重跑该机制的行为必须按本条目预期为负或零。
 - **已知可观测性缺陷**：`states["landing_guard"]` 每模拟只写一份，事件**没有按子任务打标**，因此"哪几次开火落在哪些单元"无法从产物恢复（`scripts/paired_arms.py` 已做去重并在输出中提示；曾因重复累加把 5 次报成 55 次）。逐单元归因能力待补。
-- **后续风险/下一步**：真正的杠杆转向**写前实体校验**（D3：事实必须驱动写前校验）。靶子现成且已取证：`sub_P6_1` 里首次按用户日期检索返回 G8515，模型却在第二次单独查询后绑定到 G8701——**绑定到了错的候选**，这与 E-051「框架的表示层说谎」同属 I1/D3 类。守卫的副作用也需盯：每次开火多一次生成，`sub_P6_3` 退化到 121 条消息并撞 `max_steps`。
+- **后续风险/下一步**：真正的杠杆转向**写前实体校验**（D3：事实必须驱动写前校验）。靶子现成且已取证：`sub_P722245_1` 里首次按用户日期检索返回 G8515，模型却在第二次单独查询后绑定到 G8701——**绑定到了错的候选**，这与 E-051「框架的表示层说谎」同属 I1/D3 类。守卫的副作用也需盯：每次开火多一次生成，`sub_P722245_3` 退化到 121 条消息并撞 `max_steps`。
 - **能力抽象**：execution / preference-to-action grounding（**作为反例**：证明"促成动作"本身不构成能力增益）。
 
 ---
@@ -1042,15 +1042,15 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-13
 - **状态**：`VERIFIED`。这是对**测量本身**的更正，不是对某个 agent 机制的判断；结论由 vendored 源码与零模型命令直接确定，不含假设。
 - **通用性判定**：`GENERAL-FORMAL`（单元定义与方差分解）；受影响的**具体数值**为 `GENERAL-EMPIRICAL`，仅适用于 8 dev 用户 cohort。
-- **难点**：本仓长期在错误的单元与错误的分母上做比较，导致过去所有 开发集用户结论（无论正负）都不可判读。具体三项：
+- **难点**：本仓长期在错误的单元与错误的分母上做比较，导致过去所有 8 用户结论（无论正负）都不可判读。具体三项：
 
   1. **官方单元被弄错。** 官方指标 `_compute_subtask_pass_metrics`（`vita/metrics/agent_metrics.py:170`）的 docstring 明写 *"each (task_id, subtask_index) is treated as an independent evaluation unit observed across num_trials"*，`average_at_k`（`:113`）对该单元的 trial 取简单均值。所以官方单元是 **`(task_id, subtask_idx)`，本 cohort 为 100 个**，每个单元挂 `num_trials` 个二值奖励。`scripts/_official_metrics.py` 直接打印 `evaluation units (task_id, subtask_idx): 100`、`Avg@4=0.2925` 确认。
   2. **把单元内的复制当成了单元（伪重复）。** 4 个 trial 重放**同一脚本**（subtask 数、开场指令、`opensig` 哈希跨 seed 42/43/44/45 完全一致），且 `temperature` 对 agent/evaluator/user 三个模型全局为 `0.0`。因此 `(user, trial, subtask)` 的 400 条记录是 100 个单元的 4 次**内部重复观测**，不是 400 个独立观测。本仓曾按 400 计数，于是 N 虚增 4 倍、显著性同步虚增。
-  3. **用用户内分量当用户级精度。** `between_user_sd = 0.0823`，`within_user_sd = 0.0573`。旧判据引用的 ±0.0203 是**用户内 trial** 分量（衡量"同一用户重复抽样"），而 promotion 问的是"换一批用户是否仍成立"，那是 `between_user_sd`。**加 trial 只缩小前者，永不缩小后者。** 开发集用户真实非配对 2·SE = **±0.0582**。
+  3. **用用户内分量当用户级精度。** `between_user_sd = 0.0823`，`within_user_sd = 0.0573`。旧判据引用的 ±0.0203 是**用户内 trial** 分量（衡量"同一用户重复抽样"），而 promotion 问的是"换一批用户是否仍成立"，那是 `between_user_sd`。**加 trial 只缩小前者，永不缩小后者。** 8 用户真实非配对 2·SE = **±0.0582**。
 - **证据**（全部零模型可复现）：
 
   ```powershell
-  python scripts/noise_floor.py data/simulations/stock_dev.json   # 四层计数 + 两分量 + 两种底
+  python scripts/noise_floor.py data/simulations/stock_avg4_8u.json   # 四层计数 + 两分量 + 两种底
   python scripts/_official_metrics.py                                 # 100 单元 / Avg@4=0.2925
   ```
 
@@ -1058,16 +1058,16 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | --- | --- |
   | 用户 / simulation 记录 / subtask-trial / 官方单元 | 8 / 32 / 400 / **100** |
   | `between_user_sd` / `within_user_sd` | 0.0823 / 0.0573 |
-  | 开发集用户非配对 2·SE（真实） | **±0.0582** |
+  | 8 用户非配对 2·SE（真实） | **±0.0582** |
   | 用户内 trial 2·SE（旧判据误用） | ±0.0203 |
-  | 4 个 trial 分数完全相同的用户 | **少数** |
+  | 4 个 trial 分数完全相同的用户 | **3 / 8** |
   | 分辨 Δ=0.05 / 0.03 / 0.02 所需用户数 | 11 / 31 / **68** |
 
-- **一个具体后果（本条目的直接反例）**：同一轮分析里按 400 单元统计得到"抖动单元 13 个全部失败、通过率 0.0000、误伤 0 个通过样本"；按官方/簇单元重算后，13 条记录其实是 **7 个单元**，其中 **4 个单元在非抖动 trial 里是能通过的**（`P2/sub_P2_1` 与 `sub_P2_8` 各 4 trial 均值 0.50）。伪重复把一个 4/7 的事实放大成了 0/13。**这是本条目要防的错误本身，故保留为记录。**
+- **一个具体后果（本条目的直接反例）**：同一轮分析里按 400 单元统计得到"抖动单元 13 个全部失败、通过率 0.0000、误伤 0 个通过样本"；按官方/簇单元重算后，13 条记录其实是 **7 个单元**，其中 **4 个单元在非抖动 trial 里是能通过的**（`E941775/sub_E941775_1` 与 `sub_E941775_8` 各 4 trial 均值 0.50）。伪重复把一个 4/7 的事实放大成了 0/13。**这是本条目要防的错误本身，故保留为记录。**
 - **有效方案**：全部统计一律在官方单元上做；trial 只作单元内重复；比较一律配对，禁止"两次分数相减"。（本条产生的新工具：`scripts/noise_floor.py`；`scripts/paired_arms.py` 补 `official Avg@4 shape` 与 `equal-user-weight` 两个口径并分别给 delta。）
-- **影响**：`CLAUDE.md` 的 Goal / Measurement / Promotion criteria 已按此重写。关键推论：**目标 Δ=+0.06 恰好卡在 开发集用户非配对的 ±0.0582 上，余量为零** —— 现有 cohort 是目标的最低可行情境，不是有余量的设计。**Δ ≤ 0.02 在用户级、即使用满 56 用户也结构上不可测**（需 6开发集用户），只能在官方单元上用配对对照判定。
-- **适用边界**：100 单元 / 400 记录 / 3 个零 trial 方差用户等数值仅对 `stock_dev.json` 这 开发集用户成立；单元定义与方差分解的结论对任何 checkpoint 成立。
-- **后续风险/下一步**：过去所有 开发集用户比较（含 `ADAPT R9` 与 `R5a` 的 Δ=+0.0000）均落在比原先以为的大约 3 倍的误差棒内 —— 这些结果**既不能读作"有效"也不能读作"无效"**，需按新判据重做，不得引用为结论。
+- **影响**：`CLAUDE.md` 的 Goal / Measurement / Promotion criteria 已按此重写。关键推论：**目标 Δ=+0.06 恰好卡在 8 用户非配对的 ±0.0582 上，余量为零** —— 现有 cohort 是目标的最低可行情境，不是有余量的设计。**Δ ≤ 0.02 在用户级、即使用满 56 用户也结构上不可测**（需 68 用户），只能在官方单元上用配对对照判定。
+- **适用边界**：100 单元 / 400 记录 / 3 个零 trial 方差用户等数值仅对 `stock_avg4_8u.json` 这 8 个用户成立；单元定义与方差分解的结论对任何 checkpoint 成立。
+- **后续风险/下一步**：过去所有 8 用户比较（含 `ADAPT R9` 与 `R5a` 的 Δ=+0.0000）均落在比原先以为的大约 3 倍的误差棒内 —— 这些结果**既不能读作"有效"也不能读作"无效"**，需按新判据重做，不得引用为结论。
 
 ---
 
@@ -1094,7 +1094,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **同时清理的危险默认值**：`vitabench_runner.py` 的 `--agent` 默认为 `adapt_v2`（已删除的路径），构成静默陷阱；现改为 `("stock",)` 且默认 `stock`。另删除 7 个空转开关（`--no-phase-gating`、`--framework-speech`、`--no-adapt-prompt`、`--keep-write-phase-history`、`--no-candidate-validation`、`--no-lessons`、`--no-tiered-compaction`）。
 - **保留下来的复用物**：`agent/tool_recovery.py`（292 行）从 `runtime/tool_errors.py` 忠实提取（改用 `is_write_tool(name)`，不再依赖已删的 `ToolRole`），**当前没有任何生产调用方**；`agent/tests/test_harness_integrity.py` 抢救出 2 个测试（评测器重试接受真零分；`trace_metrics` 排除评测器失败）。
 - **明确放弃（用户决定，不先挖后删）**：`agent/v2/` 的 flag 系统、parity contract、`StockCompatibleExecutor`、`ABLATION_MATRIX`、`promotion_report` 一并删除，未先提取可复用逻辑。此损失记录于 `docs/AGENT_ARCHITECTURE.md` §4b。
-- **验证**：全量 **301 单测通过**；`compileall` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 为空；真实冒烟 `--cohort dev --task-ids P6 --subtask-ids sub_P6_1` 得 `Subtasks: 1`、`agent_version: stock`、`states["rubric_detail"]` 存在、`info` 不再携带 `candidate_validation`/`lessons`/`tiered_compaction`。
+- **验证**：全量 **301 单测通过**；`compileall` 通过；`git -C evaluation/vitabench diff --exit-code HEAD -- src/vita` 为空；真实冒烟 `--cohort dev --task-ids P722245 --subtask-ids sub_P722245_1` 得 `Subtasks: 1`、`agent_version: stock`、`states["rubric_detail"]` 存在、`info` 不再携带 `candidate_validation`/`lessons`/`tiered_compaction`。
 - **一处险些漏掉的实现事故**：删除 `adapt_v1` 分派的正则过宽，吞掉了 `run_selected` 的任务选择块（`tasks`/`selected_ids`/`selected`/subtask 过滤），而 **301 个测试全绿**（没有测试调用 `run_selected`），最终由 `ruff F821`（`Undefined name selected_ids`）发现并逐字恢复。**教训：正则删除必须配 lint，测试覆盖不到的分支不会报错。**
 - **适用边界**：已验证的是"删除后仓库仍自洽、测试与冒烟通过、边界未破"。**"删除控制器使分数变好"从未被测量**，不得如此声称。
 - **后续风险/下一步**：`agent/tool_recovery.py` 与 `runtime/ranking.py`（487 行）、`runtime/location.py`（128 行）目前均无生产调用方，共约 615 行可达性待决：要么接线，要么按 E-055 同一标准删除，不得长期悬空。
@@ -1110,11 +1110,11 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
   | 单元 | 调用 | 次数 | 不同结果数 | 返回 |
   | --- | --- | --- | --- | --- |
-  | `sub_P1_13` | `get_delivery_order_status(order_id=OTcd66b5eca9)` | 42 | **1** | `'paid'`（4 字符） |
-  | `sub_P1_1` | `delivery_product_search_recommand(keywords=["瑞士莲","牛奶巧克力"])` | 16 | **1** | 同一 24161 字符列表 |
+  | `sub_E057330_13` | `get_delivery_order_status(order_id=OTcd66b5eca9)` | 42 | **1** | `'paid'`（4 字符） |
+  | `sub_E057330_1` | `delivery_product_search_recommand(keywords=["瑞士莲","牛奶巧克力"])` | 16 | **1** | 同一 24161 字符列表 |
 
   结果**冻结**是关键性质：同一调用第 N 次返回同一内容，**信息增量为零**，因此"拒绝重复"在原理上不可能移除模型需要的信息。这使它与 E-053 的落地守卫有本质区别：后者替模型**做决定**，前者只是**拒绝一次零信息动作**。该规则其实早已写进 `CLAUDE.md`（"同一搜索签名允许两次，第三次是抖动信号"），但**没有任何代码路径执行它**。
-- **难点（度量）**：抖动单元跨 seed 高度可复现 —— `sub_P8_2` 在 seed 43/44/45 三次独立 rollout 下均为 **102 条消息、43 次重复**，逐字节相同。故这是 `(user, subtask)` 的确定性属性，不是抽样噪声。
+- **难点（度量）**：抖动单元跨 seed 高度可复现 —— `sub_U000828_2` 在 seed 43/44/45 三次独立 rollout 下均为 **102 条消息、43 次重复**，逐字节相同。故这是 `(user, subtask)` 的确定性属性，不是抽样噪声。
 - **证据（单元内对照，控制住"子任务本身难"）**：比较**同一** `(user, subtask)` 单元内部抖动 trial 与非抖动 trial：
 
   | | 通过 | 总计 | 通过率 |
@@ -1122,11 +1122,11 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 抖动 trial | **0** | 13 | 0.0% |
   | 非抖动 trial | **6** | 15 | **40.0%** |
 
-  Fisher 精确检验双侧 **p = 0.0178**；涉及 7 个单元，全部位于 cohort B（`P1`、`P2`、`P5`、`P7`、`P8`）。
+  Fisher 精确检验双侧 **p = 0.0178**；涉及 7 个单元，全部位于 cohort B（`E057330`、`E941775`、`O309411`、`Q089190`、`U000828`）。
 - **零模型复现**：
 
   ```powershell
-  python scripts/runaway_autopsy.py data/simulations/stock_dev.json --repeat-threshold 3 --show-frozen
+  python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json --repeat-threshold 3 --show-frozen
   ```
 
 - **为何这不是因果结论**：残余混淆是"模型已经迷路"同时导致抖动与失败。打破循环**未必**能救回该单元 —— 与 E-053 的形态相同。跨单元横截面比较（抖动单元 vs 其他单元）会把这个混淆放大，故**不作为证据**。
@@ -1137,8 +1137,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   记账口径见 E-054：官方单元内单个 trial 救回 = `0.0025` Avg，单单元 0/4→4/4 = `+0.0100`。
 - **上限**：即使全部 13 个抖动 trial 救回，也只有 **+0.0325**；按非抖动 trial 通过率折算的期望是 **+0.013**。因此该机制**不可能单独达成 +0.06 缺口**，必须在 E-054 的新判据下与配对对照一同评估。
 - **已知可观测性要求**：守卫必须记录"每个单元的开火次数与被拒绝的签名"，否则无法按单元归因（E-053 曾因 `states["landing_guard"]` 未按子任务打标而丧失归因能力）。
-- **预注册执行前发现的有效性约束（重要，改变了实验成本）**：**目标单元不能单独重放。** `RewriteMemory` 在子任务之间累积（`process_interactions`），所以缓存对照里 `sub_k` 的上下文包含 `sub_1..sub_{k-1}`。只跑 `sub_k` 会去掉那些上下文，处理臂与对照臂就不再匹配。因此配对测试必须**重放整个用户任务**。受影响的 5 个用户（`P1`、`P2`、`P5`、`P7`、`P8`）共需 12 次整用户运行 ≈ 16 小时。
-- **第二个复杂化（对分数有利，但对归因不利）**：抖动大多发生在**早期子任务**（`P8/sub_P8_2` 是 index 1，`P2/sub_P2_1` 与 `P5/sub_P5_1` 是 index 0）。守卫若在这些位置破环，会通过记忆更新**传导到后续子任务**，因此"某个单元翻转"不再能唯一归因于守卫在该单元开火。预注册的判读表据此扩展为：**主判读看那 7 个抖动单元本身**，**其余单元的变化一律记为副作用**，只报告不归因。
+- **预注册执行前发现的有效性约束（重要，改变了实验成本）**：**目标单元不能单独重放。** `RewriteMemory` 在子任务之间累积（`process_interactions`），所以缓存对照里 `sub_k` 的上下文包含 `sub_1..sub_{k-1}`。只跑 `sub_k` 会去掉那些上下文，处理臂与对照臂就不再匹配。因此配对测试必须**重放整个用户任务**。受影响的 5 个用户（`E057330`、`E941775`、`O309411`、`Q089190`、`U000828`）共需 12 次整用户运行 ≈ 16 小时。
+- **第二个复杂化（对分数有利，但对归因不利）**：抖动大多发生在**早期子任务**（`U000828/sub_U000828_2` 是 index 1，`E941775/sub_E941775_1` 与 `O309411/sub_O309411_1` 是 index 0）。守卫若在这些位置破环，会通过记忆更新**传导到后续子任务**，因此"某个单元翻转"不再能唯一归因于守卫在该单元开火。预注册的判读表据此扩展为：**主判读看那 7 个抖动单元本身**，**其余单元的变化一律记为副作用**，只报告不归因。
 - **后续风险/下一步**：实现必须先证明**真的会触发** —— E-053 的首版守卫因只处理 `MultiToolMessage` 而在真实路径上完全空转，18 个单测却全绿。本轮必须先做真实投递形状的冒烟，再花预算跑 12 次整用户运行。
 
 ---
@@ -1150,7 +1150,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **通用性判定**：`GENERAL-EMPIRICAL`。结论来自 3 次完全相同的串行运行逐条文本比对；只用可观察的消息文本，不涉及 rubric。
 - **难点**：本仓的 promotion 方法一直建立在"用缓存基线在**匹配 seed** 下作对照"之上（E-053 的预注册、本轮 E-056 的预注册、以及所有 `Δ=+0.0000` 的结论）。若同一 seed 不可复现，这条推论链在每一步都断了。
 
-  **受控实验**：`P8` 的同一个子任务 `sub_P8_1`，`--num-trials 1 --seed 44 --memory-type rewrite`，**串行**跑 3 次（串行是刻意的：并发会改变服务端批组合，那本身可能成为非确定性的成因，并发会污染测试）。
+  **受控实验**：`U000828` 的同一个子任务 `sub_U000828_1`，`--num-trials 1 --seed 44 --memory-type rewrite`，**串行**跑 3 次（串行是刻意的：并发会改变服务端批组合，那本身可能成为非确定性的成因，并发会污染测试）。
 
   | | msgs | assistant | reward | termination | 内容签名 |
   | --- | --- | --- | --- | --- | --- |
@@ -1177,7 +1177,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
   1. **缓存对照不是配对对照。** 任何"新臂 vs 缓存基线、匹配 seed"的比较都是在比两条不同的轨迹。E-053 与本轮 E-056 的预注册设计都因此失效。
   2. **双臂必须同期跑。** 对照不能再从磁盘上取，必须与处理臂在同一批次、同一服务端状态下产出。
-  3. **"seed" 不是匹配键。** 4 个 trial（seed 42/43/44/45）在实用意义上应重新理解为**同一条件下的 4 次重复抽样**，因此 `within_user_sd = 0.0573` 就是 run-to-run 方差的估计，而不是"seed 效应"。这也意味着 `users_with_zero_trial_variance` 为少数（E-054 记录）是**运气**，不是确定性。
+  3. **"seed" 不是匹配键。** 4 个 trial（seed 42/43/44/45）在实用意义上应重新理解为**同一条件下的 4 次重复抽样**，因此 `within_user_sd = 0.0573` 就是 run-to-run 方差的估计，而不是"seed 效应"。这也意味着 `users_with_zero_trial_variance = 3/8`（E-054 记录）是**运气**，不是确定性。
   4. **E-056 的簇内对照需降级引用。** 它仍是有效的单元内观察对照（控制了子任务难度），但"同一脚本、只有 trial 不同"这个框架是**错的** —— trial 之间在文本上处处不同。结论强度相应下调。
 - **适用边界**：受控实验覆盖 1 用户 / 1 子任务 / 3 次运行。**"不可复现"的幅度、以及它与任务长度的关系均未测量。** 短子任务（14 条消息）即已分叉，长子任务的方差未知。
 - **更正（2026-09-13，见 E-065）**：本条上面第 1、2 条推得过远，现按用户诊断文档第 6 节收窄。
@@ -1194,12 +1194,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：OPEN，尚无分数结论。
-- **用户授权**：目标改为 stock 已跑开发集用户 Avg@4 >= 0.35，允许自研 agent 循环，不限记忆插件；不修改 benchmark。
+- **用户授权**：目标改为 stock 已跑八用户 Avg@4 >= 0.35，允许自研 agent 循环，不限记忆插件；不修改 benchmark。
 - **通用性**：GENERAL-INVARIANT（否定不等于正向匹配），新增核对策略为 GENERAL-EMPIRICAL 待干预验证。
 - **复现**：虚构花生商品与用户“不要花生”被旧 mark_candidates 标成符合；长备注后接最新纠正时摘要格式化丢失纠正，见 ADAPT_DIAGNOSIS_2026-09-13.md。
 - **移除的断言**：词面重合意味着用户条件满足。内部核对明确比较满足/冲突/未知，不控制工具可用性，也不强制成交。
 - **实验**：新增 EvidenceAgent，同模型有限额内部核对，保留 RewriteMemory 对照信息量；核对不进入原始工具返回或用户对话，保存逐子任务调用、失败和成本。
-- **判据**：先验证原始消息、用户纠正与工具投递契约，再整用户 smoke；正式固定相同开发集用户四次，官方 Avg 及净修复/破坏均报告。未运行前不宣称有效。
+- **判据**：先验证原始消息、用户纠正与工具投递契约，再整用户 smoke；正式固定相同八用户四次，官方 Avg 及净修复/破坏均报告。未运行前不宣称有效。
 
 ## E-059：整体记忆读取把否定事实当成偏好——极性在渲染时丢失
 
@@ -1261,10 +1261,10 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：OPEN。机制已量化，**尚未做预注册干预**；按 E-053，审计相关不得直接当作瓶颈，也不得据此声称提分方向。
 - **通用性**：GENERAL-EMPIRICAL（跨多个 domain 的机制计数；需要干预验证才可升级）。
 - **复现命令**：
-  - `python scripts/target_reachability.py data/simulations/stock_dev.json`
-  - `python scripts/candidate_selection_audit.py data/simulations/stock_dev.json`
-  - 单案例肉眼核对：`python scripts/_cell_probe.py data/simulations/stock_dev.json --cell host_listed_product_absent --limit 1`
-- **先复核用户口径**（`target_reachability.py`，stock dev x 4t，graded 396，overall 0.2955）：
+  - `python scripts/target_reachability.py data/simulations/stock_avg4_8u.json`
+  - `python scripts/candidate_selection_audit.py data/simulations/stock_avg4_8u.json`
+  - 单案例肉眼核对：`python scripts/_cell_probe.py data/simulations/stock_avg4_8u.json --cell host_listed_product_absent --limit 1`
+- **先复核用户口径**（`target_reachability.py`，stock 8u x 4t，graded 396，overall 0.2955）：
   - `product_printed_n = 235`，`product_printed_pass_rate = 0.4255` — 与"目标商品已展示的 235 次仍只有约 42.6% 通过"一致。
   - `host_listed_product_absent` = delivery 47 + instore 48 + ota 34 = **129** — 与"129 次父商家/酒店已出现但目标商品未展开"一致。
   - 失败 279 次的结构：never_returned 62、returned_near_not_bound 103、returned_buried_not_bound 91、returned_and_bound 23。**194/279（69.5%）的失败是"答案已经在模型眼前而它选了别的"**。
@@ -1292,7 +1292,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
   `top3_product_but_different_id = 20`：目标商品已在**前 3**，模型绑定了另一个已见 id。
   18 次"绑定了目标仍失败"中有 16 次目标排在第 1——选对之后仍然失败，说明瓶颈在参数/支付/其他条件，不在选择。
-- **单案例机制**（`_cell_probe.py`，P1 trial0 subtask1）：目标父候选 `S...S00011`（score 4.0）在 42 条结果中排第 3；模型展开的是 `S...S00006`（score **5.0**），随后 `create_delivery_order` 绑定了 `S...P00015`——**该 id 在任何工具结果中都没有打印过**。这与 E-035 同类：写入使用了模型自己提供的 id。
+- **单案例机制**（`_cell_probe.py`，E057330 trial0 subtask1）：目标父候选 `S...S00011`（score 4.0）在 42 条结果中排第 3；模型展开的是 `S...S00006`（score **5.0**），随后 `create_delivery_order` 绑定了 `S...P00015`——**该 id 在任何工具结果中都没有打印过**。这与 E-035 同类：写入使用了模型自己提供的 id。
 - **根因假设（未验证）**：父候选的取舍由通用质量信号（评分/顺序）驱动，而不是由当前指令的约束驱动；数据层没有把"某候选的已打印属性是否满足本次约束"变成可比较的信息。
 - **必须避免的推理错误**：*"目标父候选几乎从不被展开（0/129）"* 不是独立发现。展开 target parent 正是让 target product 打印出来的原因，所以那些行落在 Cell B；该比例接近构造性恒真。已在脚本 `note` 字段中标注，禁止引用为独立结论。
 - **预注册干预（尚未执行）**：只做信息呈现、不做控制层决策（E-042/E-049/E-053 的教训）。候选一旦被观察到，就在决策卡/工具返回中并列显示该候选的**已打印属性**与当前指令/记忆约束的对应关系（满足 / 冲突 / 未知），不替模型选择，不阻断写入。判据：官方 unit 上的 paired fixes/breaks，`fixes > breaks` 且 p < 0.05；同时报告 `top3_host_but_different_parent` 与 `top3_product_but_different_id` 两个总体是否下降。
@@ -1406,8 +1406,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **通用性**：GENERAL-INVARIANT（"单位"必须先定义层级；单臂区间不等于双臂差值门槛；共享用户历史的单元不是独立样本）。
 - **来源**：用户诊断文档 `docs/ADAPT_DIAGNOSIS_2026-09-13.md` 第 6 节"现有测量纪律中需要纠正的推论"。以下是按其指出的问题逐条修正。
 - **复现命令**：
-  - `python scripts/noise_floor.py data/simulations/stock_dev.json`
-  - `python scripts/noise_floor.py data/simulations/stock_dev.json data/simulations/stock_dev.json`（自配对对照）
+  - `python scripts/noise_floor.py data/simulations/stock_avg4_8u.json`
+  - `python scripts/noise_floor.py data/simulations/stock_avg4_8u.json data/simulations/stock_avg4_8u.json`（自配对对照）
   - `python scripts/_official_metrics.py`
 - **修正 1：官方 Avg 被说反了。** `noise_floor.py::hierarchy` 的 `note` 原写"only user_weighted_avg is the official Avg"，与官方函数输出矛盾。
   实测：`flat_subtask_trial_mean = 0.2925`（按 (task_id, subtask_idx) 单元、先取该单元各 trial 均值再平均）才是官方 Avg；
@@ -1415,7 +1415,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **修正 2：单臂区间被当成双臂门槛。** `unpaired_2se_over_users = 0.0582` 是**单臂**用户均值的 2SE。等方差同 n 的双臂差值 2SE 为 √2 倍，即 **0.0823**，现已作为独立字段 `two_arm_unpaired_2se` 输出；
   `decompose()` 的 note 明确写出"两者都不是普适检测下限，子任务共享用户历史，100 个聚合单元不是 100 个独立样本"。
   **受影响结论**：E-062 曾用"0.051 < 0.0582 所以读不出来"来降低该干预的优先级，该推理已撤回。
-- **修正 3：配对发生在伪重复层级。** `paired()` 原先在 `(user, trial)` 上配对（每个 (用户, 试次) 一个键），把同一脚本的 4 个 trial 当作 4 个独立观测。
+- **修正 3：配对发生在伪重复层级。** `paired()` 原先在 `(user, trial)` 上配对（32 个键），把同一脚本的 4 个 trial 当作 4 个独立观测。
   现改为在**官方单元 `(task_id, subtask_idx)`** 上配对（100 个键），并额外给出**用户级聚类稳健**汇总：
   - `official_unit`：功效更高，但同一用户内的单元相关，区间偏乐观；
   - `user_cluster`：先取每用户自身均值再配对，对用户内相关性稳健，**小队列下应以此为主报告**。
@@ -1450,10 +1450,10 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：OPEN。预注册的"先证明确实触发"这一步**已完成**；结论是**判别力很低**，因此在取得更大预算前不应直接进入 A/B。
-- **通用性**：GENERAL-EMPIRICAL（在固定 开发集用户基线的 400 次运行上做零模型重放；只读子任务 `instruction` 与 agent 已收到的工具结果，**从不读 `user_intention`**）。
+- **通用性**：GENERAL-EMPIRICAL（在固定 8 用户基线的 400 次运行上做零模型重放；只读子任务 `instruction` 与 agent 已收到的工具结果，**从不读 `user_intention`**）。
 - **复现命令**：
-  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json`
-  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json --with-memory`
+  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json`
+  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json --with-memory`
 - **口径**：把 E-064 的 `correspondence.py` 接到真实轨迹上重放——按编排器顺序先 `memory.update(subtask.interactions)`（`llm=None`，零模型），再用 `build_decision_card` 编译约束，用现有解析器把工具结果解析成候选，统计视图会不会非空、以及每个(候选, 约束)对落到哪个状态。
 - **结果 A：只用指令编译约束（stock + RewriteMemory 的实际情况）**
 
@@ -1494,8 +1494,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **通用性**：GENERAL-INVARIANT（"约束在哪个字段"是代码事实；`card.constraints` 里的候选定向要求必须被读取）。
 - **复现命令**：
   - `python scripts/_constraint_source_probe.py`（卡片字段构成）
-  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json`
-  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json --with-memory`
+  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json`
+  - `python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json --with-memory`
 - **E-066 错在哪里**：E-066 断言"指令本身几乎不携带可结构化约束（16/400），真实瓶颈在编译覆盖率"。
   **这是错的。** 错因在我的 `constraints_from_card`：它只读 `card.avoid`、`card.prefer` 和 operator 为 `excludes` 的约束，
   **完全没有读 `card.constraints` 里 target 为 CANDIDATE 的要求**。而那些要求一直都在被编译。
@@ -1561,7 +1561,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **通用性**：GENERAL-INVARIANT（提问只能针对"已声明、仅用户可给、且仍未知"的槽；问题文本由槽决定，不由领域主题词表决定；极性只能来自事实的类型字段）。
 - **复现命令**：
   - `python scripts/proactive_policy_repro.py`（三个决策缺陷，修复前 `3/3 STILL BROKEN`，修复后 `0/3`）
-  - `python scripts/proactive_coverage_audit.py data/simulations/stock_dev.json`（覆盖率）
+  - `python scripts/proactive_coverage_audit.py data/simulations/stock_avg4_8u.json`（覆盖率）
   - `python scripts/_proactive_context_probe.py`（编译后的结构化上下文）
 - **复现的缺陷（`ProactiveEngine` 旧实现）**：
 
@@ -1670,8 +1670,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **状态**：PARTIAL。闭环在真实轨迹上确认可用；**发现并修复一个真实缺陷**；单子任务 reward=0.0，**不构成分数结论**。
 - **通用性**：GENERAL-INVARIANT（"把决定交回给 agent"不是用户偏好证据；提问只应在槽表声明缺口时发生）。
 - **复现命令**：
-  - smoke：`python -m agent.vitabench_runner --agent proactive --cohort dev --num-trials 1 --task-ids P4 --subtask-ids sub_P4_1 --memory-type adapt --profile-summary --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator --debug-to data/traces/smoke_proactive_P4_sub1.jsonl --save-to data/simulations/smoke_proactive_P4_sub1.json`
-  - 检视：`python scripts/_proactive_smoke_inspect.py data/simulations/smoke_proactive_P4_sub1.json`
+  - smoke：`python -m agent.vitabench_runner --agent proactive --cohort dev --num-trials 1 --task-ids M793481 --subtask-ids sub_M793481_1 --memory-type adapt --profile-summary --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator --debug-to data/traces/smoke_proactive_M793481_sub1.jsonl --save-to data/simulations/smoke_proactive_M793481_sub1.json`
+  - 检视：`python scripts/_proactive_smoke_inspect.py data/simulations/smoke_proactive_M793481_sub1.json`
   - 缺口闭合：见 `agent/tests/test_proactive_loop.py::test_a_recorded_answer_closes_the_gap_and_stops_the_reask`
 - **成本**：单子任务 435.8 秒；本地端点，配置成本 0。
 - **闭环确认（真实轨迹）**：`states.proactive_loop = {questions_committed: 1, answers_linked: 1, answers_resolved_to_a_value: 1}`。
@@ -1707,8 +1707,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：`VERIFIED`（负面结论）。**建议不实现**；人群为零是本条的全部结论。
-- **通用性**：GENERAL-EMPIRICAL（在固定 开发集用户基线的 100 个唯一子任务定义上测量）。
-- **复现命令**：`python scripts/instruction_conflict_audit.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（在固定 8 用户基线的 100 个唯一子任务定义上测量）。
+- **复现命令**：`python scripts/instruction_conflict_audit.py data/simulations/stock_avg4_8u.json`
 - **背景**：用户点名的提问动机之一是"当前指令和历史偏好冲突 → 必要时澄清冲突"。E-068 只做了"未知槽"提问，
   没有冲突澄清。按项目方法论，先量人群再决定是否实现。
 - **先核实到的既有事实**：`agent/memory/slots.py::resolve_preference_slots` **已经实现了优先级规则**——
@@ -1737,10 +1737,10 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL（ThrashGuard 有量化判定；**EvidenceAgent 无任何产物，无法判定**）。
-- **通用性**：GENERAL-EMPIRICAL（固定 开发集用户基线聚合 + 单元内对照）。
+- **通用性**：GENERAL-EMPIRICAL（固定 8 用户基线聚合 + 单元内对照）。
 - **复现命令**：
-  - `python scripts/runaway_autopsy.py data/simulations/stock_dev.json --repeat-threshold 3`
-  - 自己的 smoke：`data/simulations/thrash_guard_smoke_P8_s44.json`（`states.thrash_guard.events == []`）
+  - `python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json --repeat-threshold 3`
+  - 自己的 smoke：`data/simulations/thrash_guard_smoke_U000828_s44.json`（`states.thrash_guard.events == []`）
 - **ThrashGuard 的量化**：
   - 人群：`thrashing_subtasks = 13/400`，`thrashing_clusters = 7/100`。
   - **上限**：`max_cohort_avg_gain_if_all_rescued = 0.0325`——即使 13 次抖动**全部**被救回也只得 +0.0325。
@@ -1750,7 +1750,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   - 单元内对照：抖动 trial 通过 0/13，非抖动 trial 通过 6/15，Fisher 双侧 p=0.0178。**但这只是相关**：
     抖动更可能是"模型卡住"的症状而不是原因，抑制重复调用并不告诉模型该做什么（与 E-053 同一推理陷阱，
     也与 E-056"单元内对照成立、因果未验"一致）。
-  - 它自己的 smoke（P8，14 个子任务）里 **`events == []`**：真实轨迹上一次都没触发。
+  - 它自己的 smoke（U000828，14 个子任务）里 **`events == []`**：真实轨迹上一次都没触发。
   - 另有 `runaway`（max_steps 终止）口径：`upper_bound_delta = 0.0`——该类运行的平均奖励（0.3077）
     反而略高于非 runaway（0.2931），该人群**没有可改善空间**。
   - **判定**：保留为**有界可选机制**，但**不得计入能力或分数预期**；不推进为默认。
@@ -1767,8 +1767,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL。人群已量化；**干预尚未预注册、未测量**。
-- **通用性**：GENERAL-EMPIRICAL（固定 开发集用户基线，400 次运行，仅读工具调用与消息文本）。
-- **复现命令**：`python scripts/no_write_audit.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（固定 8 用户基线，400 次运行，仅读工具调用与消息文本）。
+- **复现命令**：`python scripts/no_write_audit.py data/simulations/stock_avg4_8u.json`
 - **动机**：E-066 把"目标商品已打印但仍失败"的 135 次拆成"绑定了别的已见 id（57）"和"一个 id 都没绑（60）"。
   后者更大且未解释，且可能不是模型选择而是机械缺陷。本轮把它拆开。
 - **实测结果（400 次运行）**：
@@ -1813,8 +1813,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：`VERIFIED`（负面结论，可零模型复现）。**在 `stock + RewriteMemory` 下不预注册该干预。**
-- **通用性**：GENERAL-EMPIRICAL（固定 开发集用户基线，400 次运行）。
-- **复现命令**：`python scripts/confirmation_feasibility.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（固定 8 用户基线，400 次运行）。
+- **复现命令**：`python scripts/confirmation_feasibility.py data/simulations/stock_avg4_8u.json`
 - **要解决的前置问题**（E-073 下一步）：E-073 提出"把候选与当前指令约束的满足关系作为附加观察，减少'问了用户然后被放弃'的运行"。
   在冻结配置（stock + RewriteMemory）下没有结构化记忆，唯一可用的约束来源是 `TaskSpec.compile(instruction)`。
   必须先量出这个来源能覆盖 E-073 人群的多少——**约束为空的运行，视图无话可说，干预碰不到它**。
@@ -1974,7 +1974,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **用户授权**：本轮用户裁决"不跑评测，先扩宽约束召回（零模型）"。
 - **复现命令**：
   - 召回：`python -c` 统计 771 个定义中 `TaskSpec.compile(...).must` 里 kind='attribute' 的数量与带 `attribute_key` 的数量
-  - 下游：`python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json`
+  - 下游：`python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json`
 - **做法（不加任何新词表）**：`agent/memory/slots.py::_CANONICAL_MARKERS` 里**早已存在** `大床→大床房`、`动车→高铁`、`提神→高咖啡因`
   这类"标记→规范值"映射，但**指令侧的约束提取从未使用它**——所以「要大床的」抽不出 `room_type` 约束。
   新增 `_stated_slot_constraints()` 复用这张既有表，并按 facet 限定适用范围。
@@ -2052,8 +2052,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL（描述性统计，非因果）。整合完成，可一键复现。
-- **通用性**：GENERAL-EMPIRICAL（固定 开发集用户基线；纯机械计数，无 rubric、无 reward 信号、无 `user_intention`）。
-- **复现命令**：`python scripts/longhorizon_report.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（固定 8 用户基线；纯机械计数，无 rubric、无 reward 信号、无 `user_intention`）。
+- **复现命令**：`python scripts/longhorizon_report.py data/simulations/stock_avg4_8u.json`
 - **动机**：本会话此前的工具行为证据散在 `runaway_autopsy` / `target_reachability` /
   `candidate_selection_audit` / `no_write_audit` 四个脚本里，无法一次讲清"agent 在长任务上到底怎么用工具"。
   本条把它整合成单一报告。
@@ -2108,7 +2108,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   E-042（控制器净负）记录的都是**失败或不完整**。拿不出正面结果的词会被面试官拆掉。
 - **因此改为演示一条证据成立的窄命题：记忆在会话内自适应。**
   演示把两类证据**显式分开**，不混：
-  - **REAL**（来自 `data/simulations/smoke_proactive_P4_sub1.json`）：真实运行里模型**确实问了**策略提议的那个问题，
+  - **REAL**（来自 `data/simulations/smoke_proactive_M793481_sub1.json`）：真实运行里模型**确实问了**策略提议的那个问题，
     闭环计数 `{questions_committed: 1, answers_linked: 1, answers_resolved_to_a_value: 1}`，
     用户真实回答 `'随便，你看着办吧。'`。
   - **DERIVED**（零模型重放）：缺口声明 → 提议（不花预算）→ 记账 → 答复解析 → 缺口状态。
@@ -2155,7 +2155,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 其中：移除的类别约束字符 | 619 |
 
 - **结论（诚实）**：
-  1. 这些改动**太小**。平均 6.2 个字符、覆盖 21.3% 的定义，**不足以让人期待在 开发集用户队列上产生可检测的分数变化**。
+  1. 这些改动**太小**。平均 6.2 个字符、覆盖 21.3% 的定义，**不足以让人期待在 8 用户队列上产生可检测的分数变化**。
      主要效果（126 个定义）是删掉 `饭`/`外卖`/`酒店`/`汤` 这几个 1–2 字的类别词。
   2. **字符数不是全部**：E-059（极性）与 E-061（安全约束从"完全不存在"变为存在）是**语义性**的，
      大小度量不到它们。但它们是否真被模型误用，**没有测量**，所以不得声称有效。
@@ -2175,8 +2175,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL。频率与影响是**实测**；可优化性是**判断**，逐条附证据出处。
-- **通用性**：GENERAL-EMPIRICAL（`stock_dev.json`，400 次子任务-trial，283 次失败，通过率 29.2%）。
-- **复现命令**：`python scripts/failure_priority.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（`stock_avg4_8u.json`，400 次子任务-trial，283 次失败，通过率 29.2%）。
+- **复现命令**：`python scripts/failure_priority.py data/simulations/stock_avg4_8u.json`
 - **口径**：影响 = 该类**全部**被救回时对官方 Avg@4 的上限。一次子任务-trial 救回 = 0.0025
   （该 unit 的 trial 均值动 1/4，该 unit 权重 1/100）。这是**上限**，假设 100% 有效。
   标志**不互斥**，一次运行可同时命中多个，因此占比之和超过 100%。
@@ -2214,8 +2214,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL。成因已拆分（零模型）；**两处限定使结论弱于字面**（见下）。
-- **通用性**：GENERAL-EMPIRICAL（`stock_dev.json`，400 次运行；只读工具调用与消息文本）。
-- **复现命令**：`python scripts/failure_cause_split.py data/simulations/stock_dev.json`
+- **通用性**：GENERAL-EMPIRICAL（`stock_avg4_8u.json`，400 次运行；只读工具调用与消息文本）。
+- **复现命令**：`python scripts/failure_cause_split.py data/simulations/stock_avg4_8u.json`
 - **动机**：E-084 排了优先级，但排名不回答"这是 agent 的错、检索的错，还是任务本身的错"。本条把前两类各自再拆一层。
 - **类别 1：`target_never_printed`（144 次）**
 
@@ -2286,8 +2286,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **移除的断言**：*"多一条实验路径等于多一种能力"*——四条路径没有一条有可引用的分数产物；
   *"--agent adapt 正在被测量"*——它指向的类连一个评分 checkpoint 都不存在。
 - **适用边界**：这是结构收敛，不是干预效果。`AdaptAgent` 的对照仍是 stock `PersonalizationAgent`；
-  开发集用户队列上 ±0.0582 的噪声下限不变，任何提分主张仍须走 E-057 之后的非配对对比与官方单元门禁。
-- **后续风险/下一步**：`AdaptAgent` 尚未在 开发集用户 × 4 trial 上测量。**"可测量"不等于"有增益"。**
+  8 用户队列上 ±0.0582 的噪声下限不变，任何提分主张仍须走 E-057 之后的非配对对比与官方单元门禁。
+- **后续风险/下一步**：`AdaptAgent` 尚未在 8 用户 × 4 trial 上测量。**"可测量"不等于"有增益"。**
 - **能力抽象**：proactiveness（主动提问闭环的观察侧）/ updating（答复进事实库的状态转移）。
 
 ## E-087：给唯一那个 agent 加第二个机制——候选/约束三值观察，独立开关、默认关闭、未测量
@@ -2330,7 +2330,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   E-053 的教训是只处理包装形状会让机制在真实路径上完全空转。
 - **移除的断言**：*"审计里频率最高的失败类别就等于该修的瓶颈"*——E-053 已经用一次预注册干预否证过这条推理。
   本次只是把"判定所需信息已经打印出来"这一观察做成**可开关、可单独测量**的机制，**不声称它会提分**。
-- **适用边界**：开发集用户队列上 ±0.0582 的噪声下限不变；机制默认关闭，尚未进入任何测量配置。
+- **适用边界**：8 用户队列上 ±0.0582 的噪声下限不变；机制默认关闭，尚未进入任何测量配置。
   与 E-084/E-085 同一口径：那些次数是**归因**，不是干预结果。
 - **后续风险/下一步**：先做一次真实投递形状的冒烟（裸 `ToolMessage` 与 `MultiToolMessage` 两条路径），
   再按 E-057 之后的非配对对比与官方单元门禁测量。**"已实现且测试通过"不等于"有效"。**
@@ -2340,12 +2340,12 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL。机制触发情况**已实测**；根因当时是假设，现已由 E-090 实测证伪并替换。
-- **通用性**：GENERAL-EMPIRICAL（开发集用户的完整历史，零模型重放）。
+- **通用性**：GENERAL-EMPIRICAL（8 个用户的完整历史，零模型重放）。
 - **复现命令**：`python scripts/memory_evolution_audit.py`
 - **动机**：benchmark 的能力项包含"长期记忆与关系管理"和"真实场景动态适应"——即偏好随数月/数年演变。
   仓库**已有**这套机制（作用域漂移检测、事实取代、生命周期遗忘），但**从没量过它是否触发**。
   E-072 的教训是：机制存在不等于会开火（ThrashGuard 在自己的 smoke 里触发 0 次）。
-- **实测（开发集用户，整段历史，启发式路径 `llm=None`）**：
+- **实测（8 用户，整段历史，启发式路径 `llm=None`）**：
 
   | 指标 | 合计 |
   | --- | --- |
@@ -2356,7 +2356,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 遗忘淘汰 | **2,968** |
   | 单值维度同时持有多个 active 值 | **18** |
 
-  开发集用户**每一个**的 superseded 都是 0。
+  8 个用户**每一个**的 superseded 都是 0。
 - **结论**：
   1. **取代一次都没发生。** `FactStore.ingest` 的取代路径从未走通。
   2. **这个记忆的"演变"实际上是衰减淘汰**（遗忘 2968 次），不是适应。旧偏好不是被新偏好取代，而是被容量上限扔掉。
@@ -2378,10 +2378,10 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：PARTIAL。归因已机械实现；**8 条（2.8%）不可归因**，需 rubric 才能分类。
-- **通用性**：GENERAL-EMPIRICAL（`stock_dev.json`，400 次运行、283 次失败，互斥主标签）。
+- **通用性**：GENERAL-EMPIRICAL（`stock_avg4_8u.json`，400 次运行、283 次失败，互斥主标签）。
 - **复现命令**：
-  - `python scripts/mechanism_attribution.py data/simulations/stock_dev.json`
-  - 未归因者细读：`python scripts/_unattributed_probe.py data/simulations/stock_dev.json`
+  - `python scripts/mechanism_attribution.py data/simulations/stock_avg4_8u.json`
+  - 未归因者细读：`python scripts/_unattributed_probe.py data/simulations/stock_avg4_8u.json`
 - **归因口径（用户的硬性要求）**：**禁止**归因为"这道题的关键词没匹配上"；
   必须归因为"Agent 缺乏处理此类模糊指代的通用逻辑"。分类器因此**只看 agent 拿着它已经拥有的信息做了什么**，
   不看它包含什么词。用户给的六类是**示例而非封闭清单**。
@@ -2402,7 +2402,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   （"要现在支付吗？💳" / "那你自己支付就行～订单号是…记得在订单列表里找到它完成支付哦"）。
   指令是 `commit`（已授权交易），因此这是**通用的"收尾"逻辑缺失**，不是词汇问题。已并入分类器，不可归因降到 8 条。
 - **剩余 8 条为何仍不可归因**：它们机械上无可指摘（观察到目标、绑对候选、写入成功、未死循环、未幻觉），
-  却仍然失败——例如 `P6 sub1` 最后一句是"**支付成功！✅**"。要分类必须看到 rubric 条件，
+  却仍然失败——例如 `P722245 sub1` 最后一句是"**支付成功！✅**"。要分类必须看到 rubric 条件，
   而**运行时不可见**。如实标为不可归因，不硬塞。
 - **两个方向性发现**：
   1. **主动性是"问太多"不是"问太少"**：过度提问 42 vs 漏问 2，差 21 倍。
@@ -2418,7 +2418,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 - **日期**：2026-09-13
 - **状态**：PARTIAL。机制触发情况与三个根因**已实测**；取代与单值冲突两项已有前后对照；
   **但这不是分数结论**（见"不做的声明"）。
-- **通用性**：GENERAL-EMPIRICAL（开发集用户的完整历史，零模型重放，启发式路径 `llm=None`）。
+- **通用性**：GENERAL-EMPIRICAL（8 个用户的完整历史，零模型重放，启发式路径 `llm=None`）。
 - **复现命令**：
   - 前/后对照：`python scripts/memory_evolution_audit.py`
   - 反例门禁：`python -m pytest agent/tests/test_preference_evolution.py -v`
@@ -2454,7 +2454,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
      同极性单值槽**时，旧的 active 事实置为 `superseded`。漂移检测器**保留**（它仍做自己的
      置信衰减与检索抑制），两条路径同时命中是幂等的。
   4. **重新激活也解析槽**：去重分支激活旧值时同步退休槽内竞争值（根因 4）。
-- **前/后对照**（开发集用户整段历史，启发式路径；`facts` 4,933 与 `forgotten` 2,968 **未变**，
+- **前/后对照**（8 用户整段历史，启发式路径；`facts` 4,933 与 `forgotten` 2,968 **未变**，
   即取代没有以增加遗忘为代价）：
 
   | 指标 | 前 | 后 |
@@ -2464,8 +2464,8 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 单值槽同时持有多个 active 值 | **18** | **0** |
   | active 事实 | 4,933 | 4,906 |
 
-  逐用户 superseded（前 → 后）：P1 0→3、P2 0→1、P3 0→2、P4 0→1、
-  P5 0→3、P6 0→4、P7 0→7、P8 0→6；**开发集用户的单值冲突前为 2/1/2/1/2/2/5/3，后全部为 0**。
+  逐用户 superseded（前 → 后）：E057330 0→3、E941775 0→1、J365414 0→2、M793481 0→1、
+  O309411 0→3、P722245 0→4、Q089190 0→7、U000828 0→6；**8 个用户的单值冲突前为 2/1/2/1/2/2/5/3，后全部为 0**。
   E-088 点名的两个矛盾 `('local_commerce','beverage','temperature','奶茶')` 与 `(…,'咖啡')`
   不再出现在冲突列表里——同一槽现在只留一个 active 值。
   `drift_events` 15→14 属预期：漂移槽键按 `category` 拆分后，原先被并到一个"default"槽的冲突
@@ -2503,7 +2503,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
 - **日期**：2026-09-13
 - **状态**：OPEN。机制已实现并通过零模型门禁；**reach 已实测**；开关默认 **False**；**本条不声称任何分数变化**。
-- **通用性**：GENERAL-STRUCTURAL（机制、开关、落盘字段、零模型测试）+ GENERAL-EMPIRICAL（`stock_dev.json` 400 次运行重放）。
+- **通用性**：GENERAL-STRUCTURAL（机制、开关、落盘字段、零模型测试）+ GENERAL-EMPIRICAL（`stock_avg4_8u.json` 400 次运行重放）。
 - **动机（两个机制、一个根因）**：E-089 的互斥主标签里有两类相邻失败：
   **规划缺陷 `planning_defect` 66 条（23.3%）**——搜索了、给了选项、然后**一次写入都没尝试**就停了；
   **不该问乱问 `over_asking` 42 条（14.8%）**——任务需要的槽**全部已定**却仍然提问。合计 **108 条（38.2%）**。
@@ -2528,7 +2528,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   `test_the_block_contains_no_imperative_or_recommendation` 对 `请/建议/应该/必须/需要您/现在可以/should/must`
   **逐词**断言，并在四种状态下各渲染一次，未来的改动无法悄悄把它变成指令。
 - **reach 实测（先量再决定是否花钱，E-074 的纪律）**：
-  - 复现命令：`python scripts/task_state_reach.py data/simulations/stock_dev.json`
+  - 复现命令：`python scripts/task_state_reach.py data/simulations/stock_avg4_8u.json`
     （只用编译器与保存下来的 trajectory；无模型、无 rubric、不读 target/distraction 标注；
     reward 只用来把 400 条评分运行分成通过与失败。）
   - 400 条评分运行 / **283 条失败**；其中 **275 条会收到至少一个块**（共 2120 个块）。
@@ -2543,7 +2543,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
     若改用问题策略**自己**的"可问缺口"定义（`USER_ONLY_SLOTS` 减去工具可查/上下文可解析），
     **214 条失败运行没有任何可问缺口**（其中 87 条从未写入）。即：reach 的瓶颈是**编译器槽定义**，
     不是机制本身——`product` 一处就占 128 条（`_PRODUCT_CATEGORIES` 覆盖不到的食物名，E-068 已记录过）。
-- **判定（明确写出来）**：**reach 不足以仅凭本机制花一次 开发集用户 Avg@4**。
+- **判定（明确写出来）**：**reach 不足以仅凭本机制花一次 8 用户 Avg@4**。
   它高于 E-074 的杀线（21/400 = 5.3%，上限 +0.0525），但也只是**勉强**：可分辨余量要求挽救
   ≥53% 的 44 条可达运行，而严格的 planning_defect 半边（14 条）无论怎样都读不出来；
   同时这个块会落到 **275/283 条失败运行**（以及几乎所有通过运行）上，**坏处是全域的、好处只集中在 44 条里**。
@@ -2567,53 +2567,53 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   - `python -m agent.vitabench_runner --help` → 退出 0，`--task-state` 在列
 - **移除的断言**：*"审计里频率最高的失败类别就等于该修的瓶颈"*——E-053 已用一次预注册干预否证；
   以及 *"把状态摆到模型面前就等于模型会行动"*——**reach 是必要条件，不是效果**。本条只给出可达规模，不给效果。
-- **适用边界**：开发集用户队列上 ±0.0582 的噪声下限不变；重放用的是 `--memory-type rewrite` 的 stock 基线，
+- **适用边界**：8 用户队列上 ±0.0582 的噪声下限不变；重放用的是 `--memory-type rewrite` 的 stock 基线，
   没有结构化记忆，因此"已定"只按编译器口径计算——真实 ADAPT 配置下记忆可能再多定几个槽，故实测是**下界**；
   "已问过"在重放里用现有的 `_looks_like_a_question` 读助手轮（stock 没有 proactive 引擎，没有已提交问句记录），
   这个代理偏松，已如实标注。**"已实现且测试通过"与"reach 够大"都不等于"有效"。**
 - **能力抽象**：planning / proactiveness / utilization（**观测**，非干预）。
 
-## E-092：`--cohort dev` 与缓存基线不是同一批开发集用户（重叠 2 个）——一次会跑错 11.5 小时的运行被拦下
+## E-092：`--cohort dev` 与缓存基线不是同一批 8 个用户（重叠 2/8）——一次会跑错 11.5 小时的运行被拦下
 
 - **日期**：2026-09-13
 - **状态**：OPEN。**不改动任何 agent 行为**；本条约束的是**测量设备**本身。
 - **通用性**：GENERAL-STRUCTURAL（checkpoint 的 `tasks` 字段是队列身份，`info["cohort"]` 只是 CLI 标签）。
-- **难点**：按用户批准的主线配置启动 开发集用户 ADAPT 臂时用了 `--cohort dev`。**首个 `task_id` 是 `B865629`**，
-  而 `stock_dev.json` 的 开发集是 `P1 / P2 / P3 / P4 / P5 / P6 / P7 / P8`。
+- **难点**：按用户批准的主线配置启动 8 用户 ADAPT 臂时用了 `--cohort dev`。**首个 `task_id` 是 `B865629`**，
+  而 `stock_avg4_8u.json` 的 8 人是 `E057330 / E941775 / J365414 / M793481 / O309411 / P722245 / Q089190 / U000828`。
   `B865629` 不在其中。运行已进入第 1 个用户第 1/16 个子任务（会话完成、已评测），
   照此跑完约 **11.5 小时**（基线实测 **86.4 min/(用户·试次)**），产出的将是一份**与缓存基线不可比**的检查点。
 - **证据**（零模型，无 API 调用）：
   - `python -c "from agent.vitabench_runner import get_tasks, stable_user_split; ..."` →
-    56 个任务；`dev = ['U200109','W974351','U010122','U901652','B865629','P7','Y208341','P1']`；
-    `blind = ['U973458','U778202','P2','X193757','Z544664','U778201','U820719','P5']`；
-    **dev 与基线重叠 2 人**（`P1`、`P7`），且 `P2`、`P5` 现在被分到 blind。
-  - `python -c "json.load(open('data/simulations/stock_dev.json'))['tasks']"` →
-    `['P1','P2','P3','P4','P5','P6','P7','P8']`；
-    `simulations` 里的 `task_id` 集合与之一致（开发集，(user,trial) 键集合一致）。
+    56 个任务；`dev = ['U200109','W974351','U010122','U901652','B865629','Q089190','Y208341','E057330']`；
+    `blind = ['U973458','U778202','E941775','X193757','Z544664','U778201','U820719','O309411']`；
+    **dev 与基线重叠 2 人**（`E057330`、`Q089190`），且 `E941775`、`O309411` 现在被分到 blind。
+  - `python -c "json.load(open('data/simulations/stock_avg4_8u.json'))['tasks']"` →
+    `['E057330','E941775','J365414','M793481','O309411','P722245','Q089190','U000828']`；
+    `simulations` 里的 `task_id` 集合与之一致（8 人、32 条 (user,trial)）。
 - **根因**：`stable_user_split` 对**当前** `get_tasks(language)` 的**全集**按 `sha256(f"{SPLIT_SEED}:{user_id}")`
   排序取前 8（`vitabench_runner.py:226-234`，`SPLIT_SEED = "ADAPT-2026"`）。种子没变，
   **但被排序的全集变了**：基线是 2026-09-06 的快照，此后任务集合发生了变动，于是"dev"这个名字指向了另一批人。
-  CLAUDE.md 已经把这个陷阱写成"两个都叫 the dev cohort 的队列，只重叠 2 人"，但那条警告**在运行命令里看不出来**：
+  CLAUDE.md 已经把这个陷阱写成"两个都叫 8 dev users 的队列，只重叠 2 人"，但那条警告**在运行命令里看不出来**：
   `--cohort dev` 打出的标签是 `dev`，基线打出的标签也是 `dev`，两者长得一样。
-- **险些造成的错误**：若按 `--cohort dev` 跑完再与 `stock_dev.json` 对照，
-  **开发集里有 6 人不同**，这个差异会被读成"本次改动的效果"，而它其实只是换了队列。
+- **险些造成的错误**：若按 `--cohort dev` 跑完再与 `stock_avg4_8u.json` 对照，
+  **8 人里有 6 人不同**，这个差异会被读成"本次改动的效果"，而它其实只是换了队列。
   这是本轮最贵的一个坑，且**只有在看 `tasks` 字段时才会暴露**。
 - **有效方案**：
   1. 一切与缓存基线的对照必须用**显式** `--task-ids`（`nargs="*"`，直接绕过 split，
      见 `vitabench_runner.py:429` 的 `set(task_ids or split[cohort])`）。
-     本轮最终命令：`--task-ids P1 P2 P3 P4 P5 P6 P7 P8`。
+     本轮最终命令：`--task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828`。
   2. **队列身份取 `tasks` 字段，不取 `info["cohort"]`**：checkpoint 写入的是
      `"tasks": sorted(selected_ids)`（`:485`），产物因此自我描述；`info["cohort"]` 只是 CLI 标签。
-     本次显式指定 开发集时标签仍是 `dev`，已知并如实记录。
+     本次显式指定 8 人时标签仍是 `dev`，已知并如实记录。
   3. 新增设备 `scripts/_trial_slice_metrics.py`：把官方单位 `(task_id, subtask_idx)` 按试次切片，
      以解决"1 试次臂 vs 缓存 4 试次基线不是同一个量"的问题。**校准**：在基线上复现出
      官方 `Avg@4 = 0.2925` 与用户等权 `0.2940`，与文档逐位一致；
      四个单试次切片为 `0.2900 / 0.3200 / 0.2900 / 0.2700`——即**单试次的公平对照就是 ≈0.29**，
-     这同时给出单试次切片的抽样抖动（sd≈0.019，仍**远小于** 开发集用户对照下限 ±0.0582）。
+     这同时给出单试次切片的抽样抖动（sd≈0.019，仍**远小于** 8 用户对照下限 ±0.0582）。
 - **附带发现（对后续重跑有用）**：`run_selected` 支持**断点续跑**——若 `save_to` 已存在
   且 `info` 与 `tasks` 完全一致，则从已完成集合 `done` 继续（`:488-498`）；
   配置不一致会直接 `raise ValueError`。所以被拦下的这次运行没有污染任何产物（未写出检查点文件）。
-- **验证**：`scripts/_trial_slice_metrics.py data/simulations/stock_dev.json` →
+- **验证**：`scripts/_trial_slice_metrics.py data/simulations/stock_avg4_8u.json` →
   `official units=100`、`pooled Avg@4=0.2925`、`equal-user-weight=0.2940`、
   `sim durations: n=32 mean=86.4 min total=46.1 h`。
 - **适用边界**：本条不声称任何能力或分数变化。它只在**跨运行比较之前**生效：
@@ -2624,15 +2624,15 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   而不是打印一个看似有效的数字。（本条已记录，尚未实现。）
 - **能力抽象**：不在六类能力之内——属于 **measurement integrity（评测设备完整性）**。
 
-## E-093：开发集用户 ADAPT 主臂实测——**不可分辨**（+0.0375，低于 ±0.0582）；主动性问句 11 问 3 落值；主失败类 state_loss 未降
+## E-093：8 用户 ADAPT 主臂实测——**不可分辨**（+0.0375，低于 ±0.0582）；主动性问句 11 问 3 落值；主失败类 state_loss 未降
 
 - **日期**：2026-09-14
 - **状态**：**VERIFIED（否定性结果）**。这是本条最重要的性质：它**不是**"有效"，也**不是**"无效"，而是按预注册判据落进了**不可分辨**带。
-- **通用性**：GENERAL-EMPIRICAL（开发集用户 × 1 试次，官方单位 100 个，零模型复现命令见下）。
+- **通用性**：GENERAL-EMPIRICAL（8 用户 × 1 试次，官方单位 100 个，零模型复现命令见下）。
 - **代码版本**：`7d1b610`（运行期间未改动 agent/memory 代码，这是归因成立的前提）。
 - **臂配置**（逐字）：`--agent adapt --proactive-loop --memory-type adapt --profile-summary --num-trials 1`，
-  队列用**显式** `--task-ids P1 P2 P3 P4 P5 P6 P7 P8`
-  （`--cohort dev` 已不等于基线队列，见 E-092）。checkpoint：`data/simulations/adapt_dev_1t.json`（15.5 MB，8/开发集用户，
+  队列用**显式** `--task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828`
+  （`--cohort dev` 已不等于基线队列，见 E-092）。checkpoint：`data/simulations/adapt8_1t.json`（15.5 MB，8/8 用户，
   `evaluation_status` 全 ok，终止原因全 `user_stop`）。耗时 **545 分钟**（约 68 min/用户）。
 - **主结果（官方单位 100 个）**：
 
@@ -2642,11 +2642,11 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
   | 基线 pooled Avg@4（同 100 单位） | 0.2925 |
   | 基线 trial-0 切片（同粒度） | 0.2900 |
   | 差值 vs pooled / vs trial-0 | **+0.0375 / +0.0400** |
-  | 开发集用户噪声下限 | **±0.0582** |
+  | 8 用户噪声下限 | **±0.0582** |
   | 目标 | 0.35（**未达到**，差 0.02） |
   | 官方单位配对 | **fixes 14 / breaks 10**，net +4，z=+0.82，**p=0.4142**，门禁**未过** |
   | 门禁算术 | 24 个翻转对 → 需要 net ≥ 10（delta ≥ +0.10），实测 net 4 |
-  | 逐用户 rollup | 开发集用户，better 4 / worse 3 / 持平 1，平均 +0.0362 |
+  | 逐用户 rollup | 8 用户，better 4 / worse 3 / 持平 1，平均 +0.0362 |
 
   **判定（预注册三档）**：`NOT RESOLVABLE`。落在 0.32–0.35 带内——**既不能声称有效，也不能声称无效**。
   按仓库纪律，**禁止**把它写成"机制无效"或"机制有效"。
@@ -2654,21 +2654,21 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
 
   | user | 臂 | 基线均值 | 差值 | 基线自身极差 |
   |---|---|---|---|---|
-  | P1 | 0.5385 (7/13) | 0.2885 | +0.2500 | 0.2308 |
-  | P2 | 0.2857 (4/14) | 0.2857 | +0.0000 | 0.0000 |
-  | P3 | 0.2727 (3/11) | 0.4091 | −0.1364 | 0.0909 |
-  | P4 | 0.3636 (4/11) | 0.2727 | +0.0909 | 0.0000 |
-  | P5 | **0.0000 (0/12)** | 0.1250 | −0.1250 | 0.2500 |
-  | P6 | 0.4545 (5/11) | 0.3636 | +0.0909 | 0.0000 |
-  | P7 | 0.2857 (4/14) | 0.3036 | −0.0179 | 0.0714 |
-  | P8 | 0.4286 (6/14) | 0.3036 | +0.1250 | 0.0714 |
+  | E057330 | 0.5385 (7/13) | 0.2885 | +0.2500 | 0.2308 |
+  | E941775 | 0.2857 (4/14) | 0.2857 | +0.0000 | 0.0000 |
+  | J365414 | 0.2727 (3/11) | 0.4091 | −0.1364 | 0.0909 |
+  | M793481 | 0.3636 (4/11) | 0.2727 | +0.0909 | 0.0000 |
+  | O309411 | **0.0000 (0/12)** | 0.1250 | −0.1250 | 0.2500 |
+  | P722245 | 0.4545 (5/11) | 0.3636 | +0.0909 | 0.0000 |
+  | Q089190 | 0.2857 (4/14) | 0.3036 | −0.0179 | 0.0714 |
+  | U000828 | 0.4286 (6/14) | 0.3036 | +0.1250 | 0.0714 |
 
-  **单用户自身的单试次抖动实测**（同一用户四个基线切片）：P1 **0.2308**、P5 **0.2500**、
-  P3 0.0909、P7/P8 0.0714、P2/P4/P6 **0.0000**。
-  所以"某用户变差"本身证明不了变差：P5 的 0.0000 也在它自己四次历史之内（其中一次就是 0.0000）。
+  **单用户自身的单试次抖动实测**（同一用户四个基线切片）：E057330 **0.2308**、O309411 **0.2500**、
+  J365414 0.0909、Q089190/U000828 0.0714、E941775/M793481/P722245 **0.0000**。
+  所以"某用户变差"本身证明不了变差：O309411 的 0.0000 也在它自己四次历史之内（其中一次就是 0.0000）。
 - **机制级发现（本条真正的价值，与分数无关）**：
-  - **主动性问句循环近乎空转**：开发集用户合计 `questions_committed 11 / answers_linked 11 /
-    answers_resolved_to_a_value **3**`——**转化率 27%**；其中 **P3 一次都没触发（0 问）**。
+  - **主动性问句循环近乎空转**：8 用户合计 `questions_committed 11 / answers_linked 11 /
+    answers_resolved_to_a_value **3**`——**转化率 27%**；其中 **J365414 一次都没触发（0 问）**。
     问句只有落成槽值才可能影响选择，所以**本次成绩变化不能归给主动性**。
   - **记忆/画像路径没有打中它该打的目标**：`state_loss`（personalization / long-term memory）
     在臂上的占比 **46.3%（31/67）vs 基线 44.9%（127/283）——没有下降**。
@@ -2676,25 +2676,25 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
     SE≈6pp，只能看方向）：`planning_defect` 23.3% → 19.4%（降）、
     `over_asking` 14.8% → **17.9%（升）**、`missed_question` 0.7% → 4.5%（升，仅 3 条）。
 - **复现命令（全部零模型）**：
-  - `python scripts/adapt_arm_report.py --arm data/simulations/adapt_dev_1t.json --baseline data/simulations/stock_dev.json`
+  - `python scripts/adapt_arm_report.py --arm data/simulations/adapt8_1t.json --baseline data/simulations/stock_avg4_8u.json`
     → `pooled Avg@1 = 0.3300`、`delta +0.0375`、`VERDICT: NOT RESOLVABLE`、`fixes 14 / breaks 10`、`p=0.4142`
-  - `python scripts/mechanism_attribution.py data/simulations/adapt_dev_1t.json --json`
+  - `python scripts/mechanism_attribution.py data/simulations/adapt8_1t.json --json`
     → `graded=100 failing=67 pass_rate=0.3300`；`state_loss 31 / 46.3%`
-  - `python scripts/arm_early_look.py --arm data/simulations/adapt_dev_1t.json`（逐用户 + 自校准停止线）
-  - 由 `scripts/_arm_watch.ps1` 自动落盘：`data/simulations/adapt_dev_1t_report.txt`、
-    `adapt_dev_1t_attribution.json`
+  - `python scripts/arm_early_look.py --arm data/simulations/adapt8_1t.json`（逐用户 + 自校准停止线）
+  - 由 `scripts/_arm_watch.ps1` 自动落盘：`data/simulations/adapt8_1t_report.txt`、
+    `adapt8_1t_attribution.json`
 - **预注册的有效性**：判据在 20:49（结果存在之前）写入 `docs/ADAPT_ARM_PREREG_2026-09-13.md`，
   并且在 §6b 事先算清了"配对门禁需要 net ≥ 1.96·√n"——实测 24 个翻转对、net 4，
   与事先给出的表完全对应。**本条没有事后改判据。**
 - **停止规则的实测表现**：`scripts/arm_early_look.py` 用**每个用户自身**的基线极差做阈值
-  （不是固定阈值——0.25 对 P1 是噪声、对 P4 是不可能）。运行中它只对 **P3**
-  （−0.1364 vs 自身极差 0.0909）发出 STOP，未对 P5（−0.1250 vs 自身极差 0.2500）发出——
+  （不是固定阈值——0.25 对 E057330 是噪声、对 M793481 是不可能）。运行中它只对 **J365414**
+  （−0.1364 vs 自身极差 0.0909）发出 STOP，未对 O309411（−0.1250 vs 自身极差 0.2500）发出——
   事后看这个区分是**正确的**。
-- **成本/收益**：约 **9 小时**算力换一个"不可分辨"的结论。这是 开发集用户单试次设计的结构性代价
+- **成本/收益**：约 **9 小时**算力换一个"不可分辨"的结论。这是 8 用户单试次设计的结构性代价
   （见预注册 §6b：单试次要过门禁需要 net ≥ 1.96·√n，而 24 个翻转对意味着 delta ≥ +0.10 才行）。
-  下次若还要在这个队列上做判定，应当**直接上 4 试次**，并把预算事先讲清（开发集用户 × 4 试次 ≈ 46 h）。
+  下次若还要在这个队列上做判定，应当**直接上 4 试次**，并把预算事先讲清（8 用户 × 4 试次 ≈ 46 h）。
 - **适用边界**：臂为 1 试次、基线为 4 试次，是**非配对**比较；差值落在不可分辨带内，
-  因此本条**不支持**任何"ADAPT 比 stock 更好/更差"的表述。开发集用户队列本身只有 ±0.0582 的分辨率，
+  因此本条**不支持**任何"ADAPT 比 stock 更好/更差"的表述。8 用户队列本身只有 ±0.0582 的分辨率，
   目标 0.35 需要 +0.0575，**恰好压在可分辨边界上**——这个队列对目标而言没有余量。
 - **后续风险/下一步**（按证据排序，不是按偏好）：
   1. **`state_loss` 占 46.3% 且未降**：这是最大的一类，且已被两次独立测量（E-089 的 44.9% 与本次 46.3%）
@@ -2702,13 +2702,13 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `P1` 第 8/13 �
      应当直接攻这一类，而不是再加观测层机制。
   2. **主动性问句循环应当先修转化率或先下线**：27% 落值率加上"某用户 0 触发"，
      说明它在当前形态下既不稳定也不产生可用信息；继续在它上面加码没有证据支持。
-  3. 若要判定任何改动是否有效，**不要再做单试次 开发集用户**（结构性读不出来）。
+  3. 若要判定任何改动是否有效，**不要再做单试次 8 用户**（结构性读不出来）。
 - **能力抽象**：personalization / long-term memory（**未改善**）、proactiveness（**转化率 27%，近空转**）、
   long-horizon consistency（未测）。
 
 ### E-093 附：子指标与一次自我更正
 
-官方单位在 开发集用户上太粗、太噪，无法描述一次数据层改动，因此补了一组**与该改动逐项对应**的子指标
+官方单位在 8 用户上太粗、太噪，无法描述一次数据层改动，因此补了一组**与该改动逐项对应**的子指标
 （`scripts/submetrics.py`、`scripts/submetric_panel.py`，零模型，一条命令重跑）。
 **基线必须用全部 4 试次（n=400）对照**——四个试次是同一脚本的四次抽样，不是独立样本。
 

@@ -11,7 +11,7 @@ slot. The risk to watch is silently losing coverage on recommendation-type
 subtasks, so the report splits by domain and action and prints the slot mix.
 
 Usage:
-    python scripts/proactive_coverage_audit.py data/simulations/stock_dev.json
+    python scripts/proactive_coverage_audit.py data/simulations/stock_avg4_8u.json
 """
 
 from __future__ import annotations

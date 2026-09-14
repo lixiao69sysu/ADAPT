@@ -10,8 +10,8 @@
 #   & scripts/_arm_watch.ps1 -Arm data/simulations/foo.json -Baseline data/simulations/bar.json
 
 param(
-    [string]$Arm = 'data/simulations/adapt_dev_1t.json',
-    [string]$Baseline = 'data/simulations/stock_dev.json',
+    [string]$Arm = 'data/simulations/adapt8_1t.json',
+    [string]$Baseline = 'data/simulations/stock_avg4_8u.json',
     [string]$OutDir = 'data/simulations',
     [int]$PollSeconds = 60
 )
@@ -64,14 +64,14 @@ print('[watch] tasks field:', d.get('tasks'))
 print('[watch] evaluation_status:', {s.get('evaluation_status') for s in sims})
 "@ $Arm
 
-$report = Join-Path $OutDir 'adapt_dev_1t_report.txt'
+$report = Join-Path $OutDir 'adapt8_1t_report.txt'
 Write-Host "[watch] writing $report"
 $text = python scripts/adapt_arm_report.py --arm $Arm --baseline $Baseline 2>&1 | Out-String
 $code = $LASTEXITCODE
 Write-Utf8NoBom -Path $report -Text $text
 Write-Host "[watch] arm report exit=$code"
 
-$attrib = Join-Path $OutDir 'adapt_dev_1t_attribution.json'
+$attrib = Join-Path $OutDir 'adapt8_1t_attribution.json'
 Write-Host "[watch] writing $attrib"
 $json = python scripts/mechanism_attribution.py $Arm --json 2>$null | Out-String
 Write-Utf8NoBom -Path $attrib -Text $json

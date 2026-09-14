@@ -1,6 +1,6 @@
 """Per-subtask reward matrix across result files, for unit-level comparison.
 
-Usage: python scripts/_unit_rewards.py stock_dev.json iso_R5a_stock_adaptmemory_summary.json ...
+Usage: python scripts/_unit_rewards.py stock_avg4_8u.json iso_R5a_stock_adaptmemory_summary.json ...
 """
 
 from __future__ import annotations

@@ -29,8 +29,8 @@ is a necessary condition for the mechanism to matter, not evidence that it
 helps. Nothing here is a score claim.
 
 Usage:
-    python scripts/task_state_reach.py data/simulations/stock_dev.json
-    python scripts/task_state_reach.py data/simulations/stock_dev.json --json
+    python scripts/task_state_reach.py data/simulations/stock_avg4_8u.json
+    python scripts/task_state_reach.py data/simulations/stock_avg4_8u.json --json
 """
 
 from __future__ import annotations

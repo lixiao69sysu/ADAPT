@@ -1,4 +1,4 @@
-"""One-shot, zero-model verdict report for the dev-cohort ADAPT arm.
+"""One-shot, zero-model verdict report for the 8-user ADAPT arm.
 
 Implements the rules pre-registered (before the arm data existed) in
 ``docs/ADAPT_ARM_PREREG_2026-09-13.md``. Nothing here decides anything the
@@ -7,8 +7,8 @@ command, not a reading of a table.
 
 Usage:
     python scripts/adapt_arm_report.py `
-        --arm data/simulations/adapt_dev_1t.json `
-        --baseline data/simulations/stock_dev.json
+        --arm data/simulations/adapt8_1t.json `
+        --baseline data/simulations/stock_avg4_8u.json
 
 Unit semantics (vendored, vita/metrics/agent_metrics.py):
     official unit = (task_id, subtask_idx); its reward is the plain mean of its
@@ -32,14 +32,14 @@ from collections import Counter, defaultdict
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 EXPECTED_TASKS = (
-    "P1",
-    "P2",
-    "P3",
-    "P4",
-    "P5",
-    "P6",
-    "P7",
-    "P8",
+    "E057330",
+    "E941775",
+    "J365414",
+    "M793481",
+    "O309411",
+    "P722245",
+    "Q089190",
+    "U000828",
 )
 EXPECTED_CONFIG = {
     "agent_kind": "adapt",
@@ -55,7 +55,7 @@ EXPECTED_SWITCHES = {
 # Pre-registered thresholds, on the pooled (100-unit) average.
 LOW_THRESHOLD = 0.32
 TARGET = 0.35
-NOISE_FLOOR = 0.0582  # dev-cohort unpaired 2*SE, the cohort's resolution limit
+NOISE_FLOOR = 0.0582  # 8-user unpaired 2*SE, the cohort's resolution limit
 
 
 def load(path: pathlib.Path) -> dict:
@@ -160,10 +160,10 @@ def main() -> None:
     if arm_tasks == list(EXPECTED_TASKS):
         print("         ok the 8 pre-registered users")
     elif args.allow_partial_cohort:
-        print("         !! not the pre-registered the dev cohort; partial override in effect")
+        print("         !! not the pre-registered 8 users; partial override in effect")
     else:
         problems.append(
-            f"arm cohort is not the pre-registered the dev cohort: {arm_tasks}"
+            f"arm cohort is not the pre-registered 8 users: {arm_tasks}"
         )
     if arm_tasks == base_tasks:
         print("         identical task sets -> cohorted comparison")
@@ -247,7 +247,7 @@ def main() -> None:
     print("-" * 78)
     delta_pooled = a_pooled - b_pooled
     need_metric = need / len(b_off)
-    # The thresholds below are calibrated for the full dev-cohort / 100-unit cohort.
+    # The thresholds below are calibrated for the full 8-user / 100-unit cohort.
     # Issuing a verdict from a gate-ignored or partial-cohort run would be exactly
     # the kind of number this repository has been burned by, so those modes report
     # the arithmetic and refuse the verdict.
@@ -273,7 +273,7 @@ def main() -> None:
         else:
             verdict = "MEETS TARGET, UNCONFIRMED"
             detail = "at or above the target on the pooled 100-unit mean"
-            action = "run 4 trials on the same the dev cohort to confirm; claim nothing before that"
+            action = "run 4 trials on the same 8 users to confirm; claim nothing before that"
         print(f"VERDICT: {verdict}")
         print(f"  {detail}")
         print(f"  action: {action}")

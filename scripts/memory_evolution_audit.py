@@ -137,8 +137,8 @@ def main() -> int:
 
     tasks_by_id = {task.id: task for task in get_tasks(args.language)}
     users = args.users or [
-        "P1", "P2", "P3", "P4",
-        "P5", "P6", "P7", "P8",
+        "E057330", "E941775", "J365414", "M793481",
+        "O309411", "P722245", "Q089190", "U000828",
     ]
     report = analyse(tasks_by_id, users)
     if args.json:

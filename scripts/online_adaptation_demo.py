@@ -9,7 +9,7 @@ Two kinds of evidence are printed, and they are kept visibly separate:
 
 REAL     excerpts read out of a saved smoke checkpoint. This shows the model
          actually asked the question the policy proposed, and that the loop
-         recorded it. Source: data/simulations/smoke_proactive_P4_sub1.json
+         recorded it. Source: data/simulations/smoke_proactive_M793481_sub1.json
 
 DERIVED  a zero-model replay of the same instruction through the memory layer,
          showing the state transitions. Where the real user delegated, the
@@ -38,7 +38,7 @@ from agent.memory.adapt_memory import ADAPTMemory  # noqa: E402
 from agent.memory.proactive import QuestionContext  # noqa: E402
 from agent.memory.slots import resolve_preference_slots  # noqa: E402
 
-SMOKE = pathlib.Path("data/simulations/smoke_proactive_P4_sub1.json")
+SMOKE = pathlib.Path("data/simulations/smoke_proactive_M793481_sub1.json")
 INSTRUCTION = "想去昆明玩，你帮我定个这周六的票吧。"
 
 

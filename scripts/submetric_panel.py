@@ -12,7 +12,7 @@ silently filled with a different quantity.
 
 Definitions
 -----------
-总样本        scored subtask-trial records. The arm has 100 (the dev cohort x 1 trial);
+总样本        scored subtask-trial records. The arm has 100 (8 users x 1 trial);
               the baseline has 400 (x4 trials). Official units are 100 for both;
               per-trial records are replicates, not independent samples.
 成功率        subtask reward == 1.0 (the vendored strict-success rule).
@@ -42,8 +42,8 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ARM = pathlib.Path("data/simulations/adapt_dev_1t.json")
-BASE = pathlib.Path("data/simulations/stock_dev.json")
+ARM = pathlib.Path("data/simulations/adapt8_1t.json")
+BASE = pathlib.Path("data/simulations/stock_avg4_8u.json")
 
 
 def load(path):

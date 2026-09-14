@@ -3,7 +3,7 @@
 Written in response to "the increase can't all be noise" -- a fair challenge that
 deserves arithmetic rather than a restatement of the noise floor. Four angles:
 
-1. User-level paired test: the dev cohort, one delta each.
+1. User-level paired test: eight users, one delta each.
 2. A null distribution built from the baseline itself. The baseline's four trials
    are four independent draws of the same condition, so each slice's deviation
    from the four-trial mean IS what a single-trial arm looks like under the null.
@@ -32,8 +32,8 @@ from collections import defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ARM = pathlib.Path("data/simulations/adapt_dev_1t.json")
-BASE = pathlib.Path("data/simulations/stock_dev.json")
+ARM = pathlib.Path("data/simulations/adapt8_1t.json")
+BASE = pathlib.Path("data/simulations/stock_avg4_8u.json")
 
 
 def units(path):
@@ -105,7 +105,7 @@ def main() -> None:
 
     # ---------------- 1. user-level paired test ---------------------------
     print("=" * 78)
-    print("1. USER-LEVEL PAIRED TEST  (n = the dev cohort, one delta each)")
+    print("1. USER-LEVEL PAIRED TEST  (n = 8 users, one delta each)")
     per_arm, per_base = defaultdict(list), defaultdict(list)
     for (tid, _k), per_trial in A.items():
         per_arm[tid].extend(per_trial.values())

@@ -224,7 +224,7 @@ def make_agent_context_guard(original_generate, agent_llm: str):
 
 
 def stable_user_split(tasks: Iterable[PersonalizationTask]) -> dict[str, list[str]]:
-    """Return deterministic dev-cohort dev, dev-cohort blind, and remaining final IDs."""
+    """Return deterministic 8-user dev, 8-user blind, and remaining final IDs."""
     ids = sorted(
         {task.id for task in tasks},
         key=lambda user_id: hashlib.sha256(

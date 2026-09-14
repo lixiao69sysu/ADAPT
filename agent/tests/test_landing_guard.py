@@ -1,7 +1,7 @@
 """Zero-model tests for the landing guard (execution-timing layer).
 
-Evidence context: an offline audit of `data/simulations/stock_dev.json`
-(a dev-cohort checkpoint at 4 trials) found that 52 commit-type units ended the
+Evidence context: an offline audit of `data/simulations/stock_avg4_8u.json`
+(8 dev users x 4 trials, 400 units) found that 52 commit-type units ended the
 subtask on a confirmation request and never wrote anything; they pass at 0.058
 against 0.427 for the commit units that write and then report completion.
 

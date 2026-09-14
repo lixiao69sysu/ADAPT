@@ -27,7 +27,7 @@ attribution only; the agent never sees them, and the written report keeps to
 counts and ranks rather than reproducing any annotation value.
 
 Usage:
-    python scripts/target_reachability.py data/simulations/stock_dev.json
+    python scripts/target_reachability.py data/simulations/stock_avg4_8u.json
     python scripts/target_reachability.py stock.json --json
 """
 

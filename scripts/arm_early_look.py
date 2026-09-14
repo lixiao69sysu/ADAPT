@@ -7,18 +7,18 @@ issues no verdict, applies no cohort or config gate, and can be run on one user.
 
 The calibration that makes it usable comes from the baseline itself. Each user's
 four baseline trials are four independent draws of that user's own script, so
-their spread IS that user's single-trial noise. Measured on stock_dev.json:
+their spread IS that user's single-trial noise. Measured on stock_avg4_8u.json:
 
-    P1  0.1538 0.3077 0.3846 0.3077   mean 0.2885  range 0.2308
-    P5  0.1667 0.2500 0.0833 0.0000   mean 0.1250  range 0.2500
-    P4  0.2727 x4                      mean 0.2727  range 0.0000
+    E057330  0.1538 0.3077 0.3846 0.3077   mean 0.2885  range 0.2308
+    O309411  0.1667 0.2500 0.0833 0.0000   mean 0.1250  range 0.2500
+    M793481  0.2727 x4                      mean 0.2727  range 0.0000
 
 So a single user's single trial moves by up to ~0.25 on its own. The flag below
 therefore fires only when the arm is worse than *everything that user ever did*
 across its four baseline trials -- a self-calibrating bar, not a fixed one.
 
 Usage:
-    python scripts/arm_early_look.py --arm data/simulations/adapt_dev_1t.json
+    python scripts/arm_early_look.py --arm data/simulations/adapt8_1t.json
     python scripts/arm_early_look.py --arm ... --baseline ...
 """
 
@@ -56,7 +56,7 @@ def per_user_slices(path: pathlib.Path) -> dict[str, dict[int, float]]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--baseline", default="data/simulations/stock_dev.json")
+    ap.add_argument("--baseline", default="data/simulations/stock_avg4_8u.json")
     ap.add_argument(
         "--margin",
         type=float,

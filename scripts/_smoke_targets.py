@@ -24,19 +24,19 @@ from agent.memory.adapt_memory import ADAPTMemory  # noqa: E402
 from agent.memory.proactive import QuestionContext  # noqa: E402
 
 DEV = [
-    "P1",
-    "P2",
-    "P3",
-    "P4",
-    "P5",
-    "P6",
-    "P7",
-    "P8",
+    "E057330",
+    "E941775",
+    "J365414",
+    "M793481",
+    "O309411",
+    "P722245",
+    "Q089190",
+    "U000828",
 ]
 
 
 def main() -> int:
-    checkpoint = pathlib.Path("data/simulations/stock_dev.json")
+    checkpoint = pathlib.Path("data/simulations/stock_avg4_8u.json")
     with checkpoint.open(encoding="utf-8") as handle:
         trials = json.load(handle)
 

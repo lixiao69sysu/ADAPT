@@ -7,12 +7,12 @@
 
 ## 当前工作区复核补充（11:49）
 
-用户随后授权自研 agent，不限官方插件，目标固定为 stock 的同开发集用户 Avg@4 >= 0.35。
+用户随后授权自研 agent，不限官方插件，目标固定为 stock 的同八用户 Avg@4 >= 0.35。
 目前 `--agent adapt --memory-type rewrite` 是新增 EvidenceAgent + 原始 RewriteMemory，
 并不调用 ADAPTMemory 的主动提问、漂移或候选排序。下文关于摘要输入丢字段的缺陷已修复，
 词面标注也已改成中性提示；其分数收益均未验证。
 
-P2 冒烟进程已中断，仅有日志，前两项评分为 0、1，第三项停在评分窗口，没有整用户
+E941775 冒烟进程已中断，仅有日志，前两项评分为 0、1，第三项停在评分窗口，没有整用户
 checkpoint。此前把短时间无日志判作“卡死”的推断缺乏充分证据，不能作为服务故障结论。
 
 本次新复现（只用虚构输入、无模型调用）：
@@ -48,7 +48,7 @@ ADAPT 的历史问题是：为增强个性化而增加的处理链，先损失�
 
 ## 1. 先校准正在比较的是什么
 
-本次直接调用官方 `_compute_subtask_pass_metrics` 复算 `stock_dev.json`：
+本次直接调用官方 `_compute_subtask_pass_metrics` 复算 `stock_avg4_8u.json`：
 
 | 指标 | 结果 |
 | --- | ---: |
@@ -62,7 +62,7 @@ ADAPT 的历史问题是：为增强个性化而增加的处理链，先损失�
 
 官方 Avg 对 `(user, subtask)` 的 trial 均值等权；用户的子任务数量不等，故它与等用户权重平均不同。100 单元中，60 个四次全错、20 个四次全对、20 个结果混合。四次全错是优先分析对象，但不代表数学上永远不可能做对。
 
-该基线记录模型别名为 qwen38-agent / qwen35-user / qwen36-evaluator、max_steps=100。它是开发集用户开发集成绩，不能冒充 56 用户正式成绩；仓库里没有足以核验另一份更高全量成绩的对应产物。
+该基线记录模型别名为 qwen38-agent / qwen35-user / qwen36-evaluator、max_steps=100。它是八用户开发集成绩，不能冒充 56 用户正式成绩；仓库里没有足以核验另一份更高全量成绩的对应产物。
 
 用户当前打开的 `adapt_5tasks_v16a.log` 是 8 月 18 日旧实验，记录 qwen35-agent、1 trial，末尾用户级 Average Reward=0.2138；旧 `rewrite_5tasks.log` 为 0.2102。两者打印的 personalize 为 0.2459/0.2131，proactive 为 0.0625/0.1250。这个观察提示“总平均略升可能同时掩盖主动询问退化”，但不构成同版本、同口径下的因果结论，也不能直接与九月 0.2925 比。
 
@@ -146,7 +146,7 @@ vendored orchestrator 在子任务间注入 `subtask.interactions`；没有看�
 
 ## 4. 更值得投入的损失面
 
-对 `stock_dev.json` 跑现有 target_reachability：400 次子任务运行中 396 次有目标标记，以下是运行次数，不是 396 个独立样本。
+对 `stock_avg4_8u.json` 跑现有 target_reachability：400 次子任务运行中 396 次有目标标记，以下是运行次数，不是 396 个独立样本。
 
 | 观察 | 次数 / 通过率 |
 | --- | --- |
@@ -162,7 +162,7 @@ vendored orchestrator 在子任务间注入 `subtask.interactions`；没有看�
 
 这些是相关性诊断：难任务可能同时更难召回且更难通过；商品是否出现也可能是前面决策的结果。目标标记不是完整 rubric，有 17 次目标商品未打印仍通过。它们用于选择值得验证的机制，不能给出“修好绑定就能增加多少分”的因果承诺，更不得进入运行时输入。
 
-名字叫 `stock_dev_rubric_detail.json` 的文件实际只有 2 个 simulation、27 个子任务记录，其中 26 个可用、20 个失败；失败中有 10 次只差一个条件。这是很好的小范围诊断入口，但绝不是全开发集用户 400 次的瓶颈分布。字段条件命中均值 0.6285 也不是正式 Avg。
+名字叫 `stock_avg4_8u_rubric_detail.json` 的文件实际只有 2 个 simulation、27 个子任务记录，其中 26 个可用、20 个失败；失败中有 10 次只差一个条件。这是很好的小范围诊断入口，但绝不是全八用户 400 次的瓶颈分布。字段条件命中均值 0.6285 也不是正式 Avg。
 
 重复调用守卫适合作为效率优化：本基线 13/400 次子任务运行有已识别抖动，覆盖 7/100 个子任务。假设只救回这 13 次且不影响其他运行，直接改善上限为 +0.0325；无法单独填补 0.2925→0.35 的 +0.0575。全局收益可能有间接变化，不能把这个直接记账上限当作一切实现的绝对上限。当前 ThrashGuard 实际是一次提示，不是硬性禁止；相同返回三次也不能一般性证明下一次动态查询永远无新信息。
 
@@ -202,10 +202,10 @@ vendored orchestrator 在子任务间注入 `subtask.interactions`；没有看�
 
 ```powershell
 python scripts/_official_metrics.py
-python scripts/noise_floor.py data/simulations/stock_dev.json
-python scripts/target_reachability.py data/simulations/stock_dev.json
-python scripts/rubric_breakdown.py data/simulations/stock_dev_rubric_detail.json
-python scripts/runaway_autopsy.py data/simulations/stock_dev.json --repeat-threshold 3
+python scripts/noise_floor.py data/simulations/stock_avg4_8u.json
+python scripts/target_reachability.py data/simulations/stock_avg4_8u.json
+python scripts/rubric_breakdown.py data/simulations/stock_avg4_8u_rubric_detail.json
+python scripts/runaway_autopsy.py data/simulations/stock_avg4_8u.json --repeat-threshold 3
 ```
 
 隔离实验数字的复算方式：读取各 checkpoint 的 simulations，按 task_id/trial 过滤，将 `reward_info.info.subtask_rewards` 中数值求平均。只有完整且各单元 trial 数相等时，该平铺平均才等于各子任务 trial 均值再平均；不完整产物需额外报告缺失。

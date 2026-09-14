@@ -26,7 +26,7 @@ Reads target annotations for offline attribution only; the agent never sees them
 and the report keeps to counts, ids shapes and message excerpts.
 
 Usage:
-    python scripts/mechanism_attribution.py data/simulations/stock_dev.json
+    python scripts/mechanism_attribution.py data/simulations/stock_avg4_8u.json
 """
 
 from __future__ import annotations

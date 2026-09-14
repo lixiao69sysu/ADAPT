@@ -20,7 +20,7 @@ Reported, for a checkpoint:
   - `slice[t]` : the trial-t slice, pooled over users. The spread of the four
                 slices is the run-to-run jitter at user-independent level.
 
-Unpaired dev-cohort comparison floor is +-0.0582 (docs: noise floor). A delta below
+Unpaired 8-user comparison floor is +-0.0582 (docs: noise floor). A delta below
 that is not resolvable; this script does not test significance, it only prints
 the comparable quantity.
 

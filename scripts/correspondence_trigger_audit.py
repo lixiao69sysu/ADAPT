@@ -16,7 +16,7 @@ Output is a coverage report: how often the view would have had something to say,
 and of what kind. It is an upper bound on usefulness, not evidence of gain.
 
 Usage:
-    python scripts/correspondence_trigger_audit.py data/simulations/stock_dev.json
+    python scripts/correspondence_trigger_audit.py data/simulations/stock_avg4_8u.json
 """
 
 from __future__ import annotations

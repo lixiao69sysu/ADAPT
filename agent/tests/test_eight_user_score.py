@@ -1,4 +1,4 @@
-from scripts.cohort_score import audit
+from scripts.eight_user_score import audit
 
 
 def checkpoint():

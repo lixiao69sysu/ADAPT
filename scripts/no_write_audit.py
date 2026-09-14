@@ -16,7 +16,7 @@ A run that never wrote, or wrote with no id, is a different failure from a run
 that chose the wrong id -- and only the first kind is plausibly a data-layer fix.
 
 Usage:
-    python scripts/no_write_audit.py data/simulations/stock_dev.json
+    python scripts/no_write_audit.py data/simulations/stock_avg4_8u.json
 """
 
 from __future__ import annotations
