@@ -1,3 +1,15 @@
+"""Official task-level and subtask-level metrics for a checkpoint.
+
+Usage:
+    python scripts/_official_metrics.py [checkpoint.json]
+
+Prints, for the personalization subtask level, Avg@k / Pass@k / Pass^k for every
+k the checkpoint supports. For k = 1 the three coincide by definition; they
+separate only for k >= 2, which is why a single-trial checkpoint reports one
+number rather than three.
+"""
+
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -14,7 +26,14 @@ from vita.metrics.agent_metrics import (
     pass_at_k,
 )
 
-CP = Path('data/simulations/stock_avg4_8u.json')
+_ap = argparse.ArgumentParser(description=__doc__)
+_ap.add_argument(
+    "checkpoint",
+    nargs="?",
+    default="data/simulations/stock_avg4_8u.json",
+    help="checkpoint to score (default: the cached baseline)",
+)
+CP = Path(_ap.parse_args().checkpoint)
 d = json.loads(CP.read_text(encoding='utf-8'))
 
 sims = []

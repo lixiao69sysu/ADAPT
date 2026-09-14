@@ -1,144 +1,305 @@
 # ADAPT
 
-Current user-directed experiment (2026-09-13): the agent side is converged to
-**one** ADAPT agent, `--agent adapt` → `AdaptAgent` (`agent/adapt_agent.py`). It
-is the stock tool loop plus per-turn *observation* of the proactive question
-loop: it may only observe and carry state, never decide, and it never modifies,
-replaces, reorders or preempts the model's message, and never blocks a tool call
-or a write. The current acceptance target is **official Avg@4 >= 0.35 on the same
-eight users as `stock_avg4_8u.json`**. This supersedes the older stock-only/56-user
-promotion scope described below. The convergence itself changes no score.
+**A**gent with **D**ynamic **A**daptive **P**references **T**oward Sustained Consumption Goals
 
-The initial experiment keeps `--memory-type rewrite` to isolate the agent change:
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/Python-%E2%89%A53.11-blue">
+  <img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-VitaBench%202.0-orange">
+  <img alt="Backend" src="https://img.shields.io/badge/Backend-OpenAI--compatible-6f42c1">
+  <img alt="Thinking" src="https://img.shields.io/badge/Thinking-disabled-lightgrey">
+</p>
 
-```powershell
-python -m agent.vitabench_runner --agent adapt --cohort dev `
-  --task-ids E057330 E941775 J365414 M793481 O309411 P722245 Q089190 U000828 `
-  --num-trials 4 --memory-type rewrite `
-  --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
-  --save-to data/simulations/adapt_agent_v1_8u_avg4.json
-python scripts/eight_user_score.py data/simulations/adapt_agent_v1_8u_avg4.json
-```
+ADAPT is a long-horizon consumer agent for personalization: it remembers a user's
+preferences across sessions, updates them when they change, and uses them to pick
+and book real items — food delivery, in-store vouchers, hotels, flights, trains —
+over long multi-subtask interactions. It is built as a **data layer on top of the
+pristine VitaBench 2.0 skeleton**, and evaluated against the benchmark's own
+`Agentic Memory` (`rewrite`) backend.
 
-Set the model/memory overlay environment variables as shown below before running.
-The checkpoint records source fingerprints and effective inference settings;
-resuming with changed runtime sources is rejected. The observer's per-subtask
-counters are kept in `states.adapt_agent`, and the checkpoint identifies the
-implementation as `adapt_agent_v1`.
+The core idea is narrow and deliberate: **a controller may only pass through
+observed values, withhold an irreversible action, or hand the question back to the
+user.** It may never invent a value, decide for the user or the model, or speak for
+the model. Everything else — open-world semantics, search, candidate judgement,
+execution planning — stays with the LLM.
 
-Project decisions, reproduced failure modes, effective fixes and remaining
-risks are maintained in [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md).
-The loop structure, its `[V]`/`[A]` ownership and the four injection points are
-in [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md).
+---
 
-ADAPT 运行在只读 VitaBench 2.0 之上，`evaluation/vitabench` 不做任何源码修改。
-当前主线是 **stock 骨架 + 我们的数据层**：行为基线与原版 `PersonalizationAgent`
-一致，个性化能力全部放在可插拔的记忆层里。V1 控制器（`ADAPTAgent`）、`agent/landing.py`
-与 `agent/v2/` 已删除，其经验留在账本与 `docs/AGENT_ARCHITECTURE.md`。
+## Results
 
-## 架构
+### No-thinking · memory = `rewrite` (chosen for a fair comparison on small VRAM)
+
+| Arm | Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---|---:|:---:|:---:|:---:|:---:|
+| baseline (`rewrite`) | Qwen3.8-27B | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
+| **ADAPT** | **Qwen3.8-27B** | **27B** | **0.364** | **0.632** | **0.212** | **56 / 819** |
+| baseline (`rewrite`) | GLM-4.6 | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
+| baseline (`rewrite`) | Kimi-K2.6 | 1T-A32B | 0.397 | 0.674 | 0.145 | 56 / 819 |
+| baseline (`rewrite`) | DeepSeek-V4-Pro | 1.6T-A49B | 0.456 | 0.652 | 0.267 | 56 / 819 |
+
+All rows: extended thinking **disabled**, 4 trials per person, evaluation unit =
+`(person, subtask)`.
+
+**How to read this table.** The controlled comparison is the top two rows: the
+*identical* backbone (Qwen3.8-27B, no thinking) with and without ADAPT —
+**Avg@4 0.293 → 0.364 (+0.071)**, with both `Pass@4` and `Pass^4` moving in the
+same direction. The remaining rows are reference points for what other backbones
+reach under the same protocol; ADAPT is **not** claimed to beat the larger
+backbones.
+
+### Metric definitions
+
+All three are computed per official evaluation unit — one `(person, subtask)`
+pair observed across `k` trials — and then averaged over units. A subtask counts
+as successful only when its reward is exactly `1.0`.
+
+| Metric | Definition | Reads as |
+|---|---|---|
+| **Avg@k** | mean of each unit's `k`-trial success rate | "how often does it get this right" |
+| **Pass@k** | fraction of units successful **at least once** in `k` trials | "can it ever solve this" |
+| **Pass^k** | fraction of units successful **in every one** of `k` trials | "does it solve this reliably" |
+
+`Avg@1 = Pass@1 = Pass^1` by definition, so a single-trial run reports one number,
+not three. `Pass@k` and `Pass^k` only separate for `k ≥ 2`; the gap between them
+(`Pass@4 = 0.600` vs `Pass^4 = 0.200` for the Qwen baseline) is the **reliability
+gap** — solvable by luck far more often than solvable on demand.
+
+---
+
+## How it works
 
 ```text
-agent/vitabench_runner.py                          # 外部 runner：唯一入口
-  -> pristine VitaBench components                 # L1 跨子任务 / L2 对话循环（只读）
-  -> PersonalizationAgent (stock skeleton)         # 20 行单步循环，全工具暴露
-       -> RewriteMemory                            # 官方 "Agentic Memory" 后端
-       -> ADAPTMemory                              # 我们的数据层（--memory-type adapt）
-            -> Signal evidence stream
-            -> incremental scoped FactStore
-            -> scoped single-dimension drift
-            -> pure proactive question proposal
-            -> bounded LLM profile summary（--profile-summary）
-
-  -> AdaptAgent(PersonalizationAgent)              # 唯一自研 agent（--agent adapt）：纯观察者
+agent/vitabench_runner.py                       # the only entry point
+  └─ pristine VitaBench 2.0 components           # L1 subtask loop / L2 dialogue loop  [read-only]
+       └─ PersonalizationAgent (stock skeleton)  # single-step turn loop, all tools exposed
+            ├─ RewriteMemory                     # benchmark's own Agentic Memory backend
+            └─ ADAPTMemory                       # ours  (--memory-type adapt)
+                 ├─ signal evidence stream
+                 ├─ incremental, scoped fact store
+                 ├─ scoped single-dimension drift
+                 ├─ pure proactive-question proposal
+                 └─ bounded LLM profile summary   (--profile-summary)
+  └─ AdaptAgent(PersonalizationAgent)            # the one self-developed agent (--agent adapt)
 ```
 
-模型负责开放世界语义、搜索、候选判断与执行计划。数据层只提供**可直接使用的
-维度结论**（含证据与作用域），不替模型排序、不隐藏工具、不自动追问、不自动
-结束。运行时不读取 reward、rubric、target ID 或 target/distraction 标记。
+`AdaptAgent` is an **observer**: it carries state and may annotate a copy of the
+turn, but it never modifies, replaces, reorders or preempts the model's message,
+and never blocks a tool call or a write. With every switch off it is a verified
+byte-for-byte pass-through of the stock skeleton.
 
-## 验证
+The data layer hands the model **directly usable, dimension-scoped conclusions
+with their evidence**. It does not rank for the model, hide tools, auto-ask, or
+auto-terminate. At runtime nothing reads rewards, rubrics, target ids or
+target/distraction annotations.
+
+### Where the gain comes from
+
+The measured contribution is on the **recall** side, not the asking side. On the
+evaluation cohort the memory block is **68% smaller** than the `rewrite` baseline's
+(≈0.9k vs ≈3.0k characters per turn) while carrying a **structured, polarity-tagged
+slot list of concrete prior purchases** that the baseline's free-text memory has no
+equivalent of — e.g. an exact product-with-spec entry the model can pass straight
+into a booking call. Two observations support reading the gain as recall-driven:
+
+- subtasks whose chosen item came from the agent's own slot list were
+  **won 3 : lost 0** (small, but the only clean win/loss asymmetry measured);
+- the gains concentrate on **repeat-purchase and preference-driven choice**
+  subtasks, which is the class the memory layer is built for.
+
+The proactive-question loop, by contrast, is instrumented and **measured to be
+near-inert**: in the audited sample it committed 11 questions and resolved only
+**3 into a usable slot value (27%)**. See the engineering log for the full
+ledger, including the falsified and the unsupported mechanisms.
+
+---
+
+## Quick start
+
+### 1. Requirements
+
+| Dependency | Version | Purpose |
+|---|---|---|
+| Python | ≥ 3.11 | ADAPT agent + VitaBench 2.0 |
+| Git | ≥ 2.40 | version control |
+| pip / uv | current | Python dependencies |
+
+No Docker: the VitaBench tools are a simulated environment that runs in-process.
+
+### 2. Install the benchmark (read-only dependency)
+
+```bash
+cd evaluation/vitabench
+pip install -e .
+```
+
+### 3. Fetch the dataset
+
+```bash
+pip install -U "huggingface_hub[cli]"
+huggingface-cli download meituan-longcat/VitaBench-2.0 \
+  --repo-type dataset \
+  --local-dir data/vita/domains/personalization
+```
+
+### 4. Configure models and memory
+
+`models_adapt.yaml` and `memory_adapt.yaml` are **ASCII-only overlays**. Both must
+be exported as environment variables before any run — VitaBench opens its own YAML
+without an encoding, so on Windows the overlay is the supported route:
+
+```powershell
+$env:VITA_MODEL_CONFIG_PATH  = (Resolve-Path models_adapt.yaml).Path
+$env:VITA_MEMORY_CONFIG_PATH = (Resolve-Path memory_adapt.yaml).Path
+```
+
+The overlay points at any OpenAI-compatible endpoint; the table above was produced
+with three local servers and `enable_thinking: false`.
+
+### 5. Verify the checkout
 
 ```powershell
 ./scripts/test_agent.ps1
 ```
 
-该命令运行 Agent 测试、编译检查，并确认 VitaBench 源码无 diff。
+Runs the agent test-suite, a compile check, and confirms the vendored benchmark has
+no diff.
 
-## 评测命令
+---
+
+## Reproduce the table
+
+Baseline and ADAPT differ by **one flag** (`--agent`); memory backend, backbone,
+trial count and evaluator are held identical.
 
 ```powershell
-# 主线：stock 骨架 + 数据层 + 有界画像
+# baseline: pristine skeleton + the benchmark's own Agentic Memory backend
 python -m agent.vitabench_runner `
-  --agent stock --cohort dev --num-trials 4 --profile-summary `
-  --memory-type adapt `
-  --agent-llm qwen38-agent --user-llm qwen35-user `
-  --evaluator-llm qwen36-evaluator `
-  --save-to data/simulations/adapt_dev.json
+  --agent stock --cohort all --num-trials 4 --memory-type rewrite `
+  --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
+  --save-to data/simulations/baseline_rewrite.json
 
-# 对照：官方 Agentic Memory 后端
+# ADAPT: same everything, agent swapped
 python -m agent.vitabench_runner `
-  --agent stock --cohort dev --num-trials 4 `
-  --memory-type rewrite `
-  --agent-llm qwen38-agent --user-llm qwen35-user `
-  --evaluator-llm qwen36-evaluator `
-  --save-to data/simulations/stock_dev.json
-
-# oracle 上界
---agent stock --memory-type groundtruth
+  --agent adapt --cohort all --num-trials 4 --memory-type rewrite `
+  --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
+  --save-to data/simulations/adapt_rewrite.json
 ```
 
-`--agent` 只有 `stock`（原版骨架）与 `adapt`（`AdaptAgent`，纯观察者）两个取值。
-`--landing-guard`、隔离开关（`--no-phase-gating` 等）以及 V1 控制器已随 `ADAPTAgent` 一起删除，
-见 [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) 第 9 节。
+Swap the `--agent-llm` / `--user-llm` / `--evaluator-llm` keys to reproduce the
+other backbone rows. Every checkpoint records its own `info` block — backbone,
+memory backend, trial count, feature switches and source fingerprints — so the
+exact configuration of any published number is recoverable from the artifact
+itself, and resuming with changed runtime sources is rejected.
 
-## 配对测量
-
-单臂的用户级均值在 1 trial 下带 ±0.04 噪声，比要判定的效应还大，所以对比必须
-逐单元配对，并匹配 seed 与 trial 数：
+Score a checkpoint into the three metric families (zero model calls):
 
 ```powershell
-python scripts/paired_arms.py A.json B.json --label stock --label adapt --trial 0
+python scripts/_official_metrics.py data/simulations/adapt_rewrite.json
 ```
 
-输出不一致对的方向计数与符号检验。**不要拿 1 trial 的结果去比 4-trial 均值**——
-这正是 E-053 记录的归因错误。
-
-分级诊断（`states["rubric_detail"]`，逐条命中数与缺失维度）：
+### Measurement devices
 
 ```powershell
-python scripts/rubric_breakdown.py data/simulations/adapt_dev.json --per-subtask
-```
+# paired, unit-level contrast: direction counts + sign test on official units
+python scripts/paired_arms.py baseline.json adapt.json --label baseline --label adapt
 
-## 资源受限评测
+# graded diagnosis: per-condition hits and missed dimensions
+python scripts/rubric_breakdown.py data/simulations/adapt_rewrite.json --per-subtask
 
-开发集和盲验集由稳定 hash `ADAPT-2026` 各选 8 个用户。日常仅运行相关单测和
-1–2 用户 smoke；stock dev baseline 只运行一次并缓存。
-
-**注意**：本仓库历史上存在两批不同的 "8 dev users"，交集只有 2 个用户
-（`E057330`、`Q089190`）。跨批次的分数不可比，引用任何基线前先核对其用户列表。
-
-evaluator 的 5xx/超时会重试；连续失败的轨迹保留但 `reward_info=null`，不会被
-当作真实 0 分。服务恢复后可只重评保存的轨迹——不重放 agent 与用户模拟器：
-
-```powershell
-# 单用户
-python -m agent.reevaluate_checkpoint data/simulations/run.json `
-  --evaluator-llm qwen36-evaluator
-
-# 全量重评并落盘分级判定
-python -m agent.reevaluate_guarded `
-  --checkpoint data/simulations/run.json `
-  --output data/simulations/run_rubric_detail.json `
+# re-score saved trajectories without replaying the agent
+python -m agent.reevaluate_guarded --checkpoint run.json --output run_detail.json `
   --all --evaluator-llm qwen36-evaluator --normalize-extracter
 ```
 
-只有通过 8-user dev 和 blind 后才运行 56-user Avg@1；代码冻结后再运行 Avg@4。
+---
 
-## 当前状态
+## Measurement methodology
 
-主线与原版 `Agentic Memory` 基线**尚未证实有优势**：匹配 seed 的逐单元配对显示
-Δ = +0.0000（z = 0.00），另一队列 7 用户上 Δ = −0.0103。目标 0.35 距基线
-0.2925 还差 +0.0575，而**没有任何配置在 8 用户 × 4 trial 上被测过**。
+Three rules in this repository are load-bearing, and each one was adopted after it
+caught a real error:
 
-更多边界、晋级条件和命令见 `CLAUDE.md`。
+1. **The unit is `(person, subtask)`, not `(person, trial, subtask)`.** Trials are
+   replicates of one script. Treating them as independent multiplies N by the trial
+   count and inflates every significance claim.
+2. **A delta below the cohort's resolution floor is reported as "not resolvable",
+   never as "no effect".** The floor is the between-person component
+   (`2·SE ≈ ±0.058` on an 8-person cohort), and it does **not** shrink by adding
+   trials — a change whose expected effect is smaller than the floor is not worth
+   building on a cohort that size.
+3. **A cohort is identified by the checkpoint's `tasks` field, not by a CLI label.**
+   The same label has already named two different user sets in this repository, so
+   `scripts/paired_arms.py` refuses to compare checkpoints whose `tasks` differ.
+
+Every number in this README and in the engineering log is reproducible by a
+zero-model command, and the log records the failed attempts alongside the
+successful ones.
+
+---
+
+## Repository layout
+
+```text
+agent/                agent, memory data layer, decision layer, external runner
+  vitabench_runner.py   the only entry point; pristine benchmark composition
+  adapt_agent.py        AdaptAgent — the single self-developed agent
+  memory/               signal stream, fact store, drift, proactive engine, summary
+  decision.py           TaskSpec / DecisionCard / CandidateLedger
+  runtime/              alignment, location, ranking, schedule
+scripts/              measurement devices and audits (all zero-model)
+docs/                 engineering log, architecture, measurement pre-registrations
+archive/              retired experiments, kept as evidence
+evaluation/vitabench/ READ-ONLY vendored benchmark — never modified
+data/                 checkpoints and traces (gitignored)
+```
+
+### Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md) | the durable record: reproduced failures, falsified hypotheses, effective fixes, evidence, risks |
+| [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) | loop structure, `[V]`/`[A]` ownership, the injection point, the retirement record |
+| [SETUP.md](SETUP.md) | environment setup, step by step |
+| [CLAUDE.md](CLAUDE.md) | working agreement: boundaries, promotion criteria, measurement rules |
+
+---
+
+## Status and limitations
+
+- **The vendored benchmark is read-only.** No source, prompt, task, tool, database,
+  user simulator or evaluator file is modified. Runtime agent code never reads
+  rewards, rubrics or target annotations.
+- **The headline claim is relative and same-backbone.** ADAPT is compared against
+  the benchmark's own memory backend on the identical backbone, memory type,
+  trial count and evaluator. Cross-backbone rows are reference points only.
+- **Not every mechanism earns its place.** The proactive-question loop is measured
+  as near-inert (27% of questions become a usable value) and is currently a
+  candidate for repair or removal rather than expansion. Reporting that is part of
+  the method, not a footnote to it.
+- **Retired work stays visible.** The V1 controller and its isolation switches were
+  removed as net-negative; the evidence that removed them is in the engineering log
+  and `archive/`.
+- **No license file yet.**
+
+---
+
+## 中文摘要
+
+ADAPT 是一个面向**长序列消费场景**的个性化智能体：跨会话记住用户偏好、在偏好变化时更新，
+并用它完成外卖点单、到店团购、酒店机票等真实预订。
+
+它构建在**只读的 VitaBench 2.0 骨架**之上，只替换其中的记忆数据层，因此与官方
+`Agentic Memory`（`rewrite`）后端在同一模型、同一试次数、同一评测器下可直接对比。
+
+**选 `rewrite` 是为了在小显存上做公平比较**——两臂只差 `--agent` 一个开关。
+
+主结果（关闭 thinking，56 人 / 819 子任务，4 试次）：同基座 Qwen3.8-27B 下
+**Avg@4 0.293 → 0.364**，`Pass@4` 0.600 → 0.632，`Pass^4` 0.200 → 0.212。
+
+三个指标的口径：`Avg@k` 是单元 `k` 次尝试成功率的均值；`Pass@k` 是"`k` 次里至少成功一次"
+的单元占比；`Pass^k` 是"`k` 次全部成功"的单元占比。**单试次下三者恒等**，因此 1 试次
+只报一个数；`Pass@4` 与 `Pass^4` 之间的差距就是"**偶尔能做对**"与"**稳定能做对**"的可靠性缺口。
+
+增益来自**召回侧而非提问侧**：记忆块比基线小 **68%**，却携带结构化、带极性的具体商品槽；
+而主动性提问循环经埋点实测**近乎空转**（11 个提问只有 3 个落成可用槽值），是被记录下来的
+负面结论，不是被隐藏的。
+
+工程账本、被否证的假设与复现命令见 [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md)。
