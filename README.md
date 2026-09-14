@@ -199,21 +199,53 @@ gap** — solvable by luck far more often than solvable on demand.
 flowchart TB
     subgraph VB["VitaBench 2.0 · read-only"]
         T["tasks · tools · user simulator · evaluator"]
-        S["PersonalizationAgent<br/>stock skeleton, single-step turn loop"]
+        S["PersonalizationAgent<br/>stock skeleton · single-step turn loop"]
     end
-    subgraph AP["ADAPT · built here"]
-        M["ADAPTMemory<br/>facts · evidence · drift · bounded summary"]
-        D["decision layer<br/>TaskSpec · DecisionCard · CandidateLedger"]
-        A["AdaptAgent<br/>observer only"]
+
+    subgraph MEM["ADAPTMemory · the data layer"]
+        SG["signals<br/>orders · searches · browses · reviews<br/>→ evidence with its span"]
+        ST["stream<br/>events + timestamp + importance"]
+        FC["fact store<br/>scoped by scope · facet · dimension · category<br/>single-valued supersede · multi-valued accumulate"]
+        DL["drift<br/>one dimension at a time"]
+        LC["lifecycle<br/>durable vs perishable"]
+        RT["retrieval<br/>relevance × recency × importance"]
+        GD["entity index · grounding<br/>candidate-induced second stage"]
+        PQ["proactive policy<br/>asks a declared gap, not a topic"]
+        CARD["Decision Card<br/>MUST / AVOID never truncated"]
+        SUM["profile summary<br/>bounded recall block"]
+
+        SG --> ST --> FC
+        FC --> DL
+        FC --> LC
+        DL --> RT
+        LC --> RT
+        RT --> GD --> CARD
+        SUM --> CARD
+        FC --> PQ
     end
-    R["RewriteMemory<br/>baseline"]
+
+    subgraph DEC["decision layer"]
+        TS["TaskSpec<br/>entity · argument · attribute · workflow constraints"]
+        RN["runtime<br/>alignment · correspondence · schedule · location · ranking"]
+    end
+
+    A["AdaptAgent<br/>observer only · three switches, all off by default"]
+    R["RewriteMemory<br/>the baseline backend"]
 
     T --> S
     S --> R
-    S --> M
     S --> A
-    M --> D
+    S --> SG
+    TS --> CARD
+    RN --> CARD
+    CARD --> S
+    PQ --> A
 ```
+
+The data layer is a **pipeline, not a store**: interactions → signals → facts,
+with drift and lifecycle on top → retrieval → a bounded Decision Card. Two things
+run beside that pipeline — the declared-gap question path and the profile summary —
+and both reach the turn only as an observation.
 
 **What is whose.** The benchmark defines the task; the work here is the memory data
 layer, the decision layer and the agent. The only per-turn injection point the
