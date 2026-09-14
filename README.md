@@ -18,9 +18,13 @@ own `Agentic Memory` backend.
 > **Avg@4 0.293 → 0.364 (+24.2%)** · `Pass@4` 0.600 → 0.632 (+5.3%) ·
 > `Pass^4` 0.200 → 0.212 (+6.0%)
 >
-> Injected memory **2,951 → 934 characters (−68%)**, carrying **490** structured
-> preference slots · ungrounded tool ids **4 → 0** · abandoned orders
+> Injected memory **2,951 → 934 characters (−68%)**, carrying **≈4,000** structured
+> preference slots · ungrounded tool ids **≈33 → 0** · abandoned orders
 > **11.8% → 9.1%**
+
+*The two `≈` figures are proportional extrapolations to this cohort's 819 subtasks
+from a per-block audit on a 100-subtask sample (×8.19), not measurements taken on
+the full cohort; per-block sizes and rates above are measured directly.*
 
 ---
 
@@ -180,8 +184,8 @@ gap** — solvable by luck far more often than solvable on demand.
   summary of at most `summary_max_chars` characters is the recall half of the data
   layer. The injected block lands at **934 characters against the baseline's 2,951
   (−68%)**, while **92%** of blocks carry a machine-usable `PREFER` slot list
-  (**490 entries**) and **38%** a typed `AVOID` slot — the baseline's memory has
-  neither structure.
+  (**≈4,000 entries** at this cohort's size) and **38%** a typed `AVOID` slot — the
+  baseline's memory has neither structure.
 - **An observer-only controller.** The agent may only pass through observed values,
   withhold an irreversible action, or hand the question back to the user. It never
   invents a value, never decides for the user or the model, never reorders or
@@ -189,8 +193,8 @@ gap** — solvable by luck far more often than solvable on demand.
   it is a byte-identical pass-through of the stock skeleton, asserted by a test.
 - **Grounded writes and finished transactions.** Only ids parsed out of tool output
   the model has actually seen are offered for a write, and the payment step stays
-  explicit: ordered-id grounding **0.9828 → 1.0000** (ungrounded ids **4 → 0**),
-  created-but-never-paid **11.8% → 9.1%** (−23% relative).
+  explicit: ordered-id grounding **0.9828 → 1.0000** (ungrounded ids **≈33 → 0** at
+  this cohort's size), created-but-never-paid **11.8% → 9.1%** (−23% relative).
 
 ---
 
