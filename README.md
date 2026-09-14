@@ -221,14 +221,53 @@ agent gets is a single `generate_next_message`.
 
 | Provided by VitaBench 2.0 — read-only, unmodified | Built in this repository |
 |---|---|
-| task scripts, tool environment, user simulator, evaluator, official metric | scoped fact store, signal evidence, drift, proactive-question proposal, bounded profile summary |
-| the stock `PersonalizationAgent` turn loop and its `RewriteMemory` backend | the decision layer (`TaskSpec`, `DecisionCard`, `CandidateLedger`) and `AdaptAgent` |
+| task scripts, tool environment, user simulator, evaluator, official metric | signal evidence, scoped fact store, drift and lifecycle, retrieval, proactive-question policy, bounded profile summary |
+| the stock `PersonalizationAgent` turn loop and its `RewriteMemory` backend | the decision layer (`TaskSpec`, `DecisionCard`, runtime alignment / correspondence / ranking) and `AdaptAgent` |
 | every `baseline agent (rewrite)` row of the table above | the ADAPT row, and every measurement device used to judge it |
+
+The memory layer is a **pipeline, not a store**: interactions → signals → facts
+(with drift and lifecycle on top) → retrieval → a bounded Decision Card. Two things
+travel separately from that pipeline — a gap-driven question path and the profile
+summary — and both reach the turn only as an observation.
+
+### The data layer · `agent/memory/`
+
+| Stage | Module | Responsibility |
+|---|---|---|
+| Evidence | `signals.py` | parses raw interactions — orders, searches, browses, reviews, conversation — into structured preference signals, each keeping the span it came from |
+| Events | `stream.py` | the ordered memory stream with timestamps and importance (the Generative Agents idea) |
+| Facts | `facts.py`, `fact_store.py` | typed facts scoped by `(scope, facet, dimension, category)` and evidence-preserving; genuinely single-valued dimensions supersede an older value, multi-valued ones accumulate |
+| Change | `drift.py` | scoped single-dimension drift detection, so a shift in taste is not confused with a shift in budget |
+| Forgetting | `lifecycle.py` | durable versus perishable facts — an allergy outlives a passing craving |
+| Retrieval | `retrieval.py`, `entity_index.py`, `grounding.py` | 3-D retrieval (relevance × recency × importance), a bounded entity-history index, and candidate-induced second-stage retrieval |
+| Asking | `proactive.py` | asks about a **declared gap**, never about a topic; budget is spent only once the question has actually been sent |
+| Compile | `adapt_memory.py`, `slots.py` | the backend facade — `read()` compiles the Decision Card — over one slot resolver shared by retrieval, asking and runtime state |
+
+### The decision layer · `agent/`
+
+| Module | Responsibility |
+|---|---|
+| `decision.py` | `TaskSpec` compiles entity / argument / attribute / workflow constraints out of the instruction; `DecisionCard` renders them under a priority budget |
+| `intent.py` | observable order-intent classification, shared by the spec and the runtime |
+| `runtime/alignment.py` | aligns open-world preference atoms to attributes actually observed on candidates |
+| `runtime/correspondence.py` | three-valued — satisfied / violated / unknown — correspondence between a candidate and the user's constraints |
+| `runtime/schedule.py` | resolves relative dates against the environment clock instead of guessing them |
+| `runtime/location.py` | an observable location prior for candidate ranking |
+| `runtime/ranking.py` | deterministic ordering for a bounded shortlist |
+
+### The agent and the rig · `agent/`
+
+| Module | Responsibility |
+|---|---|
+| `adapt_agent.py` | the one agent: the stock turn loop plus observation of the question loop. Three independent switches, all off by default; with them off it is a verified byte-identical pass-through |
+| `tool_signature.py` | canonical identity of a tool call and of a tool result — the anchor for grounding and repeat-search measurements |
+| `evaluation_integrity.py` | stops an evaluator transport error from being recorded as a real zero |
+| `rubric_detail.py` | content-free per-condition detail, so a run can be diagnosed without reading rubric text |
+| `trace_metrics.py` | aggregate run metrics without exposing blind-case trace details |
 
 `AdaptAgent` is an **observer**: it carries state and may annotate a copy of the
 turn, but it never modifies, replaces, reorders or preempts the model's message,
-and never blocks a tool call or a write. With every switch off it is a verified
-byte-for-byte pass-through of the stock skeleton.
+and never blocks a tool call or a write.
 
 The data layer hands the model **directly usable, dimension-scoped conclusions
 with their evidence**. It does not rank for the model, hide tools, auto-ask, or
