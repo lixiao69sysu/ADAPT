@@ -213,12 +213,12 @@ because the two checkpoints differ in trial count (4 against 1). Dev cohort.
 Two things this table settles:
 
 - **The extra layer is not paid for in interactions.** Model calls per subtask are
-  flat (8.53 against 8.34), tool calls are if anything slightly lower, and
+  flat (8.53 against 8.34), tool calls are lower (7.26 against 7.41), and
   completion tokens are unchanged.
 - **Compressing the memory block is not the same as compressing the request.** The
-  block falls **2,951 → 934 characters (−68%)**, yet prompt tokens per subtask fall
-  only **9%**, because the window is dominated by tool returns rather than by
-  memory. The −68% is a per-block figure and is reported as one.
+  block falls **2,951 → 934 characters (−68%)**, while prompt tokens per subtask
+  fall **9%** — the window is dominated by tool returns rather than by memory, so
+  the −68% is a per-block figure and is reported as one.
 
 Cost is 0.00 for both arms because every endpoint is local; that is reported as
 measured rather than converted into a hypothetical API price.
@@ -393,7 +393,7 @@ caught a real error:
    count and inflates every significance claim.
 2. **A delta below the cohort's resolution floor is reported as "not resolvable",
    never as "no effect".** The floor is the between-person component
-   (`2·SE ≈ ±0.058` on a small dev cohort), and it does **not** shrink by adding
+   (`2·SE ≈ ±0.058` on a dev cohort), and it does **not** shrink by adding
    trials — a change whose expected effect is smaller than the floor is not worth
    building on a cohort that size.
 3. **A cohort is identified by the checkpoint's `tasks` field, not by a CLI label.**
