@@ -320,6 +320,7 @@ data/                 checkpoints and traces (gitignored)
 - **Retired work stays visible.** The V1 controller and its isolation switches were
   removed as net-negative; the evidence that removed them is in the engineering log
   and `archive/`.
+
 ## License
 
 MIT License
