@@ -3,7 +3,7 @@
 Code that is deliberately **not** on the production path.
 
 Nothing here is imported by `agent/vitabench_runner.py` or by the stock skeleton
-plus data layer track described in `CLAUDE.md`. Files were moved rather than
+plus data layer track described in `docs/AGENT_ARCHITECTURE.md`. Files were moved rather than
 deleted because the idea behind them is worth keeping available as a library,
 but none of it may be counted as a current ADAPT capability: an unwired module
 is not a capability, and its presence in `agent/` made the agent look more

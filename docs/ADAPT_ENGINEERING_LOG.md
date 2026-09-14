@@ -8,6 +8,10 @@
 
 本文档不是 VitaBench 测试数据的副本。不得记录或向运行时暴露隐藏 rubric、reward、target/distraction 标记或目标 ID。当前反复查看过 trace 的用户均属于开发用途，其结果不能表述为无偏测试成绩。
 
+> **仓库整理说明（2026-09）**：根目录的 `CLAUDE.md`、`PROJECT_PLAN.md`、`SETUP.md` 与 `models_dual_server.yaml` 已删除；`legacy_vitabench_fork.patch` 亦已删除（原因见 E-001）。
+> 本账本下文出现的 `CLAUDE.md` 均为**历史引用**。其中仍然有效的载重规则已收敛到 `README.md` 的 **Measurement methodology** 一节（评测单位、可分辨下限、cohort 由 checkpoint 识别）与 `docs/AGENT_ARCHITECTURE.md`（所有权、边界、退役记录）。
+> 运行所需的两个外部配置 overlay —— `models_adapt.yaml`（模型端点）与 `memory_adapt.yaml`（记忆后端）—— 保留不动，README 的 Quick start 与 `scripts/test_agent.ps1` 都依赖它们。
+
 ## 设计主线（本项目的唯一主线，先读这一节）
 
 > **ADAPT = 一个"不凭空断言"的控制器 + 一个"能直接用的证据可追溯数据层"。**
@@ -190,9 +194,10 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
 - **状态**：VERIFIED
 - **难点**：早期为了适配 ADAPT，修改了 VitaBench 内部 prompt、工具或框架连接点，导致 Agent 改进与 benchmark 改动无法区分。
 - **根因**：把集成便利性放进了被测环境，而不是放在外部 runner 和 Agent 组合层。
-- **有效方案**：保存历史 diff 为 `legacy_vitabench_fork.patch`，恢复 `evaluation/vitabench/src/vita`；所有模型配置、runner、Agent、memory 和 trace 工具迁移到 ADAPT 根目录。
+- **有效方案**：把 `evaluation/vitabench/src/vita` 恢复为 pristine，所有模型配置、runner、Agent、memory 和 trace 工具迁移到 ADAPT 根目录，集成只发生在外部组合层。
 - **验证**：VitaBench `src/vita` 对 HEAD 的 diff 为空；外部 runner 可完成真实 smoke 和 fixed5。
-- **适用边界**：历史 patch 仅作证据，不得重新应用于 benchmark run。
+- **适用边界**：不得分叉或修改被测 benchmark；集成便利性只能放在外部 runner 与 Agent 组合层。
+- **留档说明**：当时的 fork diff 曾以 `legacy_vitabench_fork.patch` 留在仓库作证据，现已删除。它的唯一用途是留档，而它本身是对 benchmark `evaluator` / `environment` / `tools` 的 976 行修改；把它留在仓库里会被读成"仍在改基准"，与本节结论相反。判据未变，且仍由上面的 diff 检查验证。
 - **能力抽象**：benchmark integrity / external composition。
 
 ## E-002：只改 memory 不能解决偏好到行动的断层

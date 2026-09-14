@@ -1,7 +1,7 @@
 """Preference *evolution* conformance suite: what may be superseded, and what
 must never be.
 
-CLAUDE.md fixes the rule this file exists to guard:
+The rule this file exists to guard:
 
     Preference drift is scoped by ``(scope, facet, dimension, category)``.
     Avoids, allergies and brands are multi-valued sets. Only genuinely

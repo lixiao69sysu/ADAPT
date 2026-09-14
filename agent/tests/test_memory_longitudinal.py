@@ -190,8 +190,8 @@ def test_a_recorded_answer_closes_the_gap_so_it_is_not_asked_again():
 def test_a_delegated_answer_leaves_the_gap_open():
     """Delegation is not an answer, so the gap survives it.
 
-    The engine deliberately will not repeat an identical question (CLAUDE.md: one
-    identical question may be counted only once), so the observable is that the
+    The engine deliberately will not repeat an identical question (one identical
+    question may be counted only once), so the observable is that the
     gap is still open and a *different* slot question is still available — not
     that the same question comes back.
     """

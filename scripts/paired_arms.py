@@ -211,7 +211,7 @@ def main() -> None:
     # means reproduces the flat (user, trial, subtask) mean whenever every
     # cluster contributes all trials, which is the balanced case. The
     # equal-user-weight view is a different, secondary quantity: it is what
-    # CLAUDE.md reports as the "user-level 4-trial mean" (0.2940 vs official
+    # documented as the "user-level 4-trial mean" (0.2940 vs official
     # 0.2925 on the stock cohort).
     weighted_a = _user_weighted(units_a, shared)
     weighted_b = _user_weighted(units_b, shared)
