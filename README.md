@@ -10,15 +10,18 @@ preferences across sessions, updates them when they change, and uses them to pic
 and book real items — food delivery, in-store vouchers, hotels, flights, trains —
 over long multi-subtask interactions. It runs as a **data layer on top of the
 pristine VitaBench 2.0 skeleton**, evaluated head-to-head against the benchmark's
-own `Agentic Memory` backend.
+own memory backend, `rewrite`.
 
-> **At a glance — same backbone (Qwen3.8-27B, no thinking), same memory backend,
-> same trials, same evaluator: only the agent differs.**
+> **At a glance — same skeleton, same model (Qwen3.8-27B, no thinking), same
+> evaluator and runner. ADAPT's memory data layer is the one thing that differs
+> from the baseline; the comparison is whole-agent, not a memory-only ablation.**
 >
-> **Avg@4 0.293 → 0.364 (+24.2%)** · `Pass@4` 0.600 → 0.632 (+5.3%) ·
-> `Pass^4` 0.200 → 0.212 (+6.0%)
+> On the 56-user evaluation: **Avg@4 0.293 → 0.364 (+24.2%)** · `Pass@4` 0.600 →
+> 0.632 · `Pass^4` 0.200 → 0.212. **That run's checkpoint is not in this
+> repository, so the row cannot be rebuilt from the tree.** *Results* gives the
+> 8-user dev-cohort comparison that can be, and why it reads as not resolvable.
 >
-> Injected memory **2,951 → 934 characters (−68%)**, with a machine-usable
+> Injected memory **2,927 → 934 characters (−68%)**, with a machine-usable
 > `PREFER` slot list in **92%** of blocks and a typed `AVOID` slot in **38%** ·
 > ordered-id grounding **0.9828 → 1.0000** · abandoned orders **11.8% → 9.1%**
 
@@ -26,8 +29,12 @@ own `Agentic Memory` backend.
 
 ## Results
 
-All rows share one protocol: memory = `rewrite`, 4 trials per person, evaluation
-unit = `(person, subtask)`, identical user simulator and evaluator.
+All baseline rows share one protocol: memory = `rewrite`, 4 trials per person,
+evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
+The **ADAPT** row changes exactly one thing — it replaces that `rewrite` memory
+with ADAPT's own data layer — so the table is a **whole-agent** comparison, not a
+memory-only ablation. The ADAPT runs held in this repository are single-trial,
+which is why the dev-cohort numbers below are reported on their own terms.
 
 <table>
   <thead>
@@ -138,10 +145,31 @@ bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
+**Reproducibility.** The eight baseline rows and the ADAPT row come from 56-user
+runs whose checkpoints are **not in this repository**, so this table cannot be
+rebuilt from the tree as it stands. What the tree does contain is the 8-user dev
+cohort, and on it the same comparison reads:
+
+```powershell
+python scripts/paired_arms.py data/simulations/stock_avg4_8u.json data/simulations/adapt8_1t.json --label stock --label adapt
+```
+
+```text
+   shared official units : 100  (ties 69)
+   A=stock 0.2925   B=adapt 0.3300   delta(B-A) +0.0375
+   B fixes / B breaks    : 15 / 16
+   sign test             : z=-0.18  p=0.8575   not significant
+   user-cluster rollup   : users 8, better 4, worse 3, mean per-user delta +0.0347
+```
+
+The baseline is 4 trials and the arm is 1, and that delta sits inside this
+cohort's **±0.058** resolution floor, so it is reported as **not resolvable** — a
+statement about what this cohort can resolve, not evidence of no effect.
+
 **Why `rewrite`.** The evaluation hardware is **8 × NVIDIA RTX 4090**, so a heavier
 memory backend would let the injected context grow until VRAM bounds it rather than
 the method — a gap that would look like a result without being one. `rewrite`, the
-benchmark's own `Agentic Memory` backend, keeps the context budget comparable
+benchmark's own memory backend (`rewrite`), keeps the context budget comparable
 across every row, so what the table compares is the agent, not the memory
 footprint.
 
@@ -211,7 +239,7 @@ Decision Card.
   is allowed to drop one.
 - **Recall that stays bounded, and much smaller.** One LLM-maintained profile
   summary of at most `summary_max_chars` characters is the recall half of the data
-  layer. The injected block lands at **934 characters against the baseline's 2,951
+  layer. The injected block lands at **934 characters against the baseline's 2,927
   (−68%)**, while **92%** of blocks carry a machine-usable `PREFER` slot list and
   **38%** a typed `AVOID` slot — the baseline's memory has neither structure.
 - **An observer-only controller.** The agent may only pass through observed values,
@@ -245,7 +273,7 @@ Two things this table settles:
   flat (8.53 against 8.34), tool calls are lower (7.26 against 7.41), and
   completion tokens are unchanged.
 - **Compressing the memory block is not the same as compressing the request.** The
-  block falls **2,951 → 934 characters (−68%)**, while prompt tokens per subtask
+  block falls **2,927 → 934 characters (−68%)**, while prompt tokens per subtask
   fall **9%** — the window is dominated by tool returns rather than by memory, so
   the −68% is a per-block figure and is reported.
 
@@ -364,7 +392,7 @@ Baseline and ADAPT differ by **one flag** (`--agent`); memory backend, backbone,
 trial count and evaluator are held identical.
 
 ```powershell
-# baseline: pristine skeleton + the benchmark's own Agentic Memory backend
+# baseline: pristine skeleton + the benchmark's own memory backend (rewrite)
 python -m agent.vitabench_runner `
   --agent stock --cohort all --num-trials 4 --memory-type rewrite `
   --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
