@@ -33,16 +33,18 @@ comparison runs on small VRAM.
 
 ### Baselines
 
-| Backbone | Params | Thinking | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---:|:---:|:---:|:---:|:---:|:---:|
-| Qwen3.8-27B | 27B | no-thinking | 0.293 | 0.600 | 0.200 | 56 / 819 |
-| GLM-4.6 | 355B-A32B | no-thinking | 0.336 | 0.623 | 0.084 | 56 / 819 |
-| Kimi-K2.6 | 1T-A32B | no-thinking | 0.397 | **0.674** | 0.145 | 56 / 819 |
-| DeepSeek-V4-Pro | 1.6T-A49B | no-thinking | **0.456** | 0.652 | **0.267** | 56 / 819 |
-| Gemini-2.5-Flash | Unknown | thinking | 0.312 | 0.567 | 0.098 | 56 / 819 |
-| Qwen3-Max | >1T | thinking | 0.324 | 0.599 | 0.091 | 56 / 819 |
-| GLM-5.1 | 744B-A40B | thinking | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| Claude-Opus-4.6 | Unknown | thinking | **0.454** | **0.645** | **0.259** | 56 / 819 |
+| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|
+| **no-thinking** | | | | | |
+| Qwen3.8-27B | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
+| GLM-4.6 | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
+| Kimi-K2.6 | 1T-A32B | 0.397 | **0.674** | 0.145 | 56 / 819 |
+| DeepSeek-V4-Pro | 1.6T-A49B | **0.456** | 0.652 | **0.267** | 56 / 819 |
+| **thinking** | | | | | |
+| Gemini-2.5-Flash | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
+| Qwen3-Max | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
+| GLM-5.1 | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
+| Claude-Opus-4.6 | Unknown | **0.454** | **0.645** | **0.259** | 56 / 819 |
 
 **Bold** marks the best value in that column.
 
@@ -50,9 +52,10 @@ comparison runs on small VRAM.
 
 ### ADAPT (ours)
 
-| Backbone | Params | Thinking | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---:|:---:|:---:|:---:|:---:|:---:|
-| **Qwen3.8-27B** | **27B** | **no-thinking** | **0.364** | **0.632** | **0.212** | **56 / 819** |
+| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|
+| **no-thinking** | | | | | |
+| **Qwen3.8-27B** | **27B** | **0.364** | **0.632** | **0.212** | **56 / 819** |
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
@@ -86,9 +89,9 @@ comparison runs on small VRAM.
   (`Pass@4` − `Pass^4`) belong to GLM-4.6 (0.54) and Kimi-K2.6 (0.53) among the
   no-thinking rows and to Qwen3-Max (0.51) among the thinking rows; that spread is
   descriptive, not an effect of thinking mode.
-- **Thinking is not a controlled variable here.** No backbone appears in both
-  modes, so the `Thinking` column is context, not evidence that enabling thinking
-  helps or hurts.
+- **Thinking is not a controlled variable here.** No backbone appears under both
+  group rows, so the split is context, not evidence that enabling thinking helps or
+  hurts.
 
 ### Metric definitions
 
