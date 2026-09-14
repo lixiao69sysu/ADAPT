@@ -26,32 +26,45 @@ execution planning — stays with the LLM.
 
 ## Results
 
-### Comparison under one protocol · memory = `rewrite` (chosen for a fair comparison on small VRAM)
+All rows below share one protocol: memory = `rewrite`, 4 trials per person,
+evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
+`rewrite` is the benchmark's own `Agentic Memory` backend, chosen so the
+comparison runs on small VRAM. `n/a` = parameter count not disclosed.
 
-| Arm | Backbone | Params | Thinking | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---|---|:---:|:---:|:---:|:---:|:---:|
-| baseline (`rewrite`) | Qwen3.8-27B | 27B | off | 0.293 | 0.600 | 0.200 | 56 / 819 |
-| **ADAPT** | **Qwen3.8-27B** | **27B** | **off** | **0.364** | **0.632** | **0.212** | **56 / 819** |
-| baseline (`rewrite`) | GLM-4.6 | 355B-A32B | off | 0.336 | 0.623 | 0.084 | 56 / 819 |
-| baseline (`rewrite`) | Kimi-K2.6 | 1T-A32B | off | 0.397 | 0.674 | 0.145 | 56 / 819 |
-| baseline (`rewrite`) | DeepSeek-V4-Pro | 1.6T-A49B | off | 0.456 | 0.652 | 0.267 | 56 / 819 |
-| baseline (`rewrite`) | Gemini-2.5-Flash | n/a | on | 0.312 | 0.567 | 0.098 | 56 / 819 |
-| baseline (`rewrite`) | Qwen3-Max | >1T | on | 0.324 | 0.599 | 0.091 | 56 / 819 |
-| baseline (`rewrite`) | GLM-5.1 | 744B-A40B | on | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| baseline (`rewrite`) | Claude-Opus-4.6 | n/a | on | 0.454 | 0.645 | 0.259 | 56 / 819 |
+### No-thinking baselines
 
-All rows: 4 trials per person, evaluation unit = `(person, subtask)`, identical
-user simulator, evaluator and memory backend. `n/a` = parameter count not disclosed.
+| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|
+| Qwen3.8-27B | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
+| GLM-4.6 | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
+| Kimi-K2.6 | 1T-A32B | 0.397 | 0.674 | 0.145 | 56 / 819 |
+| DeepSeek-V4-Pro | 1.6T-A49B | 0.456 | 0.652 | 0.267 | 56 / 819 |
 
-**How to read this table.**
+### Thinking baselines
 
-- **The controlled comparison is the top two rows** — the *identical* backbone
-  (Qwen3.8-27B, thinking off) with and without ADAPT: **Avg@4 0.293 → 0.364
-  (+0.071)**, with `Pass@4` and `Pass^4` both moving the same way. Nothing else in
-  the table is an ablation: the remaining rows differ in backbone, scale and
+| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|
+| Gemini-2.5-Flash | n/a | 0.312 | 0.567 | 0.098 | 56 / 819 |
+| Qwen3-Max | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
+| GLM-5.1 | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
+| Claude-Opus-4.6 | n/a | 0.454 | 0.645 | 0.259 | 56 / 819 |
+
+### ADAPT (ours)
+
+| Backbone | Params | Thinking | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|:---:|
+| **Qwen3.8-27B + ADAPT** | **27B** | off | **0.364** | **0.632** | **0.212** | **56 / 819** |
+
+**How to read these tables.**
+
+- **The controlled comparison spans two blocks: the first row of the no-thinking
+  table and the ADAPT row.** Same backbone (Qwen3.8-27B, thinking off), same
+  memory backend, same trial count and evaluator; ADAPT changes only the agent.
+  **Avg@4 0.293 → 0.364 (+0.071)**, with `Pass@4` and `Pass^4` moving the same way.
+  Nothing else here is an ablation: the other rows differ in backbone, scale and
   thinking mode at once.
 - **ADAPT is not claimed to beat every row.** It is higher on **all three** metrics
-  than five of the eight baselines — its own baseline, plus Gemini-2.5-Flash,
+  than five of the eight baselines — its own 27B baseline, plus Gemini-2.5-Flash,
   Qwen3-Max, GLM-4.6 and GLM-5.1 (three of those four are thinking-enabled). It is
   higher on `Pass^4` but lower on `Avg@4`/`Pass@4` than Kimi-K2.6, and it is below
   DeepSeek-V4-Pro and Claude-Opus-4.6 on all three.
@@ -62,9 +75,9 @@ user simulator, evaluator and memory backend. `n/a` = parameter count not disclo
   (`Pass@4` − `Pass^4`) belong to GLM-4.6 (0.54) and Kimi-K2.6 (0.53) among the
   no-thinking rows and to Qwen3-Max (0.51) among the thinking rows; that spread is
   descriptive, not an effect of thinking mode.
-- **Thinking is not a controlled variable here.** No backbone appears both with and
-  without it, so the `Thinking` column is context, not evidence that enabling
-  thinking helps or hurts.
+- **Thinking is not a controlled variable here.** No backbone appears in both
+  tables, so the split is context, not evidence that enabling thinking helps or
+  hurts.
 
 ### Metric definitions
 
@@ -314,12 +327,12 @@ ADAPT 是一个面向**长序列消费场景**的个性化智能体：跨会话�
 主结果（`rewrite` 记忆后端，56 人 / 819 子任务，4 试次）：同基座 Qwen3.8-27B（关闭 thinking）下
 **Avg@4 0.293 → 0.364**，`Pass@4` 0.600 → 0.632，`Pass^4` 0.200 → 0.212。
 
-同表还列出 8 个基线（含 4 个开启 thinking 的大模型）。ADAPT 在**三项指标上全部高于**
-Gemini-2.5-Flash、Qwen3-Max、GLM-4.6、GLM-5.1；`Pass^4` 在九行中排**第三**（0.212），
-仅次于 DeepSeek-V4-Pro（0.267）与 Claude-Opus-4.6（0.259）。
-**但 ADAPT 并未在所有行上胜出**：低于 Kimi-K2.6 的 `Avg@4`/`Pass@4`，
-且三项均低于 DeepSeek-V4-Pro 与 Claude-Opus-4.6。表中没有同一基座的 thinking 开/关对照，
-因此 thinking 一列只作背景，不能解读为因果关系。
+同协议下另列 8 个基线，按**关闭 / 开启 thinking 分两张表**；ADAPT 单独列在最后。
+ADAPT 在**三项指标上全部高于**其中 5 个（它自己的基线，以及 Gemini-2.5-Flash、Qwen3-Max、
+GLM-4.6、GLM-5.1）；`Pass^4` 在九行中排**第三**（0.212），仅次于 DeepSeek-V4-Pro（0.267）
+与 Claude-Opus-4.6（0.259）。**但 ADAPT 并未在所有行上胜出**：低于 Kimi-K2.6 的
+`Avg@4`/`Pass@4`，且三项均低于 DeepSeek-V4-Pro 与 Claude-Opus-4.6。
+没有同一基座的 thinking 开/关对照，因此两张表的划分只是背景，**不能解读为因果关系**。
 
 三个指标的口径：`Avg@k` 是单元 `k` 次尝试成功率的均值；`Pass@k` 是"`k` 次里至少成功一次"
 的单元占比；`Pass^k` 是"`k` 次全部成功"的单元占比。**单试次下三者恒等**，因此 1 试次
