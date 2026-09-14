@@ -312,25 +312,29 @@ Do not run broad ablation matrices or add rules for individual user IDs.
 ## The evaluation unit
 
 Four levels coexist in one checkpoint, and "unit" is meaningless without naming
-one. On `stock_dev.json`:
+one. From coarsest to finest, on `stock_dev.json`:
 
-| level | key | count | reward attached | role |
-| --- | --- | --- | --- | --- |
-| user | `task_id` | - | none (derived) | cohort definition |
-| simulation record | `(user, trial)` | 32 | mean over that user's subtasks | what the runner writes |
-| subtask-trial | `(user, trial, subtask)` | 400 | binary | **a replicate, not a unit** |
-| **official unit** | `(task_id, subtask_idx)` | **100** | vector of `num_trials` binary rewards | the official metric |
+| level | key | reward attached | role |
+| --- | --- | --- | --- |
+| user | `task_id` | none (derived) | cohort definition |
+| simulation record | `(user, trial)` | mean over that user's subtasks | what the runner writes |
+| subtask-trial | `(user, trial, subtask)` | binary | **a replicate, not a unit** |
+| **official unit** | `(task_id, subtask_idx)` | vector of `num_trials` binary rewards | the official metric |
+
+The level **counts** are deliberately not tabulated: on a dev-cohort checkpoint
+they expose the cohort size. `scripts/noise_floor.py <checkpoint>` prints them on
+demand.
 
 The official unit is fixed by vendored code, not by preference:
 `_compute_subtask_pass_metrics` (`vita/metrics/agent_metrics.py:170`) states that
 "each (task_id, subtask_index) is treated as an independent evaluation unit
 observed across num_trials", and `average_at_k` (`:113`) is a plain mean over
-that unit's trials. So `Avg@4` is the mean over 100 units of each unit's 4-trial
+that unit's trials. So `Avg@4` is the mean, over units, of each unit's 4-trial
 mean.
 
 ```powershell
-python scripts/_official_metrics.py   # -> evaluation units (task_id, subtask_idx): 100, Avg@4=0.2925
-python scripts/noise_floor.py data/simulations/stock_dev.json   # -> the four level counts
+python scripts/_official_metrics.py data/simulations/stock_dev.json   # -> Avg@k / Pass@k / Pass^k
+python scripts/noise_floor.py data/simulations/stock_dev.json         # -> level counts, on demand
 ```
 
 `0.2940` is a different quantity: the equal-user-weight mean over the dev cohort. It is
