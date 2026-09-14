@@ -196,19 +196,35 @@ gap** — solvable by luck far more often than solvable on demand.
 
 ## How it works
 
-```text
-agent/vitabench_runner.py                       # the only entry point
-  └─ pristine VitaBench 2.0 components           # L1 subtask loop / L2 dialogue loop  [read-only]
-       └─ PersonalizationAgent (stock skeleton)  # single-step turn loop, all tools exposed
-            ├─ RewriteMemory                     # benchmark's own Agentic Memory backend
-            └─ ADAPTMemory                       # ours  (--memory-type adapt)
-                 ├─ signal evidence stream
-                 ├─ incremental, scoped fact store
-                 ├─ scoped single-dimension drift
-                 ├─ pure proactive-question proposal
-                 └─ bounded LLM profile summary   (--profile-summary)
-  └─ AdaptAgent(PersonalizationAgent)            # the one self-developed agent (--agent adapt)
+```mermaid
+flowchart TB
+    subgraph VB["VitaBench 2.0 · read-only"]
+        T["tasks · tools · user simulator · evaluator"]
+        S["PersonalizationAgent<br/>stock skeleton, single-step turn loop"]
+    end
+    subgraph AP["ADAPT · built here"]
+        M["ADAPTMemory<br/>facts · evidence · drift · bounded summary"]
+        D["decision layer<br/>TaskSpec · DecisionCard · CandidateLedger"]
+        A["AdaptAgent<br/>observer only"]
+    end
+    R["RewriteMemory<br/>baseline"]
+
+    T --> S
+    S --> R
+    S --> M
+    S --> A
+    M --> D
 ```
+
+**What is whose.** The benchmark defines the task; the work here is the memory data
+layer, the decision layer and the agent. The only per-turn injection point the
+agent gets is a single `generate_next_message`.
+
+| Provided by VitaBench 2.0 — read-only, unmodified | Built in this repository |
+|---|---|
+| task scripts, tool environment, user simulator, evaluator, official metric | scoped fact store, signal evidence, drift, proactive-question proposal, bounded profile summary |
+| the stock `PersonalizationAgent` turn loop and its `RewriteMemory` backend | the decision layer (`TaskSpec`, `DecisionCard`, `CandidateLedger`) and `AdaptAgent` |
+| every `baseline agent (rewrite)` row of the table above | the ADAPT row, and every measurement device used to judge it |
 
 `AdaptAgent` is an **observer**: it carries state and may annotate a copy of the
 turn, but it never modifies, replaces, reorders or preempts the model's message,
@@ -224,37 +240,26 @@ target/distraction annotations.
 
 ## Quick start
 
-### 1. Requirements
-
-| Dependency | Version | Purpose |
-|---|---|---|
-| Python | ≥ 3.11 | ADAPT agent + VitaBench 2.0 |
-| Git | ≥ 2.40 | version control |
-| pip / uv | current | Python dependencies |
-
-No Docker: the VitaBench tools are a simulated environment that runs in-process.
-
-### 2. Install the benchmark (read-only dependency)
+Python ≥ 3.11, Git ≥ 2.40, and pip or uv. No Docker: the VitaBench tools are a
+simulated environment that runs in-process.
 
 ```bash
-cd evaluation/vitabench
-pip install -e .
-```
+# 1. the benchmark, as a read-only dependency
+cd evaluation/vitabench && pip install -e . && cd ../..
 
-### 3. Fetch the dataset
-
-```bash
+# 2. the dataset
 pip install -U "huggingface_hub[cli]"
 huggingface-cli download meituan-longcat/VitaBench-2.0 \
-  --repo-type dataset \
-  --local-dir data/vita/domains/personalization
+  --repo-type dataset --local-dir data/vita/domains/personalization
+
+# 3. verify the checkout: agent tests, a compile check,
+#    and that the vendored benchmark has no diff
+./scripts/test_agent.ps1
 ```
 
-### 4. Configure models and memory
-
-`models_adapt.yaml` and `memory_adapt.yaml` are **ASCII-only overlays**. Both must
-be exported as environment variables before any run — VitaBench opens its own YAML
-without an encoding, so on Windows the overlay is the supported route:
+`models_adapt.yaml` and `memory_adapt.yaml` are **ASCII-only overlays** and must be
+exported before any run — VitaBench opens its own YAML without an encoding, so on
+Windows the overlay is the supported route:
 
 ```powershell
 $env:VITA_MODEL_CONFIG_PATH  = (Resolve-Path models_adapt.yaml).Path
@@ -263,15 +268,6 @@ $env:VITA_MEMORY_CONFIG_PATH = (Resolve-Path memory_adapt.yaml).Path
 
 The overlay points at any OpenAI-compatible endpoint; the table above was produced
 with three local servers and `enable_thinking: false`.
-
-### 5. Verify the checkout
-
-```powershell
-./scripts/test_agent.ps1
-```
-
-Runs the agent test-suite, a compile check, and confirms the vendored benchmark has
-no diff.
 
 ---
 
