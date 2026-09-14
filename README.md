@@ -392,22 +392,19 @@ data/                 checkpoints and traces (gitignored)
 
 ---
 
-## Status and limitations
+## Acknowledgements
 
-- **The vendored benchmark is read-only.** No source, prompt, task, tool, database,
-  user simulator or evaluator file is modified. Runtime agent code never reads
-  rewards, rubrics or target annotations.
-- **The headline claim is relative and same-backbone.** ADAPT is compared against
-  the benchmark's own memory backend on the identical backbone, memory type,
-  trial count and evaluator. Cross-backbone rows are reference points only.
-- **Not every mechanism earns its place.** The proactive-question loop is measured
-  as near-inert (27% of questions become a usable value) and is currently a
-  candidate for repair or removal rather than expansion. Reporting that is part of
-  the method, not a footnote to it.
-- **Retired work stays visible.** The V1 controller and its isolation switches were
-  removed as net-negative; the evidence that removed them is in the engineering log
-  and `archive/`.
-
-## License
-
-MIT License
+- **[VitaBench 2.0](https://github.com/meituan-longcat/VitaBench-2.0)** (Meituan
+  Longcat) — the benchmark this work is built on and evaluated against. ADAPT uses
+  its personalization domain, its tool environment, its user simulator and its
+  evaluator as a **read-only** dependency; no benchmark source, prompt, task, tool,
+  database, user-simulator or evaluator file is modified.
+- **Generative Agents** (Park et al., 2023) — the memory-stream idea that our
+  evidence stream and retrieval are descended from.
+- **MemGPT** (Packer et al., 2024) — the bounded-context framing behind keeping the
+  injected memory block fixed in size rather than letting it grow with history.
+- **Hermes Agent** (Nous Research) — design patterns for the tool registry and the
+  memory primitives.
+- **The open-weight model community** — Qwen, GLM, Kimi, DeepSeek, Gemini and
+  Claude, whose public endpoints and weights made a nine-row comparison on one
+  protocol possible.
