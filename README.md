@@ -228,9 +228,6 @@ Decision Card.
 
 ## Cost and latency
 
-Read from the `usage` block every model call records, normalised **per subtask**
-because the two checkpoints differ in trial count (4 against 1). Dev cohort.
-
 | | baseline (`rewrite`) | ADAPT | ratio |
 |---|---:|---:|---:|
 | model calls / subtask | 8.34 | 8.53 | 1.02 |
@@ -250,7 +247,7 @@ Two things this table settles:
 - **Compressing the memory block is not the same as compressing the request.** The
   block falls **2,951 → 934 characters (−68%)**, while prompt tokens per subtask
   fall **9%** — the window is dominated by tool returns rather than by memory, so
-  the −68% is a per-block figure and is reported as one.
+  the −68% is a per-block figure and is reported.
 
 ---
 
