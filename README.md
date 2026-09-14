@@ -8,15 +8,19 @@
 ADAPT is a long-horizon consumer agent for personalization: it remembers a user's
 preferences across sessions, updates them when they change, and uses them to pick
 and book real items — food delivery, in-store vouchers, hotels, flights, trains —
-over long multi-subtask interactions. It is built as a **data layer on top of the
-pristine VitaBench 2.0 skeleton**, and evaluated against the benchmark's own
-`Agentic Memory` (`rewrite`) backend.
+over long multi-subtask interactions. It runs as a **data layer on top of the
+pristine VitaBench 2.0 skeleton**, evaluated head-to-head against the benchmark's
+own `Agentic Memory` backend.
 
-The core idea is narrow and deliberate: **a controller may only pass through
-observed values, withhold an irreversible action, or hand the question back to the
-user.** It may never invent a value, decide for the user or the model, or speak for
-the model. Everything else — open-world semantics, search, candidate judgement,
-execution planning — stays with the LLM.
+> **At a glance — same backbone (Qwen3.8-27B, no thinking), same memory backend,
+> same trials, same evaluator: only the agent differs.**
+>
+> **Avg@4 0.293 → 0.364 (+24.2%)** · `Pass@4` 0.600 → 0.632 (+5.3%) ·
+> `Pass^4` 0.200 → 0.212 (+6.0%)
+>
+> Injected memory **2,951 → 934 characters (−68%)**, carrying **490** structured
+> preference slots · ungrounded tool ids **4 → 0** · abandoned orders
+> **11.8% → 9.1%**
 
 ---
 
@@ -24,13 +28,6 @@ execution planning — stays with the LLM.
 
 All rows share one protocol: memory = `rewrite`, 4 trials per person, evaluation
 unit = `(person, subtask)`, identical user simulator and evaluator.
-
-**Why `rewrite`.** Our evaluation hardware is **8 × NVIDIA RTX 4090**, so a
-heavier memory backend would let the injected context grow until it is bounded by
-VRAM rather than by the method — a difference that would surface as a score gap
-without being one. `rewrite`, the benchmark's own `Agentic Memory` backend, holds
-the context budget comparable across every row, so what the table compares is the
-agent, not the memory footprint.
 
 <table>
   <thead>
@@ -141,39 +138,12 @@ bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
-### What changed, and what it bought
-
-1. **Recall that is directly usable as a tool argument.**
-   *Situation:* the baseline injects ≈2,950 characters of free-text preference
-   prose per turn, which the model has to re-interpret before it can act on it.
-   *Task:* keep recall complete while making each stored conclusion directly
-   passable to a tool call.
-   *Action:* replaced the prose with a structured data layer — scoped facts, a
-   signal-evidence stream and a bounded profile summary — rendered as a Decision
-   Card whose entries carry a typed polarity.
-   *Result:* the injected block falls to **934 characters (−68%)**, while **92%**
-   of blocks now carry a machine-usable `PREFER` slot list (**490 entries**) and
-   **38%** carry a typed `AVOID` slot. The baseline's memory has neither.
-
-2. **Writes that are always grounded, and transactions that finish.**
-   *Situation:* a write can reference an id the environment never printed, and a
-   created order can be left unpaid.
-   *Task:* make every irreversible write traceable to an observed candidate, and
-   cut the share of abandoned transactions.
-   *Action:* the decision layer only offers the model ids parsed out of tool output
-   it has actually seen, and keeps the payment/confirmation step explicit.
-   *Result:* ordered-id grounding **0.9828 → 1.0000** (ungrounded ids **4 → 0**),
-   and created-but-never-paid **11.8% → 9.1%** (−23% relative).
-
-3. **A gain on the identical backbone, with everything else held fixed.**
-   *Situation:* memory backend, trial count, evaluator, user simulator and
-   backbone are the same in the two rows that differ only in the agent.
-   *Task:* move the official metric without changing any other variable.
-   *Action:* ADAPT replaces the stock agent on that one protocol.
-   *Result:* **Avg@4 0.293 → 0.364 (+24.2%)**, `Pass@4` **0.600 → 0.632 (+5.3%)**,
-   `Pass^4` **0.200 → 0.212 (+6.0%)**. The shape matters: `Avg@4` rises four times
-   faster than `Pass@4`/`Pass^4`, so the gain is mostly units that already
-   succeeded sometimes now succeeding more often, not units becoming solvable.
+**Why `rewrite`.** The evaluation hardware is **8 × NVIDIA RTX 4090**, so a heavier
+memory backend would let the injected context grow until VRAM bounds it rather than
+the method — a gap that would look like a result without being one. `rewrite`, the
+benchmark's own `Agentic Memory` backend, keeps the context budget comparable
+across every row, so what the table compares is the agent, not the memory
+footprint.
 
 ### Metric definitions
 
@@ -191,6 +161,36 @@ as successful only when its reward is exactly `1.0`.
 not three. `Pass@k` and `Pass^k` only separate for `k ≥ 2`; the gap between them
 (`Pass@4 = 0.600` vs `Pass^4 = 0.200` for the Qwen baseline) is the **reliability
 gap** — solvable by luck far more often than solvable on demand.
+
+---
+
+## Innovations
+
+- **Structured, polarity-typed preferences instead of prose.** Facts are scoped by
+  `(scope, facet, dimension, category)` and carry the evidence they came from.
+  Single-valued dimensions supersede an older value; genuinely multi-valued ones —
+  avoids, allergies, brands — accumulate instead. Typed polarity means a dislike
+  can never be rendered as a preference, and both read paths share one renderer.
+- **A priority-bounded Decision Card.** Budgeting is by priority, not position:
+  `MUST` and `AVOID` are the conditions the current instruction is graded on, so
+  they always render in full and the fact budget bounds only the soft sections. A
+  constraint cut at render time was never seen by the model, so no positional cut
+  is allowed to drop one.
+- **Recall that stays bounded, and much smaller.** One LLM-maintained profile
+  summary of at most `summary_max_chars` characters is the recall half of the data
+  layer. The injected block lands at **934 characters against the baseline's 2,951
+  (−68%)**, while **92%** of blocks carry a machine-usable `PREFER` slot list
+  (**490 entries**) and **38%** a typed `AVOID` slot — the baseline's memory has
+  neither structure.
+- **An observer-only controller.** The agent may only pass through observed values,
+  withhold an irreversible action, or hand the question back to the user. It never
+  invents a value, never decides for the user or the model, never reorders or
+  preempts the model's message, and never blocks a tool call. With every switch off
+  it is a byte-identical pass-through of the stock skeleton, asserted by a test.
+- **Grounded writes and finished transactions.** Only ids parsed out of tool output
+  the model has actually seen are offered for a write, and the payment step stays
+  explicit: ordered-id grounding **0.9828 → 1.0000** (ungrounded ids **4 → 0**),
+  created-but-never-paid **11.8% → 9.1%** (−23% relative).
 
 ---
 
@@ -219,35 +219,6 @@ The data layer hands the model **directly usable, dimension-scoped conclusions
 with their evidence**. It does not rank for the model, hide tools, auto-ask, or
 auto-terminate. At runtime nothing reads rewards, rubrics, target ids or
 target/distraction annotations.
-
-### Innovations
-
-- **A structured, polarity-typed fact layer instead of preference prose.** Facts
-  are scoped by `(scope, facet, dimension, category)` and carry the evidence they
-  came from. Single-valued dimensions supersede an older value; genuinely
-  multi-valued ones — avoids, allergies, brands — accumulate instead. Every fact
-  keeps a typed polarity, so a dislike can never be rendered as a preference, and
-  the two read paths both go through the same renderer.
-- **A priority-bounded Decision Card.** Budgeting is by priority, not position:
-  `MUST` and `AVOID` are the conditions the current instruction is graded on, so
-  they always render in full, and the fact budget bounds only the soft sections.
-  A constraint dropped at render time was never seen by the model and cannot be
-  recovered downstream, so no positional cut is allowed to drop one.
-- **Recall that stays bounded.** A single LLM-maintained profile summary is
-  prepended as one block of at most `summary_max_chars` characters. It is the
-  recall half of the data layer and never a substitute for the fact-level card,
-  which is what keeps the injected context from growing with the user's history.
-- **An observer-only controller.** The agent may only (a) pass through observed
-  values, (b) withhold an irreversible action, or (c) hand the question back to
-  the user. It never invents a value, never decides for the user or the model,
-  never reorders or preempts the model's message and never blocks a tool call.
-  With every switch off it is a byte-identical pass-through of the stock skeleton,
-  which is asserted by a test rather than by intent.
-- **Mechanisms that are instrumented, and claims that are pre-registered.**
-  Each mechanism exposes its own counters — questions committed, answers linked,
-  answers resolved into a slot value — and every score claim is gated by a paired
-  unit-level test fixed in advance. That is what let one mechanism be measured as
-  near-inert and reported as such instead of being assumed to work.
 
 ---
 
@@ -361,12 +332,18 @@ caught a real error:
    count and inflates every significance claim.
 2. **A delta below the cohort's resolution floor is reported as "not resolvable",
    never as "no effect".** The floor is the between-person component
-   (`2·SE ≈ ±0.058` on an 8-person cohort), and it does **not** shrink by adding
+   (`2·SE ≈ ±0.058` on a small dev cohort), and it does **not** shrink by adding
    trials — a change whose expected effect is smaller than the floor is not worth
    building on a cohort that size.
 3. **A cohort is identified by the checkpoint's `tasks` field, not by a CLI label.**
    The same label has already named two different user sets in this repository, so
    `scripts/paired_arms.py` refuses to compare checkpoints whose `tasks` differ.
+
+Mechanisms are instrumented for the same reason: each one exposes its own counters
+(questions committed, answers linked, answers resolved into a slot value) and every
+score claim is gated by a paired unit-level test fixed **before** the result is
+seen. That is how one mechanism was measured as near-inert — 11 questions, 3
+resolved — and reported as such instead of being assumed to work.
 
 Every number in this README and in the engineering log is reproducible by a
 zero-model command, and the log records the failed attempts alongside the
