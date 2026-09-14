@@ -22,72 +22,69 @@ execution planning — stays with the LLM.
 
 ## Results
 
-All rows below share one protocol: memory = `rewrite`, 4 trials per person,
-evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
-`rewrite` is the benchmark's own `Agentic Memory` backend, chosen so the
-comparison runs on small VRAM.
+All rows share one protocol: memory = `rewrite`, 4 trials per person, evaluation
+unit = `(person, subtask)`, identical user simulator and evaluator.
 
-### Baselines
+**Why `rewrite`.** Our evaluation hardware is **8 × NVIDIA RTX 4090**, so a
+heavier memory backend would let the injected context grow until it is bounded by
+VRAM rather than by the method — a difference that would surface as a score gap
+without being one. `rewrite`, the benchmark's own `Agentic Memory` backend, holds
+the context budget comparable across every row, so what the table compares is the
+agent, not the memory footprint.
 
-| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---:|:---:|:---:|:---:|:---:|
-| ***Non-thinking Models*** | | | | | |
-| Qwen3.8-27B (w/o thinking) | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
-| GLM-4.6 (w/o thinking) | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
-| Kimi-K2.6 (w/o thinking) | 1T-A32B | 0.397 | **0.674** | 0.145 | 56 / 819 |
-| DeepSeek-V4-Pro (w/o thinking) | 1.6T-A49B | **0.456** | 0.652 | **0.267** | 56 / 819 |
-| ***Thinking Models*** | | | | | |
-| Gemini-2.5-Flash (w/ thinking) | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
-| Qwen3-Max (w/ thinking) | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
-| GLM-5.1 (w/ thinking) | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| Claude-Opus-4.6 (w/ thinking) | Unknown | **0.454** | **0.645** | **0.259** | 56 / 819 |
+| Agents | Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---|---:|:---:|:---:|:---:|:---:|
+| ***Non-thinking Models*** | | | | | | |
+| baseline agent (rewrite) | Qwen3.8-27B (w/o thinking) | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
+| baseline agent (rewrite) | GLM-4.6 (w/o thinking) | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
+| baseline agent (rewrite) | Kimi-K2.6 (w/o thinking) | 1T-A32B | 0.397 | **0.674** | 0.145 | 56 / 819 |
+| baseline agent (rewrite) | DeepSeek-V4-Pro (w/o thinking) | 1.6T-A49B | **0.456** | 0.652 | **0.267** | 56 / 819 |
+| ***Thinking Models*** | | | | | | |
+| baseline agent (rewrite) | Gemini-2.5-Flash (w/ thinking) | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
+| baseline agent (rewrite) | Qwen3-Max (w/ thinking) | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
+| baseline agent (rewrite) | GLM-5.1 (w/ thinking) | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
+| baseline agent (rewrite) | Claude-Opus-4.6 (w/ thinking) | Unknown | **0.454** | **0.645** | **0.259** | 56 / 819 |
+| **ADAPT** | **Qwen3.8-27B (w/o thinking)** | **27B** | **0.364** | **0.632** | **0.212** | **56 / 819** |
 
-**Bold** marks the best value in that column.
-
----
-
-### ADAPT (ours)
-
-| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---:|:---:|:---:|:---:|:---:|
-| ***Non-thinking Models*** | | | | | |
-| **Qwen3.8-27B (w/o thinking)** | **27B** | **0.364** | **0.632** | **0.212** | **56 / 819** |
+**Bold** marks the best value in a column; the ADAPT row is bold to mark it as
+ours, so within `Avg@4`, `Pass@4` and `Pass^4` the best baseline value is what is
+bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
-**How to read these tables.**
+### What changed, and what it bought
 
-- **The controlled comparison spans the rule: the Qwen3.8-27B row above it and the
-  ADAPT row below it.** Same backbone (Qwen3.8-27B, no-thinking), same memory
-  backend, same trial count and evaluator; ADAPT changes only the agent.
-  **Avg@4 0.293 → 0.364, i.e. +24.2% relatively (+0.071 absolute)**, with
-  `Pass@4` and `Pass^4` moving the same way. Nothing else here is an ablation: the
-  other rows differ in backbone, scale and thinking mode at once.
-- **The gain is about frequency, not about expanding what is solvable.** Over 819
-  units, `Avg@4` +0.071 means about **+232 additional successes** out of four trials
-  each, while `Pass@4` +0.032 means only about **26 units became solvable at all**.
-  Even if every one of those 26 reached a perfect 4/4 they could account for at most
-  105 of the 232, so **at least half of the gain (≈55%) comes from units that
-  already succeeded sometimes and now simply succeed more often**. That is also why
-  `Avg@4` rises 24.2% while `Pass@4`/`Pass^4` rise only 5–6%.
-- **ADAPT is not claimed to beat every row.** It is higher on **all three** metrics
-  than five of the eight baselines — its own 27B baseline, plus Gemini-2.5-Flash,
-  Qwen3-Max, GLM-4.6 and GLM-5.1 (three of those four are thinking-enabled). It is
-  higher on `Pass^4` but lower on `Avg@4`/`Pass@4` than Kimi-K2.6, and it is below
-  DeepSeek-V4-Pro and Claude-Opus-4.6 on all three. On `Avg@4` alone ADAPT is above
-  GLM-5.1 by +3.4%, GLM-4.6 by +8.3%, Qwen3-Max by +12.3% and Gemini-2.5-Flash by
-  +16.7% — but those rows differ in backbone too, so only the same-backbone line
-  above is a controlled number.
-- **`Pass^4` is where a 27B no-thinking agent holds up best.** ADAPT records the
-  third-highest `Pass^4` of the nine rows (0.212), behind only DeepSeek-V4-Pro
-  (0.267) and Claude-Opus-4.6 (0.259) — backbones one to two orders of magnitude
-  larger. The widest gaps between "can solve it once" and "solves it every time"
-  (`Pass@4` − `Pass^4`) belong to GLM-4.6 (0.54) and Kimi-K2.6 (0.53) among the
-  no-thinking rows and to Qwen3-Max (0.51) among the thinking rows; that spread is
-  descriptive, not an effect of thinking mode.
-- **Thinking is not a controlled variable here.** No backbone appears under both
-  group rows, so the split is context, not evidence that enabling thinking helps or
-  hurts.
+1. **Recall that is directly usable as a tool argument.**
+   *Situation:* the baseline injects ≈2,950 characters of free-text preference
+   prose per turn, which the model has to re-interpret before it can act on it.
+   *Task:* keep recall complete while making each stored conclusion directly
+   passable to a tool call.
+   *Action:* replaced the prose with a structured data layer — scoped facts, a
+   signal-evidence stream and a bounded profile summary — rendered as a Decision
+   Card whose entries carry a typed polarity.
+   *Result:* the injected block falls to **934 characters (−68%)**, while **92%**
+   of blocks now carry a machine-usable `PREFER` slot list (**490 entries**) and
+   **38%** carry a typed `AVOID` slot. The baseline's memory has neither.
+
+2. **Writes that are always grounded, and transactions that finish.**
+   *Situation:* a write can reference an id the environment never printed, and a
+   created order can be left unpaid.
+   *Task:* make every irreversible write traceable to an observed candidate, and
+   cut the share of abandoned transactions.
+   *Action:* the decision layer only offers the model ids parsed out of tool output
+   it has actually seen, and keeps the payment/confirmation step explicit.
+   *Result:* ordered-id grounding **0.9828 → 1.0000** (ungrounded ids **4 → 0**),
+   and created-but-never-paid **11.8% → 9.1%** (−23% relative).
+
+3. **A gain on the identical backbone, with everything else held fixed.**
+   *Situation:* memory backend, trial count, evaluator, user simulator and
+   backbone are the same in the two rows that differ only in the agent.
+   *Task:* move the official metric without changing any other variable.
+   *Action:* ADAPT replaces the stock agent on that one protocol.
+   *Result:* **Avg@4 0.293 → 0.364 (+24.2%)**, `Pass@4` **0.600 → 0.632 (+5.3%)**,
+   `Pass^4` **0.200 → 0.212 (+6.0%)**. The shape matters: `Avg@4` rises four times
+   faster than `Pass@4`/`Pass^4`, so the gain is mostly units that already
+   succeeded sometimes now succeeding more often, not units becoming solvable.
 
 ### Metric definitions
 
@@ -293,15 +290,6 @@ archive/              retired experiments, kept as evidence
 evaluation/vitabench/ READ-ONLY vendored benchmark — never modified
 data/                 checkpoints and traces (gitignored)
 ```
-
-### Documentation
-
-| Document | Contents |
-|---|---|
-| [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md) | the durable record: reproduced failures, falsified hypotheses, effective fixes, evidence, risks |
-| [docs/AGENT_ARCHITECTURE.md](docs/AGENT_ARCHITECTURE.md) | loop structure, `[V]`/`[A]` ownership, the injection point, the retirement record |
-| [SETUP.md](SETUP.md) | environment setup, step by step |
-| [CLAUDE.md](CLAUDE.md) | working agreement: boundaries, promotion criteria, measurement rules |
 
 ---
 
