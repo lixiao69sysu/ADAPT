@@ -49,11 +49,13 @@ comparison runs on small VRAM. `n/a` = parameter count not disclosed.
 | GLM-5.1 | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
 | Claude-Opus-4.6 | n/a | 0.454 | 0.645 | 0.259 | 56 / 819 |
 
-### ADAPT (ours)
+### ADAPT
 
-| Backbone | Params | Thinking | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
-|---|---:|:---:|:---:|:---:|:---:|:---:|
-| **Qwen3.8-27B + ADAPT** | **27B** | off | **0.364** | **0.632** | **0.212** | **56 / 819** |
+| Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
+|---|---:|:---:|:---:|:---:|:---:|
+| Qwen3.8-27B | 27B | **0.364** | **0.632** | **0.212** | 56 / 819 |
+
+no-thinking
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
@@ -323,37 +325,3 @@ data/                 checkpoints and traces (gitignored)
   removed as net-negative; the evidence that removed them is in the engineering log
   and `archive/`.
 - **No license file yet.**
-
----
-
-## 中文摘要
-
-ADAPT 是一个面向**长序列消费场景**的个性化智能体：跨会话记住用户偏好、在偏好变化时更新，
-并用它完成外卖点单、到店团购、酒店机票等真实预订。
-
-它构建在**只读的 VitaBench 2.0 骨架**之上，只替换其中的记忆数据层，因此与官方
-`Agentic Memory`（`rewrite`）后端在同一模型、同一试次数、同一评测器下可直接对比。
-
-**选 `rewrite` 是为了在小显存上做公平比较**——两臂只差 `--agent` 一个开关。
-
-主结果（`rewrite` 记忆后端，56 人 / 819 子任务，4 试次）：同基座 Qwen3.8-27B（关闭 thinking）下
-**Avg@4 0.293 → 0.364（+24.2%）**，`Pass@4` 0.600 → 0.632（+5.3%），`Pass^4` 0.200 → 0.212（+6.0%）。
-请注意三者的相对提升**并不齐平**：平均准确率涨 24%，而"能不能解出"只涨 5–6%——
-**增益主要来自"原本偶发可解、现在解得更多"的单元，而非把不可解变成可解**。
-
-同协议下另列 8 个基线，按**关闭 / 开启 thinking 分两张表**；ADAPT 单独列在最后。
-ADAPT 在**三项指标上全部高于**其中 5 个（它自己的基线，以及 Gemini-2.5-Flash、Qwen3-Max、
-GLM-4.6、GLM-5.1）；`Pass^4` 在九行中排**第三**（0.212），仅次于 DeepSeek-V4-Pro（0.267）
-与 Claude-Opus-4.6（0.259）。**但 ADAPT 并未在所有行上胜出**：低于 Kimi-K2.6 的
-`Avg@4`/`Pass@4`，且三项均低于 DeepSeek-V4-Pro 与 Claude-Opus-4.6。
-没有同一基座的 thinking 开/关对照，因此两张表的划分只是背景，**不能解读为因果关系**。
-
-三个指标的口径：`Avg@k` 是单元 `k` 次尝试成功率的均值；`Pass@k` 是"`k` 次里至少成功一次"
-的单元占比；`Pass^k` 是"`k` 次全部成功"的单元占比。**单试次下三者恒等**，因此 1 试次
-只报一个数；`Pass@4` 与 `Pass^4` 之间的差距就是"**偶尔能做对**"与"**稳定能做对**"的可靠性缺口。
-
-增益来自**召回侧而非提问侧**：记忆块比基线小 **68%**，却携带结构化、带极性的具体商品槽；
-而主动性提问循环经埋点实测**近乎空转**（11 个提问只有 3 个落成可用槽值），是被记录下来的
-负面结论，不是被隐藏的。
-
-工程账本、被否证的假设与复现命令见 [docs/ADAPT_ENGINEERING_LOG.md](docs/ADAPT_ENGINEERING_LOG.md)。
