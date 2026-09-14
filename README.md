@@ -200,11 +200,6 @@ change stays inspectable.
 times the fact's confidence — and the ranking is what decides which facts reach the
 Decision Card.
 
-**What is not modelled.** No user embedding, no probabilistic posterior, no learned
-utility function, and no preference-to-preference correlation. The thresholds above
-are hand-set constants rather than fitted parameters; that is the honest limit of
-this layer and the first thing worth improving.
-
 ---
 
 ## Innovations
@@ -251,7 +246,6 @@ because the two checkpoints differ in trial count (4 against 1). Dev cohort.
 | **prompt tokens / subtask** | **204,987** | **185,923** | **0.91** |
 | latency / subtask | 108.0 s | 103.8 s | 0.96 |
 | latency / (person, trial) | 86.4 min | 68.1 min | 0.79 |
-| actor cost | 0.00 (local) | 0.00 (local) | — |
 
 Two things this table settles:
 
@@ -262,13 +256,6 @@ Two things this table settles:
   block falls **2,951 → 934 characters (−68%)**, while prompt tokens per subtask
   fall **9%** — the window is dominated by tool returns rather than by memory, so
   the −68% is a per-block figure and is reported as one.
-
-Cost is 0.00 for both arms because every endpoint is local; that is reported as
-measured rather than converted into a hypothetical API price.
-
-```powershell
-python scripts/cost_latency_report.py
-```
 
 ---
 
