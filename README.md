@@ -405,6 +405,3 @@ data/                 checkpoints and traces (gitignored)
   injected memory block fixed in size rather than letting it grow with history.
 - **Hermes Agent** (Nous Research) — design patterns for the tool registry and the
   memory primitives.
-- **The open-weight model community** — Qwen, GLM, Kimi, DeepSeek, Gemini and
-  Claude, whose public endpoints and weights made a nine-row comparison on one
-  protocol possible.
