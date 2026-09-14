@@ -29,7 +29,7 @@ execution planning — stays with the LLM.
 All rows below share one protocol: memory = `rewrite`, 4 trials per person,
 evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
 `rewrite` is the benchmark's own `Agentic Memory` backend, chosen so the
-comparison runs on small VRAM. `n/a` = parameter count not disclosed.
+comparison runs on small VRAM.
 
 ### No-thinking baselines
 
@@ -44,10 +44,10 @@ comparison runs on small VRAM. `n/a` = parameter count not disclosed.
 
 | Backbone | Params | Avg@4 | Pass@4 | Pass^4 | People / Subtasks |
 |---|---:|:---:|:---:|:---:|:---:|
-| Gemini-2.5-Flash | n/a | 0.312 | 0.567 | 0.098 | 56 / 819 |
+| Gemini-2.5-Flash | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
 | Qwen3-Max | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
 | GLM-5.1 | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| Claude-Opus-4.6 | n/a | 0.454 | 0.645 | 0.259 | 56 / 819 |
+| Claude-Opus-4.6 | Unknown | 0.454 | 0.645 | 0.259 | 56 / 819 |
 
 ### ADAPT
 
