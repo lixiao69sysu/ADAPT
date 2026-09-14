@@ -47,7 +47,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>Qwen3.8-27B (w/o thinking)</td>
+      <td>Qwen3.8-27B</td>
       <td align="right">27B</td>
       <td align="center">0.293</td>
       <td align="center">0.600</td>
@@ -56,7 +56,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>GLM-4.6 (w/o thinking)</td>
+      <td>GLM-4.6</td>
       <td align="right">355B-A32B</td>
       <td align="center">0.336</td>
       <td align="center">0.623</td>
@@ -65,7 +65,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>Kimi-K2.6 (w/o thinking)</td>
+      <td>Kimi-K2.6</td>
       <td align="right">1T-A32B</td>
       <td align="center">0.397</td>
       <td align="center"><strong>0.674</strong></td>
@@ -74,7 +74,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>DeepSeek-V4-Pro (w/o thinking)</td>
+      <td>DeepSeek-V4-Pro</td>
       <td align="right">1.6T-A49B</td>
       <td align="center"><strong>0.456</strong></td>
       <td align="center">0.652</td>
@@ -86,7 +86,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>Gemini-2.5-Flash (w/ thinking)</td>
+      <td>Gemini-2.5-Flash</td>
       <td align="right">Unknown</td>
       <td align="center">0.312</td>
       <td align="center">0.567</td>
@@ -95,7 +95,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>Qwen3-Max (w/ thinking)</td>
+      <td>Qwen3-Max</td>
       <td align="right">&gt;1T</td>
       <td align="center">0.324</td>
       <td align="center">0.599</td>
@@ -104,7 +104,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>GLM-5.1 (w/ thinking)</td>
+      <td>GLM-5.1</td>
       <td align="right">744B-A40B</td>
       <td align="center">0.352</td>
       <td align="center">0.556</td>
@@ -113,7 +113,7 @@ unit = `(person, subtask)`, identical user simulator and evaluator.
     </tr>
     <tr>
       <td>baseline agent (rewrite)</td>
-      <td>Claude-Opus-4.6 (w/ thinking)</td>
+      <td>Claude-Opus-4.6</td>
       <td align="right">Unknown</td>
       <td align="center"><strong>0.454</strong></td>
       <td align="center"><strong>0.645</strong></td>
