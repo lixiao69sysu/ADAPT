@@ -193,6 +193,42 @@ gap** — solvable by luck far more often than solvable on demand.
 
 ---
 
+## Cost and latency
+
+Read from the `usage` block every model call records, normalised **per subtask**
+because the two checkpoints differ in trial count (4 against 1). Dev cohort.
+
+| | baseline (`rewrite`) | ADAPT | ratio |
+|---|---:|---:|---:|
+| model calls / subtask | 8.34 | 8.53 | 1.02 |
+| tool calls / subtask | 7.41 | 7.26 | 0.98 |
+| prompt tokens / call (mean) | 24,586 | 21,796 | 0.89 |
+| prompt tokens / call (p95) | 99,380 | 87,569 | 0.88 |
+| completion tokens / call | 126.9 | 123.5 | 0.97 |
+| **prompt tokens / subtask** | **204,987** | **185,923** | **0.91** |
+| latency / subtask | 108.0 s | 103.8 s | 0.96 |
+| latency / (person, trial) | 86.4 min | 68.1 min | 0.79 |
+| actor cost | 0.00 (local) | 0.00 (local) | — |
+
+Two things this table settles:
+
+- **The extra layer is not paid for in interactions.** Model calls per subtask are
+  flat (8.53 against 8.34), tool calls are if anything slightly lower, and
+  completion tokens are unchanged.
+- **Compressing the memory block is not the same as compressing the request.** The
+  block falls **2,951 → 934 characters (−68%)**, yet prompt tokens per subtask fall
+  only **9%**, because the window is dominated by tool returns rather than by
+  memory. The −68% is a per-block figure and is reported as one.
+
+Cost is 0.00 for both arms because every endpoint is local; that is reported as
+measured rather than converted into a hypothetical API price.
+
+```powershell
+python scripts/cost_latency_report.py
+```
+
+---
+
 ## How it works
 
 ```mermaid
