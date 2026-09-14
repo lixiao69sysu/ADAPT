@@ -37,8 +37,8 @@ comparison runs on small VRAM.
 |---|---:|:---:|:---:|:---:|:---:|
 | Qwen3.8-27B | 27B | 0.293 | 0.600 | 0.200 | 56 / 819 |
 | GLM-4.6 | 355B-A32B | 0.336 | 0.623 | 0.084 | 56 / 819 |
-| Kimi-K2.6 | 1T-A32B | 0.397 | ![0.674](https://img.shields.io/badge/-0.674-blue) | 0.145 | 56 / 819 |
-| DeepSeek-V4-Pro | 1.6T-A49B | ![0.456](https://img.shields.io/badge/-0.456-blue) | 0.652 | ![0.267](https://img.shields.io/badge/-0.267-blue) | 56 / 819 |
+| Kimi-K2.6 | 1T-A32B | 0.397 | **0.674** | 0.145 | 56 / 819 |
+| DeepSeek-V4-Pro | 1.6T-A49B | **0.456** | 0.652 | **0.267** | 56 / 819 |
 
 ### Thinking baselines
 
@@ -47,9 +47,10 @@ comparison runs on small VRAM.
 | Gemini-2.5-Flash | Unknown | 0.312 | 0.567 | 0.098 | 56 / 819 |
 | Qwen3-Max | >1T | 0.324 | 0.599 | 0.091 | 56 / 819 |
 | GLM-5.1 | 744B-A40B | 0.352 | 0.556 | 0.150 | 56 / 819 |
-| Claude-Opus-4.6 | Unknown | ![0.454](https://img.shields.io/badge/-0.454-blue) | ![0.645](https://img.shields.io/badge/-0.645-blue) | ![0.259](https://img.shields.io/badge/-0.259-blue) | 56 / 819 |
+| Claude-Opus-4.6 | Unknown | **0.454** | **0.645** | **0.259** | 56 / 819 |
 
-**Blue = best in that column within its table.**
+**Bold** in the two baseline tables marks the best value in that column; the ADAPT
+row is bold to mark it as ours.
 
 ### ADAPT
 
