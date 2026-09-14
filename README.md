@@ -164,6 +164,49 @@ gap** — solvable by luck far more often than solvable on demand.
 
 ---
 
+## Preference modelling
+
+A preference here is not a sentence. It is a typed fact with a scope, a polarity, a
+strength and a lifetime — and each of those has an explicit dynamic.
+
+**Representation.** `(scope, facet, dimension, category)` fixes what the fact is
+about, so a change in taste is never read as a change in budget. `polarity` is part
+of the fact rather than a rendering decision, so a dislike cannot come out as a
+preference. `evidence_ids` keeps the interactions it came from.
+
+**Strength.** Confidence is reinforced when the preference is re-observed — `+0.1`
+per repeat in the drift bookkeeping, `+0.15 ×` the signal's own confidence in the
+lifecycle pass, both capped at 1.0 — and decays `×0.3` when the value is superseded.
+A preference confirmed many times therefore outranks one seen once.
+
+**Lifetime.** Decay is exponential with a per-type half-life, and a fact whose
+confidence falls below a floor of `0.2` leaves the stream:
+
+| type | half-life | applies to |
+|---|---|---|
+| durable | 3650 d | health constraints — an allergy |
+| normal | 180 d | taste, brand |
+| ephemeral | 30 d | a passing interest |
+
+This is what keeps an abandoned preference from diluting retrieval indefinitely.
+
+**Change.** Drift is detected one dimension at a time, so a shift in taste and a
+shift in budget cannot mask each other. When drift fires, the old value decays and
+the new one dominates — the previous value is not deleted, so the history of the
+change stays inspectable.
+
+**Use.** Facts are ranked by an explicit weighted score —
+`0.5 × relevance + 0.2 × recency + 0.3 × importance`, importance being a type prior
+times the fact's confidence — and the ranking is what decides which facts reach the
+Decision Card.
+
+**What is not modelled.** No user embedding, no probabilistic posterior, no learned
+utility function, and no preference-to-preference correlation. The thresholds above
+are hand-set constants rather than fitted parameters; that is the honest limit of
+this layer and the first thing worth improving.
+
+---
+
 ## Innovations
 
 - **Structured, polarity-typed preferences instead of prose.** Facts are scoped by
