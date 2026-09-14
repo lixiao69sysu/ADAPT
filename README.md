@@ -55,19 +55,31 @@ comparison runs on small VRAM. `n/a` = parameter count not disclosed.
 |---|---:|:---:|:---:|:---:|:---:|:---:|
 | **Qwen3.8-27B + ADAPT** | **27B** | off | **0.364** | **0.632** | **0.212** | **56 / 819** |
 
+**vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
+
 **How to read these tables.**
 
 - **The controlled comparison spans two blocks: the first row of the no-thinking
   table and the ADAPT row.** Same backbone (Qwen3.8-27B, thinking off), same
   memory backend, same trial count and evaluator; ADAPT changes only the agent.
-  **Avg@4 0.293 → 0.364 (+0.071)**, with `Pass@4` and `Pass^4` moving the same way.
-  Nothing else here is an ablation: the other rows differ in backbone, scale and
-  thinking mode at once.
+  **Avg@4 0.293 → 0.364, i.e. +24.2% relatively (+0.071 absolute)**, with
+  `Pass@4` and `Pass^4` moving the same way. Nothing else here is an ablation: the
+  other rows differ in backbone, scale and thinking mode at once.
+- **The gain is about frequency, not about expanding what is solvable.** Over 819
+  units, `Avg@4` +0.071 means about **+232 additional successes** out of four trials
+  each, while `Pass@4` +0.032 means only about **26 units became solvable at all**.
+  Even if every one of those 26 reached a perfect 4/4 they could account for at most
+  105 of the 232, so **at least half of the gain (≈55%) comes from units that
+  already succeeded sometimes and now simply succeed more often**. That is also why
+  `Avg@4` rises 24.2% while `Pass@4`/`Pass^4` rise only 5–6%.
 - **ADAPT is not claimed to beat every row.** It is higher on **all three** metrics
   than five of the eight baselines — its own 27B baseline, plus Gemini-2.5-Flash,
   Qwen3-Max, GLM-4.6 and GLM-5.1 (three of those four are thinking-enabled). It is
   higher on `Pass^4` but lower on `Avg@4`/`Pass@4` than Kimi-K2.6, and it is below
-  DeepSeek-V4-Pro and Claude-Opus-4.6 on all three.
+  DeepSeek-V4-Pro and Claude-Opus-4.6 on all three. On `Avg@4` alone ADAPT is above
+  GLM-5.1 by +3.4%, GLM-4.6 by +8.3%, Qwen3-Max by +12.3% and Gemini-2.5-Flash by
+  +16.7% — but those rows differ in backbone too, so only the same-backbone line
+  above is a controlled number.
 - **`Pass^4` is where a 27B no-thinking agent holds up best.** ADAPT records the
   third-highest `Pass^4` of the nine rows (0.212), behind only DeepSeek-V4-Pro
   (0.267) and Claude-Opus-4.6 (0.259) — backbones one to two orders of magnitude
@@ -325,7 +337,9 @@ ADAPT 是一个面向**长序列消费场景**的个性化智能体：跨会话�
 **选 `rewrite` 是为了在小显存上做公平比较**——两臂只差 `--agent` 一个开关。
 
 主结果（`rewrite` 记忆后端，56 人 / 819 子任务，4 试次）：同基座 Qwen3.8-27B（关闭 thinking）下
-**Avg@4 0.293 → 0.364**，`Pass@4` 0.600 → 0.632，`Pass^4` 0.200 → 0.212。
+**Avg@4 0.293 → 0.364（+24.2%）**，`Pass@4` 0.600 → 0.632（+5.3%），`Pass^4` 0.200 → 0.212（+6.0%）。
+请注意三者的相对提升**并不齐平**：平均准确率涨 24%，而"能不能解出"只涨 5–6%——
+**增益主要来自"原本偶发可解、现在解得更多"的单元，而非把不可解变成可解**。
 
 同协议下另列 8 个基线，按**关闭 / 开启 thinking 分两张表**；ADAPT 单独列在最后。
 ADAPT 在**三项指标上全部高于**其中 5 个（它自己的基线，以及 Gemini-2.5-Flash、Qwen3-Max、
