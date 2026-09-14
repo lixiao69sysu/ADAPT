@@ -6,7 +6,7 @@
   <img alt="Python" src="https://img.shields.io/badge/Python-%E2%89%A53.11-blue">
   <img alt="Benchmark" src="https://img.shields.io/badge/Benchmark-VitaBench%202.0-orange">
   <img alt="Backend" src="https://img.shields.io/badge/Backend-OpenAI--compatible-6f42c1">
-  <img alt="Thinking" src="https://img.shields.io/badge/Thinking-disabled-lightgrey">
+  <img alt="Cohort" src="https://img.shields.io/badge/Cohort-56%20people%20%2F%20819%20subtasks-lightgrey">
 </p>
 
 ADAPT is a long-horizon consumer agent for personalization: it remembers a user's
