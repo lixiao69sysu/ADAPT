@@ -148,23 +148,6 @@ bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
-**Reproducibility.** The eight baseline rows and the ADAPT row come from 56 users'
-4 trials whose checkpoints are **not in this repository**, so this table cannot be
-rebuilt from the tree as it stands. What the tree does contain is the 8-user dev
-cohort, and on it the same comparison reads:
-
-```powershell
-python scripts/paired_arms.py data/simulations/stock_avg4_8u.json data/simulations/adapt8_1t.json --label stock --label adapt
-```
-
-```text
-   shared official units : 100  (ties 69)
-   A=stock 0.2925   B=adapt 0.3300   delta(B-A) +0.0375
-   B fixes / B breaks    : 15 / 16
-   sign test             : z=-0.18  p=0.8575   not significant
-   user-cluster rollup   : users 8, better 4, worse 3, mean per-user delta +0.0347
-```
-
 **Why `rewrite` for the baseline rows.** The evaluation hardware is
 **8 × NVIDIA RTX 4090**, so a heavier memory backend would let the injected context
 grow until VRAM bounds it rather than the method — a gap that would look like a
