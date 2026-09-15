@@ -13,8 +13,11 @@ pristine VitaBench 2.0 skeleton**, evaluated head-to-head against the benchmark'
 own memory backend, `rewrite`.
 
 > **At a glance — same skeleton, same model (Qwen3.8-27B, no thinking), same
-> evaluator and runner. ADAPT's memory data layer is the one thing that differs
-> from the baseline; the comparison is whole-agent, not a memory-only ablation.**
+> evaluator and runner. The ADAPT arm changes two layers: the memory data layer
+> (`adapt` memory replacing `rewrite`, plus the bounded profile summary) and an
+> observer-only control layer (the proactive question loop, on `AdaptAgent` rather
+> than the stock agent). It is a whole-agent comparison; the three changes are not
+> isolated from one another.**
 >
 > On the 56-user evaluation: **Avg@4 0.293 → 0.364 (+24.2%)** · `Pass@4` 0.600 →
 > 0.632 · `Pass^4` 0.200 → 0.212. **That run's checkpoint is not in this
@@ -31,10 +34,12 @@ own memory backend, `rewrite`.
 
 All baseline rows share one protocol: memory = `rewrite`, 4 trials per person,
 evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
-The **ADAPT** row changes exactly one thing — it replaces that `rewrite` memory
-with ADAPT's own data layer — so the table is a **whole-agent** comparison, not a
-memory-only ablation. The ADAPT runs held in this repository are single-trial,
-which is why the dev-cohort numbers below are reported on their own terms.
+The **ADAPT** row changes two layers — its `rewrite` memory is replaced by ADAPT's
+own data layer, and the proactive question loop runs on `AdaptAgent` instead of the
+stock agent — so the table is a **whole-agent** comparison rather than a memory-only
+ablation, and the three changes are not isolated from one another. The ADAPT runs
+held in this repository are single-trial, which is why the dev-cohort numbers below
+are reported on their own terms.
 
 <table>
   <thead>
@@ -166,12 +171,20 @@ The baseline is 4 trials and the arm is 1, and that delta sits inside this
 cohort's **±0.058** resolution floor, so it is reported as **not resolvable** — a
 statement about what this cohort can resolve, not evidence of no effect.
 
-**Why `rewrite`.** The evaluation hardware is **8 × NVIDIA RTX 4090**, so a heavier
-memory backend would let the injected context grow until VRAM bounds it rather than
-the method — a gap that would look like a result without being one. `rewrite`, the
-benchmark's own memory backend (`rewrite`), keeps the context budget comparable
-across every row, so what the table compares is the agent, not the memory
-footprint.
+**Layer isolation.** The one isolation experiment that has been attempted isolates
+the data layer alone, running on the stock agent.
+`docs/AGENT_ARCHITECTURE.md` §7 records it as **Δ = +0.000** over 4 users and 47
+units (z = 0.00): parity, with no advantage established. No isolation of the
+control layer alone is recorded, so on the current evidence neither layer is
+independently shown to carry the arm.
+
+**Why `rewrite` for the baseline rows.** The evaluation hardware is
+**8 × NVIDIA RTX 4090**, so a heavier memory backend would let the injected context
+grow until VRAM bounds it rather than the method — a gap that would look like a
+result without being one. Holding the baseline rows on `rewrite` keeps the context
+budget comparable **across those eight rows**, so that they compare backbones
+rather than memory footprints. The ADAPT row deliberately breaks that constraint,
+which is the comparison the table exists to make.
 
 ### Metric definitions
 
