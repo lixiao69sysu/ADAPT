@@ -53,7 +53,7 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td colspan="7" align="center"><em><strong>Non-thinking Models</strong></em></td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
+      <td rowspan="4" align="left">baseline agent (rewrite)</td>
       <td>Qwen3.8-27B</td>
       <td align="right">27B</td>
       <td align="center">0.293</td>
@@ -62,7 +62,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>GLM-4.6</td>
       <td align="right">355B-A32B</td>
       <td align="center">0.336</td>
@@ -71,7 +70,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>Kimi-K2.6</td>
       <td align="right">1T-A32B</td>
       <td align="center">0.397</td>
@@ -80,7 +78,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>DeepSeek-V4-Pro</td>
       <td align="right">1.6T-A49B</td>
       <td align="center"><strong>0.456</strong></td>
@@ -92,7 +89,7 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td colspan="7" align="center"><em><strong>Thinking Models</strong></em></td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
+      <td rowspan="4" align="left">baseline agent (rewrite)</td>
       <td>Gemini-2.5-Flash</td>
       <td align="right">Unknown</td>
       <td align="center">0.312</td>
@@ -101,7 +98,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>Qwen3-Max</td>
       <td align="right">&gt;1T</td>
       <td align="center">0.324</td>
@@ -110,7 +106,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>GLM-5.1</td>
       <td align="right">744B-A40B</td>
       <td align="center">0.352</td>
@@ -119,7 +114,6 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>baseline agent (rewrite)</td>
       <td>Claude-Opus-4.6</td>
       <td align="right">Unknown</td>
       <td align="center"><strong>0.454</strong></td>
