@@ -39,9 +39,9 @@ which is why the dev-cohort numbers below are reported on their own terms.
 <table>
   <thead>
     <tr>
-      <th align="left">Agents</th>
-      <th align="left">Backbone</th>
-      <th align="right">Params</th>
+      <th align="center">Agents</th>
+      <th align="center">Backbone</th>
+      <th align="center">Params</th>
       <th align="center">Avg@4</th>
       <th align="center">Pass@4</th>
       <th align="center">Pass^4</th>
@@ -53,33 +53,36 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td colspan="7" align="center"><em><strong>Non-thinking Models</strong></em></td>
     </tr>
     <tr>
-      <td rowspan="4" align="left">baseline agent (rewrite)</td>
-      <td>Qwen3.8-27B</td>
-      <td align="right">27B</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">Qwen3.8-27B</td>
+      <td align="center">27B</td>
       <td align="center">0.293</td>
       <td align="center">0.600</td>
       <td align="center">0.200</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>GLM-4.6</td>
-      <td align="right">355B-A32B</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">GLM-4.6</td>
+      <td align="center">355B-A32B</td>
       <td align="center">0.336</td>
       <td align="center">0.623</td>
       <td align="center">0.084</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>Kimi-K2.6</td>
-      <td align="right">1T-A32B</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">Kimi-K2.6</td>
+      <td align="center">1T-A32B</td>
       <td align="center">0.397</td>
       <td align="center"><strong>0.674</strong></td>
       <td align="center">0.145</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>DeepSeek-V4-Pro</td>
-      <td align="right">1.6T-A49B</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">DeepSeek-V4-Pro</td>
+      <td align="center">1.6T-A49B</td>
       <td align="center"><strong>0.456</strong></td>
       <td align="center">0.652</td>
       <td align="center"><strong>0.267</strong></td>
@@ -89,42 +92,45 @@ which is why the dev-cohort numbers below are reported on their own terms.
       <td colspan="7" align="center"><em><strong>Thinking Models</strong></em></td>
     </tr>
     <tr>
-      <td rowspan="4" align="left">baseline agent (rewrite)</td>
-      <td>Gemini-2.5-Flash</td>
-      <td align="right">Unknown</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">Gemini-2.5-Flash</td>
+      <td align="center">Unknown</td>
       <td align="center">0.312</td>
       <td align="center">0.567</td>
       <td align="center">0.098</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>Qwen3-Max</td>
-      <td align="right">&gt;1T</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">Qwen3-Max</td>
+      <td align="center">&gt;1T</td>
       <td align="center">0.324</td>
       <td align="center">0.599</td>
       <td align="center">0.091</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>GLM-5.1</td>
-      <td align="right">744B-A40B</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">GLM-5.1</td>
+      <td align="center">744B-A40B</td>
       <td align="center">0.352</td>
       <td align="center">0.556</td>
       <td align="center">0.150</td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td>Claude-Opus-4.6</td>
-      <td align="right">Unknown</td>
+      <td align="center">baseline agent (rewrite)</td>
+      <td align="center">Claude-Opus-4.6</td>
+      <td align="center">Unknown</td>
       <td align="center"><strong>0.454</strong></td>
       <td align="center"><strong>0.645</strong></td>
       <td align="center"><strong>0.259</strong></td>
       <td align="center">56 / 819</td>
     </tr>
     <tr>
-      <td><strong>ADAPT</strong></td>
-      <td><strong>Qwen3.8-27B (w/o thinking)</strong></td>
-      <td align="right"><strong>27B</strong></td>
+      <td align="center"><strong>ADAPT</strong></td>
+      <td align="center"><strong>Qwen3.8-27B (w/o thinking)</strong></td>
+      <td align="center"><strong>27B</strong></td>
       <td align="center"><strong>0.364</strong></td>
       <td align="center"><strong>0.632</strong></td>
       <td align="center"><strong>0.212</strong></td>
