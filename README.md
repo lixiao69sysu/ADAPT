@@ -10,12 +10,12 @@ preferences across sessions, updates them when they change, and uses them to pic
 and book real items — food delivery, in-store vouchers, hotels, flights, trains —
 over long multi-subtask interactions. It runs as a **data layer on top of the
 pristine VitaBench 2.0 skeleton**, evaluated head-to-head against the benchmark's
-own memory backend, `rewrite`.
+own memory backend, `rewrite` — what the benchmark calls its *Agentic Memory*.
 
 > **At a glance — same skeleton, same model (Qwen3.8-27B, no thinking), same
 > evaluator and runner. The ADAPT arm changes two layers: the memory data layer
 > (`adapt` memory replacing `rewrite`, plus the bounded profile summary) and an
-> observer-only control layer (the proactive question loop, on `AdaptAgent` rather
+> observer-only control layer (the proactive question loop, on ADAPT Agent rather
 > than the stock agent). It is a whole-agent comparison; the three changes are not
 > isolated from one another.**
 >
@@ -35,7 +35,7 @@ own memory backend, `rewrite`.
 All baseline rows share one protocol: memory = `rewrite`, 4 trials per person,
 evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
 The **ADAPT** row changes two layers — its `rewrite` memory is replaced by ADAPT's
-own data layer, and the proactive question loop runs on `AdaptAgent` instead of the
+own data layer, and the proactive question loop runs on ADAPT Agent instead of the
 stock agent — so the table is a **whole-agent** comparison rather than a memory-only
 ablation, and the three changes are not isolated from one another.
 
@@ -148,7 +148,7 @@ bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
-**Why `rewrite` for the baseline rows.** The evaluation hardware is
+**Why `rewrite` — the benchmark's *Agentic Memory* — for the baseline rows.** The evaluation hardware is
 **8 × NVIDIA RTX 4090**, so a heavier memory backend would let the injected context
 grow until VRAM bounds it rather than the method — a gap that would look like a
 result without being one. Holding the baseline rows on `rewrite` keeps the context
@@ -298,7 +298,7 @@ flowchart TB
         RN["runtime<br/>alignment · correspondence · schedule · location · ranking"]
     end
 
-    A["AdaptAgent<br/>observer only · three switches, all off by default"]
+    A["ADAPT Agent<br/>observer only · three switches, all off by default"]
 
     T --> S
     S --> A
@@ -321,10 +321,10 @@ agent gets is a single `generate_next_message`.
 | Provided by VitaBench 2.0 — read-only, unmodified | Built in this repository |
 |---|---|
 | task scripts, tool environment, user simulator, evaluator, official metric | scoped fact store, signal evidence, drift, proactive-question proposal, bounded profile summary |
-| the stock `PersonalizationAgent` turn loop and its `RewriteMemory` backend | the decision layer (`TaskSpec`, `DecisionCard`, `CandidateLedger`) and `AdaptAgent` |
+| the stock `PersonalizationAgent` turn loop and its `RewriteMemory` backend | the decision layer (`TaskSpec`, `DecisionCard`, `CandidateLedger`) and ADAPT Agent |
 | every `baseline agent (rewrite)` row of the table above | the ADAPT row, and every measurement device used to judge it |
 
-`AdaptAgent` is an **observer**: it carries state and may annotate a copy of the
+ADAPT Agent is an **observer**: it carries state and may annotate a copy of the
 turn, but it never modifies, replaces, reorders or preempts the model's message,
 and never blocks a tool call or a write. With every switch off it is a verified
 byte-for-byte pass-through of the stock skeleton.
@@ -375,7 +375,7 @@ Baseline and ADAPT differ by **one flag** (`--agent`); memory backend, backbone,
 trial count and evaluator are held identical.
 
 ```powershell
-# baseline: pristine skeleton + the benchmark's own memory backend (rewrite)
+# baseline: pristine skeleton + the benchmark's own memory backend (rewrite = Agentic Memory)
 python -m agent.vitabench_runner `
   --agent stock --cohort all --num-trials 4 --memory-type rewrite `
   --agent-llm qwen38-agent --user-llm qwen35-user --evaluator-llm qwen36-evaluator `
@@ -450,7 +450,7 @@ successful ones.
 ```text
 agent/                agent, memory data layer, decision layer, external runner
   vitabench_runner.py   the only entry point; pristine benchmark composition
-  adapt_agent.py        AdaptAgent — the single self-developed agent
+  adapt_agent.py        ADAPT Agent — the single self-developed agent
   memory/               signal stream, fact store, drift, proactive engine, summary
   decision.py           TaskSpec / DecisionCard / CandidateLedger
   runtime/              alignment, location, ranking, schedule

@@ -716,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--proactive-loop",
         action="store_true",
         help=(
-            "AdaptAgent: observe the proactive question loop (record a sent "
+            "ADAPT Agent: observe the proactive question loop (record a sent "
             "question and link the user's reply); off by default so the agent "
             "stays a verified pass-through (E-086)"
         ),
@@ -725,7 +725,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--candidate-evidence",
         action="store_true",
         help=(
-            "AdaptAgent: append a bounded three-valued candidate/constraint "
+            "ADAPT Agent: append a bounded three-valued candidate/constraint "
             "observation to a copy of each tool result; off by default and "
             "unmeasured (E-087)"
         ),
@@ -734,7 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--task-state",
         action="store_true",
         help=(
-            "AdaptAgent: append a bounded, non-directive statement of this "
+            "ADAPT Agent: append a bounded, non-directive statement of this "
             "subtask's required slots, observed candidates and whether a write "
             "or a question has happened yet; off by default and unmeasured "
             "(E-091)"

@@ -26,7 +26,7 @@ def main() -> int:
         print(f"task={simulation.get('task_id')} trial={simulation.get('trial')}")
         print(f"  reward: {(simulation.get('reward_info') or {}).get('reward')}")
         # "proactive_loop" is the key pre-E-086 checkpoints used; the single
-        # AdaptAgent writes "adapt_agent".
+        # ADAPT Agent writes "adapt_agent".
         loop = states.get("adapt_agent") or states.get("proactive_loop")
         print(f"  adapt_agent counters: {loop}")
         trajectories = states.get("integrity_subtask_trajectories") or []

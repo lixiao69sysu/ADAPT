@@ -2,7 +2,7 @@
 
 > **2026-09-13 之后的变更（E-086）**：本报告是当时工作区的时点快照。
 > 其中提到的 EvidenceAgent、CandidateMarkingAgent 以及 `agent/candidate_marking.py`、
-> `agent/marking_agent.py` 已被删除；agent 侧收敛为唯一的纯观察者 `AdaptAgent`
+> `agent/marking_agent.py` 已被删除；agent 侧收敛为唯一的纯观察者 ADAPT Agent
 > （`agent/adapt_agent.py`）。下列分析保留原样作为历史记录，不再代表现状。
 
 ## 当前工作区复核补充（11:49）

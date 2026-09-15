@@ -2,7 +2,7 @@
 
 2026-09-13 用户重新明确目标：允许自研 agent 架构，在 stock 已跑的同八用户上
 达到官方 Avg@4 >= 0.35。agent 侧随后收敛为**唯一一个** agent：`--agent adapt` →
-`AdaptAgent`（`agent/adapt_agent.py`），即 stock 骨架加每回合对主动提问闭环的
+ADAPT Agent（`agent/adapt_agent.py`），即 stock 骨架加每回合对主动提问闭环的
 **观察**。它只观察、只记账，不做任何决定：不改写、不替换、不重排、不抢占模型消息，
 也不阻断任何工具调用或写入。此前三条实验路径——EvidenceAgent（无评分产物）、
 CandidateMarkingAgent（实测无增益）、ThrashGuardAgent（自身 smoke 零触发）——全部
@@ -51,7 +51,7 @@ $ python -m agent.vitabench_runner \
                               │      ADAPTMemory          [A] 我们的数据层（--memory-type adapt）
                               │
                               ├── agent = PersonalizationAgent   [V] stock（--agent stock）
-                              │        = AdaptAgent             [A] 唯一自研 agent，仅观察（--agent adapt）
+                              │        = ADAPT Agent             [A] 唯一自研 agent，仅观察（--agent adapt）
                               │
                               ├── user = PersonalizationUser   [V] 用户模拟器（模糊回答，满意即 ###STOP###）
                               │
@@ -142,7 +142,7 @@ $ python -m agent.vitabench_runner \
 
 ---
 
-## 4. L3 agent 单步【V 基类；在用的只有 PersonalizationAgent 与其子类 AdaptAgent】
+## 4. L3 agent 单步【V 基类；在用的只有 PersonalizationAgent 与其子类 ADAPT Agent】
 
 基类 `llm_agent.py` `LLMAgent.generate_next_message` @87：
 
@@ -161,7 +161,7 @@ $ python -m agent.vitabench_runner \
 ### 4a. ~~ADAPTAgent~~ —— 已删除（保留控制流记录）
 
 曾存在唯一的"替换循环"实现：旧 `agent/adapt_agent.py`（1748 行）+ `runtime/` 控制器（2598 行）。
-（该路径 2026-09-13 晚些时候被复用为新的 `AdaptAgent`，见 §4d；两者除文件名外无关。）
+（该路径 2026-09-13 晚些时候被复用为新的 ADAPT Agent，见 §4d；两者除文件名外无关。）
 它于本轮被整体删除（3467 行）。下面这段控制流是**历史记录**，用于理解 E-032…E-052 的成因；
 代码已不存在。
 
@@ -224,7 +224,7 @@ generate_next_message()  @240
 
 ```
 
-### 4d. `AdaptAgent` —— 唯一在用的子类（纯观察者，E-086）
+### 4d. ADAPT Agent —— 唯一在用的子类（纯观察者，E-086）
 
 `agent/adapt_agent.py`（219 行）继承 stock `PersonalizationAgent`，只覆写
 `generate_next_message`，在 `super()` 前后各做一次**记账观察**：
@@ -285,7 +285,7 @@ read(query)  ──→ 被 L1 的 2b 调用一次，也被 system_prompt 每次�
 └─────────────────────────────────────────────────────────────────┘
                               ↑ 只能通过下面四个口子影响
 
-【注入点 1】override generate_next_message        AdaptAgent（唯一占用者；纯观察者，只读不改）
+【注入点 1】override generate_next_message        ADAPT Agent（唯一占用者；纯观察者，只读不改）
 【注入点 2】子类化 orchestrator                   IntegrityPersonalizationOrchestrator
                                                    （_run_subtask / _evaluate_subtask /
                                                      _aggregate_rewards / run / reevaluate_saved）
@@ -305,7 +305,7 @@ read(query)  ──→ 被 L1 的 2b 调用一次，也被 system_prompt 每次�
 ## 7. 当前推荐主线（本轮会话后的状态）
 
 两个可选骨架：`--agent stock`（stock `PersonalizationAgent`）或 `--agent adapt`
-（`AdaptAgent`，纯观察者，只多记两个记账转移）。
+（ADAPT Agent，纯观察者，只多记两个记账转移）。
 
 ```
 --agent stock --memory-type adapt --profile-summary
@@ -319,7 +319,7 @@ read(query)  ──→ 被 L1 的 2b 调用一次，也被 system_prompt 每次�
 已删除：agent/v2/（1425 行，零测量且 CLI 默认指向它，是静默风险）
 已删除：LandingGuardAgent（339 行 + 其测试，见 E-053）
 已删除：EvidenceAgent / CandidateMarkingAgent / ThrashGuardAgent / ProactiveLoopAgent
-        （无评分产物 / 实测无增益 / 零触发；其观察逻辑收敛进 AdaptAgent，见 E-086）
+        （无评分产物 / 实测无增益 / 零触发；其观察逻辑收敛进 ADAPT Agent，见 E-086）
 ```
 
 ---
@@ -331,7 +331,7 @@ runner(L0, 我们的)
    └─ 组装：memory[A] + agent[A/V] + user[V] + orchestrator[A 子类]
         └─ L1 跨子任务[V] ── 每子任务：memory.update → read 注入 → L2 → 评测[A 包装]
              └─ L2 对话循环[V] ── agent 单步 / 用户回话 / 工具执行
-                  └─ L3 单步：V 基类 20 行；PersonalizationAgent + AdaptAgent（纯观察）两条链
+                  └─ L3 单步：V 基类 20 行；PersonalizationAgent + ADAPT Agent（纯观察）两条链
 ```
 
 ---

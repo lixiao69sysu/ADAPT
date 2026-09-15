@@ -60,7 +60,7 @@ def real_evidence() -> None:
     for simulation in payload.get("simulations", []):
         states = simulation.get("states") or {}
         # "proactive_loop" is the key the pre-E-086 checkpoints used; the single
-        # AdaptAgent writes "adapt_agent".
+        # ADAPT Agent writes "adapt_agent".
         loop = states.get("adapt_agent") or states.get("proactive_loop")
         print(f"  loop counters: {loop}")
         for traj in states.get("integrity_subtask_trajectories") or []:

@@ -28,7 +28,7 @@ be described as such.
 The flag-gated agent experiments were removed in E-086: `CandidateMarkingAgent`
 (measured with no gain), the evidence reviewer (no scored artifact at all) and
 the thrash guard (fired zero times in its own smoke). `agent/` now carries a
-single ADAPT agent, `AdaptAgent`, which only observes.
+single ADAPT Agent, which only observes.
 
 Run the archived tests explicitly if you revive something:
 

@@ -2274,13 +2274,13 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   - 删除 `agent/evidence_agent.py`、`agent/marking_agent.py`、`agent/candidate_marking.py`、
     `agent/thrash_guard.py`、`agent/proactive_agent.py`，以及 `agent/tests/test_evidence_agent.py`、
     `agent/tests/test_thrash_guard.py`。
-  - 唯一保留的自研 agent 是 `agent/adapt_agent.py::AdaptAgent`——`ProactiveLoopAgent` 的内容原样改名，
+  - 唯一保留的自研 agent 是 `ADAPT Agent`（`agent/adapt_agent.py`）——`ProactiveLoopAgent` 的内容原样改名，
     **继承**（而不是复制）vendored `vita.agent.personalization_agent.PersonalizationAgent`。
   - runner：`--agent` 收敛为 `{stock, adapt}`；删除 `--thrash-guard`、`--thrash-repeat-threshold`、
     `--candidate-marking`、`--marking-limit` 及其在函数签名和 `info` 里的全部穿线；
     状态落盘改为 `simulation.states["adapt_agent"] = agent.loop_events`。
   - `agent/tool_signature.py` 保留（`scripts/runaway_autopsy.py` 仍导入它），只更新了提到已删文件的 docstring。
-- **不变量**：`AdaptAgent` 只覆写 `generate_next_message`，在 `super()` 前后各做一次**记账观察**
+- **不变量**：ADAPT Agent 只覆写 `generate_next_message`，在 `super()` 前后各做一次**记账观察**
   （入站答复链接、出站问题提交）；不修改、不替换、不重排、不抢占模型消息，不阻断工具调用或写入。
   由 `agent/tests/test_proactive_loop.py::test_observer_never_modifies_the_model_message` 守护。
 - **本条结论**：**这次收敛本身不改变任何分数。** 它没有新增能力，也没有删掉任何已证实有效的能力
@@ -2290,9 +2290,9 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   收敛后只剩**一个可改的 agent 类**，"改一个 agent，再测量"才第一次成为一个定义清楚的实验。
 - **移除的断言**：*"多一条实验路径等于多一种能力"*——四条路径没有一条有可引用的分数产物；
   *"--agent adapt 正在被测量"*——它指向的类连一个评分 checkpoint 都不存在。
-- **适用边界**：这是结构收敛，不是干预效果。`AdaptAgent` 的对照仍是 stock `PersonalizationAgent`；
+- **适用边界**：这是结构收敛，不是干预效果。ADAPT Agent 的对照仍是 stock `PersonalizationAgent`；
   8 用户队列上 ±0.0582 的噪声下限不变，任何提分主张仍须走 E-057 之后的非配对对比与官方单元门禁。
-- **后续风险/下一步**：`AdaptAgent` 尚未在 8 用户 × 4 trial 上测量。**"可测量"不等于"有增益"。**
+- **后续风险/下一步**：ADAPT Agent 尚未在 8 用户 × 4 trial 上测量。**"可测量"不等于"有增益"。**
 - **能力抽象**：proactiveness（主动提问闭环的观察侧）/ updating（答复进事实库的状态转移）。
 
 ## E-087：给唯一那个 agent 加第二个机制——候选/约束三值观察，独立开关、默认关闭、未测量
@@ -2315,7 +2315,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
   - 追加只发生在 `deepcopy` 出来的副本上：环境自己的消息对象——也就是评测与离线审计读取的那条 trajectory
     ——保持**逐字节不变**。计数只在开关打开时更新。
   - `agent/vitabench_runner.py`：新增 `--proactive-loop` 与 `--candidate-evidence` 两个 CLI flag，穿到
-    `AdaptAgent` 构造，并写入 checkpoint 的 `info["adapt_agent"] = {"proactive_loop": bool, "candidate_evidence": bool}`；
+    ADAPT Agent 构造，并写入 checkpoint 的 `info["adapt_agent"] = {"proactive_loop": bool, "candidate_evidence": bool}`；
     参数在同一条链上的**每一个**函数签名（`run_stock_personalization_task` / `_run_one_simulation` /
     `run_selected`）与每一处调用点都已同步。
 - **能且只能追加**：机制**只能追加**，绝不修改、重排、删除或重绘环境产出的任何候选记录；追加文本由命名常量
@@ -2525,7 +2525,7 @@ R7（ADAPT 全量 + 画像，即 E-048 默认配置）在跑到 `E057330` 第 8/
     追加只发生在副本上，环境自己的消息对象——评测与离线审计读取的那条 trajectory——**逐字节不变**；
     任何异常都被静默吞掉，记账永不打断一次运行。
   - `loop_events` 增加 `task_state_enabled`、`task_states_annotated`；`agent/vitabench_runner.py` 增加
-    `--task-state`，穿到 `AdaptAgent`，并写入 `info["adapt_agent"]["task_state"]`。参数在**每一个**函数签名
+    `--task-state`，穿到 ADAPT Agent，并写入 `info["adapt_agent"]["task_state"]`。参数在**每一个**函数签名
     （`run_stock_personalization_task` / `_run_one_simulation` / `run_selected`）与每一处调用点都已同步。
 - **非指令是构造性的，并且被测试钉住**：块里**没有祈使句、没有建议、没有下一步动作**。
   "所有必需槽已定"是关于本子任务的事实，**不等于**告诉模型去写入；块不阻断工具调用、不改写模型消息、
