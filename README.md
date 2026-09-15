@@ -243,8 +243,8 @@ Decision Card.
 |---|---:|---:|---:|
 | model calls / subtask | 8.34 | 8.53 | 1.02 |
 | tool calls / subtask | 7.41 | 7.26 | 0.98 |
-| prompt tokens / call (mean) | 24,586 | 21,796 | 0.89 |
-| prompt tokens / call (p95) | 99,380 | 87,569 | 0.88 |
+| prompt tokens / call (Mean) | 24,586 | 21,796 | 0.89 |
+| prompt tokens / call (P95) | 99,380 | 87,569 | 0.88 |
 | completion tokens / call | 126.9 | 123.5 | 0.97 |
 | **prompt tokens / subtask** | **204,987** | **185,923** | **0.91** |
 | latency / subtask | 108.0 s | 103.8 s | 0.96 |
