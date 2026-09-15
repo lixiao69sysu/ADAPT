@@ -150,8 +150,8 @@ bolded.
 
 **vs the same-backbone baseline (0.293 / 0.600 / 0.200): Avg@4 +0.071 (+24.2%) · Pass@4 +0.032 (+5.3%) · Pass^4 +0.012 (+6.0%)**
 
-**Reproducibility.** The eight baseline rows and the ADAPT row come from 56-user
-runs whose checkpoints are **not in this repository**, so this table cannot be
+**Reproducibility.** The eight baseline rows and the ADAPT row come from 56 users'
+4 trials whose checkpoints are **not in this repository**, so this table cannot be
 rebuilt from the tree as it stands. What the tree does contain is the 8-user dev
 cohort, and on it the same comparison reads:
 
@@ -166,17 +166,6 @@ python scripts/paired_arms.py data/simulations/stock_avg4_8u.json data/simulatio
    sign test             : z=-0.18  p=0.8575   not significant
    user-cluster rollup   : users 8, better 4, worse 3, mean per-user delta +0.0347
 ```
-
-The baseline is 4 trials and the arm is 1, and that delta sits inside this
-cohort's **±0.058** resolution floor, so it is reported as **not resolvable** — a
-statement about what this cohort can resolve, not evidence of no effect.
-
-**Layer isolation.** The one isolation experiment that has been attempted isolates
-the data layer alone, running on the stock agent.
-`docs/AGENT_ARCHITECTURE.md` §7 records it as **Δ = +0.000** over 4 users and 47
-units (z = 0.00): parity, with no advantage established. No isolation of the
-control layer alone is recorded, so on the current evidence neither layer is
-independently shown to carry the arm.
 
 **Why `rewrite` for the baseline rows.** The evaluation hardware is
 **8 × NVIDIA RTX 4090**, so a heavier memory backend would let the injected context
