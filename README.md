@@ -37,9 +37,7 @@ evaluation unit = `(person, subtask)`, identical user simulator and evaluator.
 The **ADAPT** row changes two layers — its `rewrite` memory is replaced by ADAPT's
 own data layer, and the proactive question loop runs on `AdaptAgent` instead of the
 stock agent — so the table is a **whole-agent** comparison rather than a memory-only
-ablation, and the three changes are not isolated from one another. The ADAPT runs
-held in this repository are single-trial, which is why the dev-cohort numbers below
-are reported on their own terms.
+ablation, and the three changes are not isolated from one another.
 
 <table>
   <thead>
