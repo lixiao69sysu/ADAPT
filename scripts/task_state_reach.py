@@ -55,6 +55,7 @@ from agent.adapt_agent import (  # noqa: E402
 )
 from agent.candidate_ledger import CandidateLedger  # noqa: E402
 from agent.decision import is_commit_tool  # noqa: E402
+from agent.memory.adapt_memory import ADAPTMemory  # noqa: E402
 from agent.memory.proactive import (  # noqa: E402
     CONTEXT_RESOLVABLE_SLOTS,
     TOOL_FINDABLE_SLOTS,
@@ -98,10 +99,12 @@ def askable_gaps(open_slots: list[str]) -> list[str]:
 
 
 def replay_run(
-    messages: list[dict], instruction: str
+    messages: list[dict],
+    instruction: str,
+    memory_resolved: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Replay one subtask's turns and record what the block would have shown."""
-    slots = task_state_slots(instruction, MEMORY_RESOLVED)
+    slots = task_state_slots(instruction, memory_resolved or MEMORY_RESOLVED)
     required = [slot for slot, _settled in slots]
     open_slots = [slot for slot, settled in slots if not settled]
 
@@ -156,6 +159,7 @@ def replay_run(
                     ),
                     "block_chars": len(block),
                     "open_slots": list(open_slots),
+                    "askable_open_slots": list(askable_gaps(open_slots)),
                     "required_slots": list(required),
                     "question_asked": question_asked,
                     "write_attempted": write_attempted,
@@ -175,7 +179,7 @@ def replay_run(
     }
 
 
-def _run_rows(checkpoint: dict, tasks_by_id: dict[str, Any]):
+def _run_rows(checkpoint: dict, tasks_by_id: dict[str, Any], replay_memory: bool = True):
     for sim in checkpoint.get("simulations", []):
         task = tasks_by_id.get(str(sim.get("task_id")))
         if task is None:
@@ -184,26 +188,47 @@ def _run_rows(checkpoint: dict, tasks_by_id: dict[str, Any]):
         rewards = ((sim.get("reward_info") or {}).get("info") or {}).get(
             "subtask_rewards"
         ) or {}
-        for traj in (sim.get("states") or {}).get(
-            "integrity_subtask_trajectories"
-        ) or []:
-            index = traj.get("subtask_idx")
-            if index is None or index >= len(subtasks):
-                continue
+        trajectories = {
+            traj.get("subtask_idx"): traj
+            for traj in (sim.get("states") or {}).get(
+                "integrity_subtask_trajectories"
+            )
+            or []
+        }
+        memory = None
+        if replay_memory:
+            memory = ADAPTMemory(language="chinese", user_id=str(sim.get("task_id")))
+
+        # Walk *every* subtask so the fact store is faithful; only graded ones
+        # are yielded. The slot values come from the same
+        # ``resolve_task_slots`` the live agent's memory backend exposes.
+        for index, subtask in enumerate(subtasks):
+            instruction = subtask.instruction or ""
+            if memory is not None:
+                memory.update(list(getattr(subtask, "interactions", None) or []))
+                memory.begin_subtask(instruction)
+                resolved = dict(memory.resolve_task_slots(instruction))
+            else:
+                resolved = {}
+
+            traj = trajectories.get(index)
             reward = rewards.get(f"subtask_{index}_reward")
-            if reward is None:
+            if traj is None or reward is None:
                 continue
             yield {
                 "task_id": sim.get("task_id"),
                 "trial": sim.get("trial"),
                 "subtask_idx": index,
                 "reward": float(reward),
-                "instruction": subtasks[index].instruction or "",
+                "instruction": instruction,
                 "messages": traj.get("messages") or [],
+                "memory_resolved": resolved,
             }
 
 
-def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
+def analyse(
+    checkpoint: dict, tasks_by_id: dict[str, Any], replay_memory: bool = True
+) -> dict[str, Any]:
     graded = 0
     failing = 0
     delivered = 0
@@ -219,6 +244,8 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
     open_slot_frequency: dict[str, int] = {}
 
     a_runs = 0
+    a_askable_runs = 0
+    a_askable_strict_runs = 0
     a_strict_runs = 0
     a_no_requirement_runs = 0
     b_runs = 0
@@ -226,12 +253,14 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
     b_no_requirement_runs = 0
     either_runs = 0
 
-    for row in _run_rows(checkpoint, tasks_by_id):
+    for row in _run_rows(checkpoint, tasks_by_id, replay_memory=replay_memory):
         graded += 1
         if row["reward"] == 1.0:
             continue
         failing += 1
-        state = replay_run(row["messages"], row["instruction"])
+        state = replay_run(
+            row["messages"], row["instruction"], row.get("memory_resolved")
+        )
         turns = state["turns"]
         if turns:
             delivered += 1
@@ -263,6 +292,17 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
         a_any_turn = any(
             not turn["open_slots"] and not turn["write_attempted"] for turn in turns
         )
+        # (a') the same population, but with "settled" aligned to the repository's
+        # own askability rules: a slot the question policy would never spend a
+        # question on (it is tool-findable, or already in the profile) does not
+        # count as a reason for the run to still be waiting. This is E-091's
+        # prescribed next step and it introduces no new vocabulary.
+        a_askable_turn = any(
+            not turn["askable_open_slots"]
+            and not turn["write_attempted"]
+            and turn["required_slots"]
+            for turn in turns
+        )
         # (b) the block showed no slot open and a question already asked.
         b_turn = any(
             not turn["open_slots"]
@@ -279,6 +319,10 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
                 a_strict_runs += 1
         if a_any_turn:
             a_no_requirement_runs += 1
+        if a_askable_turn:
+            a_askable_runs += 1
+            if state["write_calls"] == 0:
+                a_askable_strict_runs += 1
         if b_turn:
             b_runs += 1
             if state["last_turn_is_a_question"]:
@@ -319,6 +363,10 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
         ),
         "reach": {
             "a_all_slots_settled_and_no_write_yet": a_runs,
+            "a_askable_slots_settled_and_no_write_yet": a_askable_runs,
+            "a_askable_of_which_the_run_never_issued_a_write_call": (
+                a_askable_strict_runs
+            ),
             "a_of_which_the_run_never_issued_a_write_call": a_strict_runs,
             "a_without_the_requires_at_least_one_slot_guard": a_no_requirement_runs,
             "b_no_slot_open_and_a_question_already_asked": b_runs,
@@ -333,9 +381,11 @@ def analyse(checkpoint: dict, tasks_by_id: dict[str, Any]) -> dict[str, Any]:
         },
         "note": (
             "Reach, not effect. The block is delivered on tool results only, so a "
-            "failing run with no tool result gets no block at all. Memory supplies "
-            "no resolved slots in this replay (the baseline used rewrite memory), so "
-            "the settled population measured here is a lower bound. 'A question was "
+            "failing run with no tool result gets no block at all. Slot values come "
+            "from the fact store replayed up to that subtask when memory replay is "
+            "on, and from the compiler alone under --no-memory (the lower bound; it "
+            "is the right setting for the read-only rewrite-memory baseline, whose "
+            "backend exposes no structured slot resolution). 'A question was "
             "asked' is read from question-shaped assistant turns "
             "(_looks_like_a_question), the same observer the repository already "
             "uses, because the stock baseline has no proactive engine and therefore "
@@ -349,6 +399,11 @@ def main() -> int:
     parser.add_argument("checkpoint")
     parser.add_argument("--language", default="chinese")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="compiler-only slots (lower bound; no fact-store replay)",
+    )
     args = parser.parse_args()
 
     with open(args.checkpoint, encoding="utf-8") as handle:
@@ -357,7 +412,7 @@ def main() -> int:
     from agent.vitabench_runner import get_tasks
 
     tasks_by_id = {task.id: task for task in get_tasks(args.language)}
-    report = analyse(checkpoint, tasks_by_id)
+    report = analyse(checkpoint, tasks_by_id, replay_memory=not args.no_memory)
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -392,6 +447,14 @@ def main() -> int:
     print(
         f"  (a) every required slot settled, no write attempted yet: "
         f"{reach['a_all_slots_settled_and_no_write_yet']}"
+    )
+    print(
+        f"  (a') same, with settled aligned to the question policy's own "
+        f"askability rules: {reach['a_askable_slots_settled_and_no_write_yet']}"
+    )
+    print(
+        f"      ... and the run never issued a write call at all: "
+        f"{reach['a_askable_of_which_the_run_never_issued_a_write_call']}"
     )
     print(
         f"      ... and the run never issued a write call at all (planning_defect "
