@@ -1,9 +1,15 @@
-# ADAPT
+<p align="center">
+  <img src="docs/assets/adapt-logo.png" alt="ADAPT — Agent with Dynamic Adaptive Preferences Toward Sustained Consumption Goals" width="400">
+</p>
 
-**A**gent with **D**ynamic **A**daptive **P**references **T**oward Sustained Consumption Goals
+<h1 align="center">ADAPT</h1>
 
-[![Benchmark: VitaBench 2.0](https://img.shields.io/badge/Benchmark-VitaBench%202.0-green)](https://github.com/meituan-longcat/VitaBench-2.0)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center"><b>A</b>gent with <b>D</b>ynamic <b>A</b>daptive <b>P</b>references <b>T</b>oward Sustained Consumption Goals</p>
+
+<p align="center">
+  <a href="https://github.com/meituan-longcat/VitaBench-2.0"><img src="https://img.shields.io/badge/Benchmark-VitaBench%202.0-green" alt="Benchmark: VitaBench 2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
 
 ADAPT is a long-horizon consumer agent for personalization: it remembers a user's
 preferences across sessions, updates them when they change, and uses them to pick
