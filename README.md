@@ -2,8 +2,6 @@
   <img src="docs/assets/adapt-logo.png" alt="ADAPT — Agent with Dynamic Adaptive Preferences Toward Sustained Consumption Goals" width="400">
 </p>
 
-<h1 align="center">ADAPT</h1>
-
 <p align="center"><b>A</b>gent with <b>D</b>ynamic <b>A</b>daptive <b>P</b>references <b>T</b>oward Sustained Consumption Goals</p>
 
 <p align="center">
