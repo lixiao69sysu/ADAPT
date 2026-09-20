@@ -1,7 +1,7 @@
 """ADAPT memory system.
 
 Public API:
-    ADAPTMemory(BaseMemory) - pluggable into VitaBench --memory-class.
+    ADAPTMemory - framework-free; the harness binds it via agent.adapters.vitabench_memory.
 
 Sub-modules:
     stream      - Memory Stream: event storage with type/importance/timestamp

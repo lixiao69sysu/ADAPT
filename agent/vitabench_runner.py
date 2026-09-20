@@ -41,7 +41,7 @@ from agent.evaluation_integrity import (
     IntegrityPersonalizationOrchestrator,
     patch_evaluator_extracter,
 )
-from agent.memory.adapt_memory import ADAPTMemory
+from agent.adapters.vitabench_memory import VitaBenchADAPTMemory
 
 SPLIT_SEED = "ADAPT-2026"
 
@@ -273,7 +273,7 @@ def run_stock_personalization_task(
         # Isolation rig (E-046): the stock agent, unchanged, but with ADAPT's
         # memory backend. This isolates the cost of the memory *representation*
         # from every control-layer difference.
-        memory = ADAPTMemory(
+        memory = VitaBenchADAPTMemory(
             language=language,
             user_id=user_id,
             enable_summary_rewrite=enable_profile_summary,

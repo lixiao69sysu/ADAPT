@@ -367,7 +367,7 @@ def test_run_stock_builds_the_adapt_agent_with_both_switches(monkeypatch):
             return SimpleNamespace(states={})
 
     monkeypatch.setattr(runner, "AdaptAgent", FakeAgent)
-    monkeypatch.setattr(runner, "ADAPTMemory", lambda **kwargs: object())
+    monkeypatch.setattr(runner, "VitaBenchADAPTMemory", lambda **kwargs: object())
     monkeypatch.setattr(runner, "PersonalizationUser", lambda **kwargs: object())
     monkeypatch.setattr(
         runner,
@@ -419,7 +419,7 @@ def test_run_stock_defaults_both_switches_off(monkeypatch):
             return SimpleNamespace(states={})
 
     monkeypatch.setattr(runner, "AdaptAgent", FakeAgent)
-    monkeypatch.setattr(runner, "ADAPTMemory", lambda **kwargs: object())
+    monkeypatch.setattr(runner, "VitaBenchADAPTMemory", lambda **kwargs: object())
     monkeypatch.setattr(runner, "PersonalizationUser", lambda **kwargs: object())
     monkeypatch.setattr(
         runner,

@@ -25,9 +25,6 @@ import hashlib
 import json
 from collections import Counter
 
-from vita.environment.toolkit import ToolType, is_tool
-from vita.memory.base import BaseMemory
-
 from agent.decision import (
     Constraint,
     ConstraintOperator,
@@ -53,8 +50,29 @@ from agent.memory.slots import resolve_preference_slots
 from agent.memory.stream import MemoryStream, parse_timestamp
 
 
-class ADAPTMemory(BaseMemory):
-    """ADAPT long-term preference memory with drift-aware retrieval."""
+class ADAPTMemory:
+    """ADAPT long-term preference memory with drift-aware retrieval.
+
+    **Framework-free by construction.** This class imports nothing from
+    ``vita``; a deployment that only needs the preference store can use it
+    directly.
+
+    The evaluation harness additionally needs two things this class no longer
+    provides:
+
+    * the ``BaseMemory`` interface the orchestrator calls, and
+    * ``@is_tool`` auto-discovery, which is what puts
+      ``read_preference_memory`` / ``record_preference_answer`` into the domain
+      toolkit so the model can query and write memory mid-conversation
+      (removing it is the E-042 regression: stock called
+      ``query_preference_memory`` 30 times while the hidden-tool arm called it 0).
+
+    Both are supplied by the adapter
+    ``agent.adapters.vitabench_memory.VitaBenchADAPTMemory``, which inherits
+    from this class *and* ``vita.memory.base.BaseMemory``. The two tool methods
+    below stay plain methods here; the adapter re-declares them with the
+    decorator.
+    """
 
     def __init__(
         self,
@@ -72,7 +90,15 @@ class ADAPTMemory(BaseMemory):
         entity_index_max_entries: int = 500,
         **kwargs,
     ):
-        super().__init__(language=language, top_k=top_k, **kwargs)
+        # Cooperative `super()` with **no arguments**: in the vitabench adapter
+        # the MRO continues into BaseMemory/ToolKitBase (which installs the
+        # @is_tool registry); standalone it terminates at object. Our own
+        # attributes are set *after* it, because BaseMemory's defaults would
+        # otherwise overwrite `language` / `top_k`.
+        super().__init__()
+        self.language = language
+        self.top_k = top_k
+        self.similarity_threshold = 0.0
         self.stream = MemoryStream()
         self.parser = SignalParser()
         self.scorer = RetrievalScorer(RetrievalConfig(
@@ -754,7 +780,6 @@ class ADAPTMemory(BaseMemory):
     # Agent-callable tools (auto-discovered via @is_tool)
     # ------------------------------------------------------------------
 
-    @is_tool(ToolType.READ)
     def suggest_question_tool(self, instruction: str) -> str:
         """当用户的需求信息不完整时，返回一个需要向用户确认的问题。
 
@@ -763,7 +788,6 @@ class ADAPTMemory(BaseMemory):
         """
         return self.propose_question(instruction) or ""
 
-    @is_tool(ToolType.READ)
     def query_preference_memory(self, query: str) -> str:
         """根据具体问题查询用户偏好记忆，返回与该问题相关的偏好条目。
 
@@ -775,12 +799,10 @@ class ADAPTMemory(BaseMemory):
         """
         return self.read(query)
 
-    @is_tool(ToolType.READ)
     def read_preference_memory(self) -> str:
         """读取用户偏好记忆的整体视图（包含任务相关的偏好与待确认问题）。"""
         return self.read()
 
-    @is_tool(ToolType.WRITE)
     def record_preference_answer(self, answer: str, question: str = "") -> str:
         """记录用户对主动询问的回答，供该用户后续子任务使用。
 

@@ -497,7 +497,7 @@ def _stub_runner(monkeypatch, captured: dict):
             return SimpleNamespace(states={})
 
     monkeypatch.setattr(runner, "AdaptAgent", FakeAgent)
-    monkeypatch.setattr(runner, "ADAPTMemory", lambda **kwargs: object())
+    monkeypatch.setattr(runner, "VitaBenchADAPTMemory", lambda **kwargs: object())
     monkeypatch.setattr(runner, "PersonalizationUser", lambda **kwargs: object())
     monkeypatch.setattr(
         runner,
